@@ -40,3 +40,6 @@ Open `https://<your-app>/api/storage?probe=1` (logged in). The `probe` object re
 | `bucket-missing` | 404 | bucket is created on cold start; redeploy or check `SUPABASE_BUCKET` |
 
 Upload timeout defaults to 25 s and can be raised with `SUPABASE_TIMEOUT_MS`.
+
+### Transport note (serverless)
+Uploads use a dedicated `node:https` request with `agent:false` + `Connection: close` (one fresh TLS connection per call) and retry once on timeout/reset. Reason: on Vercel the process is frozen between invocations; a kept-alive socket the Supabase edge has since closed makes POST uploads hang until timeout while GETs still appear to work. Symptom seen in production 2026-10-25: `push: The operation was aborted due to timeout` with the bucket present and GETs logged at Supabase.

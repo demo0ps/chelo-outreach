@@ -97,3 +97,16 @@ test('probe reports verdicts for ok / auth / timeout', async () => {
   const r = await mk(async () => { throw new Error('The operation was aborted due to timeout'); }).probe();
   assert.equal(r.verdict, 'unreachable-timeout'); assert.match(r.hint, /PAUSED/);
 });
+
+test('push retries once when the first attempt times out on a stale socket', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-retry-'));
+  fs.writeFileSync(path.join(dir, 'settings.json'), '{"a":1}');
+  let posts = 0; const store = {};
+  const fetchImpl = async (url, init) => {
+    if (init.method === 'POST') { posts += 1; if (posts === 1) throw new Error('The operation was aborted due to timeout'); store[url] = init.body; return new Response('{}', { status: 200 }); }
+    return new Response('', { status: 400 });
+  };
+  const sync = createRemoteSync({ url: 'https://x.supabase.co', serviceKey: 'k', dataDir: dir, fetchImpl });
+  const r = await sync.push();
+  assert.equal(r.pushed, 1); assert.equal(r.error, undefined); assert.ok(Object.keys(store).some(u => u.endsWith('manifest.json')));
+});
