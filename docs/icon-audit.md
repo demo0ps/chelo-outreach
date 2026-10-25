@@ -171,3 +171,8 @@ Rule: tick items here as they are done. On "go", resume from the first unticked 
 
 ## Status 2026-10-25
 Committed & promoted. Remaining: user to eyeball live site; report any specific spot still lacking an icon (view + button label).
+
+## Round 2 (go)
+- [x] 7 panel titles, 13 detail-section titles, 2 radar headings, 5 settings/CSV h3s now carry glyphs (.panel-title/.section-title-text/.h-icon)
+- [x] copilot tabs already iconed; stage/status pills intentionally text-only (colour-coded)
+- [ ] user visual confirmation on Chrome desktop

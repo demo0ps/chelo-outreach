@@ -539,3 +539,9 @@ h1 { font-size:29px; line-height:1.16; font-weight:690; letter-spacing:-.024em; 
 .button-ghost .icon-svg .icon-tint { opacity:.12; }
 a.button { display:inline-flex; align-items:center; gap:7px; }
 .policy-option .icon-svg { width:16px; height:16px; margin-bottom:6px; }
+.panel-title { display:inline-flex; align-items:center; gap:7px; }
+.panel-title .icon-svg { width:15px; height:15px; color:#5a4fc9; flex:0 0 auto; }
+.section-title-text { display:inline-flex; align-items:center; gap:6px; }
+.detail-section-title .icon-svg { width:13px; height:13px; color:#6b5fd6; flex:0 0 auto; }
+.h-icon { display:inline-flex; align-items:center; gap:7px; }
+.h-icon .icon-svg { width:14px; height:14px; color:#5a4fc9; flex:0 0 auto; }
