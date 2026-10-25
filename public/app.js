@@ -15,6 +15,7 @@ const state = {
   dq: { data: null, loading: false, error: '', busy: false },
   rel: { summary: null, loading: false, error: '', busy: false, view: null, viewId: null, tab: 'timeline' },
   cat: { status: null, loading: false, busy: false, task: '', progress: '', storage: null },
+  ops: { data: null, loading: false, error: '', area: 'all' },
   wb: { selectedId: null, sort: 'fit', filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
@@ -286,7 +287,7 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['workbench', 'Outreach workbench', 'wand'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['workbench', 'Outreach workbench', 'wand'], ['ops', 'Ops dashboard', 'activity'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
   ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Relationships', 'partners'],
   ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
 ];
@@ -404,6 +405,7 @@ function shellSidebar() {
       ${navItem('partners', 'Relationships', 'partners')}
       ${navItem('proposals', 'Proposals', 'proposals')}
       ${navItem('analytics', 'Analytics', 'analytics')}
+      ${navItem('ops', 'Ops', 'activity', state.ops.data ? ((state.ops.data.counts.critical + state.ops.data.counts.warn) || null) : null)}
       ${navItem('deliverability', 'Deliverability', 'shield', (state.data.mailboxes || []).filter(m => m.status === 'paused').length || null)}
       ${navItem('data', 'Data quality', 'database', state.dq.data ? (state.dq.data.openMergeReviews || 0) : null)}
       ${navItem('settings', 'Settings', 'settings')}
@@ -704,6 +706,7 @@ function renderView() {
     case 'workbench': return workbenchView();
     case 'deliverability': return deliverabilityView();
     case 'data': return dataQualityView();
+    case 'ops': return opsView();
     case 'discover': return discoverView();
     case 'projects': return projectsView();
     case 'prospects': return prospectsView();
@@ -1174,6 +1177,7 @@ function setView(view) {
   if (view === 'overview') loadRadar();
   if (view === 'partners') loadRelationships(true);
   if (view === 'discover') loadCatalogue();
+  if (view === 'ops') loadOps(true);
   renderApp(); window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'analytics') loadAnalytics(state.analyticsRange);
   if (view === 'settings' && state.settingsSection === 'audit') loadAudit();
@@ -1207,6 +1211,8 @@ async function dispatchAction(button) {
   if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('rel-')) { if (await relAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('cat-')) { if (await catAction(button.dataset.action, button)) return; }
+  if (button.dataset.action === 'ops-refresh') { await loadOps(true); return; }
+  if (button.dataset.action === 'ops-area') { state.ops.area = button.dataset.area; renderApp(); return; }
   const id = button.dataset.id;
   try {
     if (action === 'close-modal') return closeModal();
@@ -2654,6 +2660,64 @@ async function catAction(action) {
     return true;
   }
   return false;
+}
+
+// ---- Batch 6: Ops dashboard ----
+async function loadOps(force = false) {
+  if (state.ops.loading || (state.ops.data && !force)) return;
+  state.ops.loading = true; state.ops.error = ''; renderApp();
+  try { state.ops.data = await API('/api/ops'); } catch (err) { state.ops.error = err.message; } finally { state.ops.loading = false; renderApp(); }
+}
+const OPS_STATUS = { critical: ['Needs action now', 'ops-critical', 'xCircle'], attention: ['Attention', 'ops-warn', 'info'], healthy: ['All systems healthy', 'ops-ok', 'checkCircle'] };
+const OPS_AREAS = [['all', 'Everything'], ['deliverability', 'Sending'], ['sequences', 'Sequences'], ['replies', 'Replies'], ['data', 'Data'], ['platform', 'Platform']];
+function opsCheck(c) {
+  const cls = c.status === 'critical' ? 'ops-critical' : c.status === 'warn' ? 'ops-warn' : 'ops-info';
+  return `<li class="ops-check ${cls}"><span class="ops-dot" aria-hidden="true"></span><div class="ops-check-body"><strong>${esc(c.title)}</strong>${c.detail ? `<p>${esc(c.detail)}</p>` : ''}<p class="ops-fix">${svgIcon('wand')}<span><b>Fix:</b> ${esc(c.fix)}</span></p></div>${c.view ? `<button type="button" class="button button-ghost button-small" data-view="${esc(c.view)}">${svgIcon('arrow')}Open</button>` : ''}</li>`;
+}
+function opsKpi(label, value, sub = '', tone = '') { return `<div class="ops-kpi ${tone}"><small>${esc(label)}</small><strong>${value}</strong>${sub ? `<span class="subtle">${esc(sub)}</span>` : ''}</div>`; }
+function opsView() {
+  const o = state.ops.data;
+  const head = pageHead('Observability', 'Ops dashboard', 'One screen for the whole engine: what is broken, what it costs you, and the exact next click. Checks are ranked by severity; every one carries its fix.', `<button type="button" class="button button-secondary" data-action="ops-refresh" ${state.ops.loading ? 'disabled' : ''}>${svgIcon('refresh')}${state.ops.loading ? 'Refreshing…' : 'Refresh'}</button><a class="button button-ghost" href="/api/ops" target="_blank" rel="noopener">${svgIcon('external')}JSON</a>`);
+  if (!o) return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('activity')}</div><p>${state.ops.error ? esc(state.ops.error) : 'Reading engine state…'}</p></div>`;
+  const [label, cls, icon] = OPS_STATUS[o.status] || OPS_STATUS.healthy;
+  const k = o.kpis;
+  const checks = o.checks.filter(c => state.ops.area === 'all' || c.area === state.ops.area);
+  const maxSent = Math.max(1, ...o.series.map(d => (d.sent || 0) + (d.dead || 0)));
+  const bars = o.series.length ? o.series.map(d => `<div class="ops-bar" title="${esc(d.day)}: ${d.sent || 0} sent, ${d.dead || 0} dead"><span class="ops-bar-dead" style="height:${Math.round(((d.dead || 0) / maxSent) * 100)}%"></span><span class="ops-bar-sent" style="height:${Math.round(((d.sent || 0) / maxSent) * 100)}%"></span></div>`).join('') : '<p class="subtle">No sends in the last 14 days.</p>';
+  const topN = o.funnel[0].n || 1;
+  const funnel = o.funnel.map(st => `<li class="ops-funnel-row"><span class="ops-funnel-label">${esc(st.label)}</span><span class="ops-funnel-track"><span style="width:${Math.max(2, Math.round((st.n / topN) * 100))}%"></span></span><strong>${st.n}</strong><small class="subtle">${st.ofPrev}% of prev</small></li>`).join('');
+  const p = o.areas.platform;
+  return `${head}
+    <section class="ops-banner ${cls}"><span class="ops-banner-icon">${svgIcon(icon)}</span><div><h3>${esc(label)}</h3><p>${o.counts.critical} critical · ${o.counts.warn} warnings · ${o.counts.info} notes · generated ${esc(new Date(o.generatedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }))}</p></div></section>
+    <section class="ops-kpis">
+      ${opsKpi('Sent · 14d', k.sent14d, `${k.bounce14dPct}% dead/bounced`, k.bounce14dPct > 2 ? 'bad' : 'ok')}
+      ${opsKpi('Reply rate · 30d', `${k.replyRatePct}%`, 'human replies / first touches', k.replyRatePct >= 8 ? 'ok' : '')}
+      ${opsKpi('Interested · 30d', `${k.interestedRatePct}%`, 'of first touches')}
+      ${opsKpi('Meetings · 30d', `${k.meetingRatePct}%`, 'booked / first touches')}
+      ${opsKpi('Replies waiting', k.repliesOpen, k.repliesOverdue ? `${k.repliesOverdue} past SLA` : 'all within SLA', k.repliesOverdue ? 'bad' : 'ok')}
+      ${opsKpi('Median reply handling', k.medianReplyHours === null ? '—' : `${k.medianReplyHours}h`, 'funder reply → staff action')}
+      ${opsKpi('Sequences running', k.activeSequences, `${k.stoppedByReply} stopped by a reply`)}
+      ${opsKpi('Mailboxes', `${k.mailboxesActive} active`, k.mailboxesPaused ? `${k.mailboxesPaused} paused` : `${k.queued} queued · ${k.dead} dead`, k.mailboxesPaused ? 'bad' : '')}
+      ${opsKpi('Pipeline leads', k.pipelineLeads, `${k.awaitingContact} hidden awaiting contact`)}
+      ${opsKpi('Data grade A', `${k.dataGradeA}/${k.dataGradeTotal}`, 'verified · complete · fresh')}
+    </section>
+    <div class="ops-grid">
+      <section class="panel ops-checks"><div class="ops-panel-head"><h3>${svgIcon('shield')}Health checks</h3><div class="chip-row">${OPS_AREAS.map(([id, l]) => `<button type="button" class="chip ${state.ops.area === id ? 'chip-active' : ''}" data-action="ops-area" data-area="${id}">${svgIcon(id === 'all' ? 'grid' : id === 'deliverability' ? 'send' : id === 'sequences' ? 'reply' : id === 'replies' ? 'mail' : id === 'data' ? 'database' : 'shield')}${esc(l)}</button>`).join('')}</div></div>
+        ${checks.length ? `<ul class="ops-check-list">${checks.map(opsCheck).join('')}</ul>` : `<p class="subtle">Nothing to report${state.ops.area !== 'all' ? ' in this area' : ''}.</p>`}</section>
+      <div class="ops-side">
+        <section class="panel"><h3>${svgIcon('trendingUp')}Sends vs dead · 14 days</h3><div class="ops-bars">${bars}</div><p class="subtle">Target: bounces &lt;2%, complaints &lt;0.1%. The breaker pauses a mailbox automatically before providers do.</p></section>
+        <section class="panel"><h3>${svgIcon('target')}Funnel · last 30 days</h3><ul class="ops-funnel">${funnel}</ul></section>
+        <section class="panel ops-platform"><h3>${svgIcon('database')}Platform</h3><dl>
+          <dt>Storage</dt><dd>${p.durable ? `Durable (Supabase v${p.sync?.version || 0}${p.sync?.lastPushAt ? `, pushed ${esc(relDate(p.sync.lastPushAt))}` : ''})` : p.ephemeralHost ? '<b>Ephemeral — data lost on restart</b>' : 'Local SQLite (WAL)'}</dd>
+          <dt>Send worker</dt><dd>${p.serverless ? 'Serverless · cron-driven' : 'In-process worker'}</dd>
+          <dt>Cron send-tick</dt><dd>${p.cron['send-tick']?.at ? esc(relDate(p.cron['send-tick'].at)) : 'never'}</dd>
+          <dt>Cron data-tick</dt><dd>${p.cron['data-tick']?.at ? esc(relDate(p.cron['data-tick'].at)) : 'never'}</dd>
+          <dt>Approval</dt><dd>${p.approvalPolicy === 'four-eyes' ? '4-eyes' : 'single approver'}</dd>
+          <dt>Inbound sync</dt><dd>${p.inboundConfigured ? 'configured' : 'not configured'}</dd>
+          <dt>AI</dt><dd>${p.aiConfigured ? 'configured (cherry on top)' : 'off — templates'}</dd>
+        </dl></section>
+      </div>
+    </div>`;
 }
 async function wbRunFlow(id, { force = false, redraft = false } = {}) {
   state.wb.busy[id] = true; renderApp();

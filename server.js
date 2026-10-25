@@ -20,6 +20,7 @@ const sequences = require('./lib/sequences');
 const relationships = require('./lib/relationships');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
+const observability = require('./lib/observability');
 const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;
@@ -1409,6 +1410,35 @@ async function findCatalogueMailboxes({ limit = 12, actor = 'staff' } = {}) {
   if (due.length) { addActivity(`Mailbox finder checked ${due.length} discovered funders · ${found} published mailboxes found · ${found} lead(s) revealed in the pipeline`, 'lead', actor); saveDb(); }
   return { searched: due.length, found, results, status: catalogueStatus() };
 }
+
+// ---- Observability (Batch 6): one ops picture assembled from live engine state ----
+function lastCronRuns() {
+  const out = {};
+  for (const name of ['send-tick', 'data-tick']) {
+    const rows = configStore.getAuditLogs({ limit: 1, action: `cron.${name}` });
+    out[name] = rows.length ? { at: rows[0].timestamp, summary: rows[0].summary } : null;
+  }
+  return out;
+}
+function opsSnapshot() {
+  const now = new Date();
+  const metrics = sendEngine.metrics({ days: 14 });
+  const settings = configStore.publicSettings();
+  const roll = observability.rollup(db.leads, db.bookings, now, 30);
+  const dq = dataSummary();
+  const cron = lastCronRuns();
+  const workerHealthy = SERVERLESS ? Boolean(cron['send-tick']?.at && (now - Date.parse(cron['send-tick'].at)) < 30 * 3600e3) : true;
+  const failures = configStore.getAuditLogs({ limit: 400, from: new Date(now - 7 * 86400e3).toISOString().slice(0, 10) }).filter(e => /failed|paused|dead|tripped|error/i.test(`${e.action} ${e.summary}`)).slice(0, 20);
+  return observability.buildOps({
+    mailboxes: metrics.mailboxes, queue: metrics.queue, series: metrics.series, workerHealthy, serverless: SERVERLESS,
+    sequences: roll.sequences, triage: roll.triage, funnel: roll.funnel,
+    inboundConfigured: Boolean(settings.imapConfigured || settings.inboundWebhookConfigured || settings.webhookConfigured),
+    data: { graded: Object.values(dq.gradeCounts || {}).reduce((a, b) => a + b, 0), gradeA: dq.gradeCounts?.A || 0, reverifyDue: dq.reverifyDue || 0, stale: dq.stale || 0, averageScore: dq.averageScore || 0, mergeReviewsOpen: dq.openMergeReviews || 0 },
+    catalogue: catalogueStatus(), pipeline: { visible: visibleLeads().filter(l => !l.isDemo).length, total: db.leads.length },
+    ephemeralHost: Boolean(process.env.VERCEL), durable: Boolean(module.exports.remoteSync), sync: module.exports.remoteSync ? module.exports.remoteSync.status() : null,
+    cron, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, aiConfigured: Boolean(settings.aiConfigured), recentFailures: failures
+  }, now);
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1751,6 +1781,7 @@ async function handleApi(req, res, url) {
       if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
       const result = await sendEngine.tick({ limit: 25 });
       await refreshMailboxHealth().catch(() => {});
+      configStore.recordAudit({ actor: 'cron', action: 'cron.send-tick', entityType: 'workspace', summary: `Send tick ran ${result.ran} job(s)` });
       return sendJson(res, 200, { ok: true, ran: result.ran });
     }
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/data-tick') {
@@ -1760,6 +1791,7 @@ async function handleApi(req, res, url) {
       const result = await reverifyStale({ limit: 20, actor: 'cron' });
       const stewardship = stewardshipTick({ actor: 'cron' });
       let mailboxes = null; try { mailboxes = await findCatalogueMailboxes({ limit: 8, actor: 'cron' }); } catch (err) { mailboxes = { error: String(err.message || err).slice(0, 160) }; }
+      configStore.recordAudit({ actor: 'cron', action: 'cron.data-tick', entityType: 'workspace', summary: `Data tick: re-verified ${result.checked ?? result.reverified ?? 0}, stewardship ${stewardship?.created ?? 0} task(s), mailboxes ${mailboxes?.found ?? 0} found / ${mailboxes?.searched ?? 0} searched` });
       saveDb();
       return sendJson(res, 200, { ok: true, ...result, stewardship, mailboxes });
     }
@@ -2051,6 +2083,7 @@ async function handleApi(req, res, url) {
     // ---- Batch 5: relationships + stewardship ----
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
     if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
+    if (method === 'GET' && pathname === '/api/ops') return sendJson(res, 200, opsSnapshot());
     if (method === 'GET' && pathname === '/api/storage') return sendJson(res, 200, { durable: Boolean(module.exports.remoteSync), dataDir: DATA_DIR, ephemeralHost: Boolean(process.env.VERCEL), sync: module.exports.remoteSync ? module.exports.remoteSync.status() : null });
     if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/mailboxes') { const body = await readBody(req); return sendJson(res, 200, await findCatalogueMailboxes({ limit: Number(body.limit) || 12, actor: actorName() })); }

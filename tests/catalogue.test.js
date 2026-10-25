@@ -90,6 +90,11 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   assert.ok(signals.totals.withFye >= 0, 'signals exclude hidden rows');
   assert.equal(again.status.catalogue, 'sa-csi-2026');
 
+  // Ops dashboard reads the whole engine without crashing on an empty-ish workspace
+  const ops = (await api('GET', '/api/ops')).payload;
+  assert.ok(['healthy', 'attention', 'critical'].includes(ops.status)); assert.ok(ops.checks.some(c => c.id === 'no-mailbox')); assert.ok(ops.checks.every(c => c.fix)); assert.equal(ops.funnel.length, 8);
+  assert.ok(ops.checks.some(c => c.id === 'cat-mailboxes'), 'catalogue backlog surfaces as a check');
+
   // Published-mailbox finder: bulk + single + staff selection (no internet in CI → unreachable/unconfirmed, never a crash)
   const mb = (await api('POST', '/api/leads/catalogue/mailboxes', { limit: 3 })).payload;
   assert.equal(mb.searched, 3); assert.equal(mb.status.mailboxes.searched, 3);
