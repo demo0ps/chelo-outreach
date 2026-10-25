@@ -85,6 +85,7 @@ a { color: var(--a-600); }
 .nav-item.active .nav-icon::after { display: block; }
 /* per-item tile colours (iOS-style distinct hues) */
 .nav-item[data-view="deliverability"] .nav-icon { --tile-a: #34d399; --tile-b: #10b981; --tile-c: #047857; }
+.nav-item[data-view="data"] .nav-icon { --tile-a: #38bdf8; --tile-b: #0ea5e9; --tile-c: #0369a1; }
 .nav-item[data-view="workbench"] .nav-icon { --tile-a: #fbbf24; --tile-b: #f59e0b; --tile-c: #c2410c; }
 .nav-item[data-view="overview"]  .nav-icon { --tile-a: #a78bfa; --tile-b: #7c5cf0; --tile-c: #5338c7; }
 .nav-item[data-view="discover"]  .nav-icon { --tile-a: #5ee0ff; --tile-b: #1fa8e8; --tile-c: #0d6fb8; }
@@ -477,3 +478,29 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .triage-inputs .form-group span { font-size: 11.5px; }
 .triage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 720px) { .wb-seq-intro { flex-direction: column; align-items: stretch; } .seq-toggle, .seq-offset { margin-left: 0; } }
+
+/* ---- Batch 3: data quality + contact waterfall ---- */
+.wb-quality { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 10px; }
+.wb-quality .stage-pill .icon-svg { width: 12px; height: 12px; margin-right: 4px; }
+.wb-waterfall { margin-top: 12px; border: 1px solid var(--z-200); border-radius: 12px; padding: 12px 14px; background: #fff; }
+.wb-waterfall-head h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--z-900); }
+.wb-waterfall-head h4 .icon-svg { width: 16px; height: 16px; }
+.wb-waterfall-head h4 small { font-weight: 400; font-size: 12px; }
+.wf-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.wf-contact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--z-200); border-radius: 10px; background: var(--z-50); }
+.wf-contact.wf-rejected { opacity: .55; }
+.wf-contact.wf-accepted { border-color: #bbf7d0; background: #f0fdf4; }
+.wf-main { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+.wf-main small .icon-svg { width: 11px; height: 11px; }
+.wf-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.wf-note { margin: 10px 0 0; font-size: 12px; }
+.dq-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.dq-review, .dq-att { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--z-200); border-radius: 10px; background: #fff; }
+.dq-att { justify-content: flex-start; }
+.dq-att > div { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+.dq-review-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dq-pair { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 13.5px; }
+.dq-pair .subtle { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.dq-vs { color: var(--a-600); font-weight: 600; padding: 0 4px; }
+.dq-review-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 720px) { .wf-contact, .dq-review { flex-direction: column; align-items: stretch; } .wf-actions, .dq-review-actions { justify-content: flex-start; } }

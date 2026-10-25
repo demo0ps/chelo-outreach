@@ -5,13 +5,14 @@ const API = async (url, options = {}) => {
   const response = await fetch(url, { credentials: 'same-origin', ...options, method, headers });
   const contentType = response.headers.get('content-type') || '';
   const payload = contentType.includes('application/json') ? await response.json() : null;
-  if (!response.ok) { const error = new Error(payload?.error || `Request failed (${response.status})`); error.status = response.status; throw error; }
+  if (!response.ok) { const error = new Error(payload?.error || `Request failed (${response.status})`); error.status = response.status; error.code = payload?.code || ''; error.duplicates = payload?.duplicates || null; throw error; }
   return payload;
 };
 
 const state = {
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
+  dq: { data: null, loading: false, error: '', busy: false },
   wb: { selectedId: null, filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
@@ -200,6 +201,7 @@ const icons = {
   overview: `<rect class="icon-tint" x="3" y="3" width="8.4" height="8.4" rx="2.6"/><rect class="icon-tint" x="3" y="13.6" width="8.4" height="7.4" rx="2.4"/><rect class="icon-tint" x="13.6" y="10.6" width="7.4" height="10.4" rx="2.6"/><rect class="icon-line" x="3" y="3" width="8.4" height="8.4" rx="2.6"/><rect class="icon-line" x="13.6" y="3" width="7.4" height="5.4" rx="2.2"/><rect class="icon-line" x="13.6" y="10.6" width="7.4" height="10.4" rx="2.6"/><rect class="icon-line" x="3" y="13.6" width="8.4" height="7.4" rx="2.4"/>${A(17.3, 5.7, 1.3)}`,
   discover: `<circle class="icon-tint" cx="11" cy="11" r="7"/><circle class="icon-line" cx="11" cy="11" r="7"/><path class="icon-line" d="m16.2 16.2 4.3 4.3"/><path class="icon-line" d="M7.6 10.4a3.6 3.6 0 0 1 2.9-2.9"/>${A(13.4, 8.6, 1.4)}`,
   globe: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M3.4 12h17.2M12 3a13.6 13.6 0 0 1 0 18M12 3a13.6 13.6 0 0 0 0 18"/>${A(17.4, 6.6, 1.4)}`,
+  database: `<ellipse class="icon-tint" cx="12" cy="6.2" rx="7.5" ry="3"/><path class="icon-tint" d="M4.5 6.2v11.6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6.2c0 1.7-3.4 3-7.5 3s-7.5-1.3-7.5-3z"/><ellipse class="icon-line" cx="12" cy="6.2" rx="7.5" ry="3"/><path class="icon-line" d="M4.5 6.2v11.6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6.2M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/>${A(12, 6.2, 1.2)}`,
   grid: `<rect class="icon-tint" x="3" y="3" width="8" height="8" rx="2.2"/><rect class="icon-tint" x="13" y="13" width="8" height="8" rx="2.2"/><rect class="icon-line" x="3" y="3" width="8" height="8" rx="2.2"/><rect class="icon-line" x="13" y="3" width="8" height="8" rx="2.2"/><rect class="icon-line" x="3" y="13" width="8" height="8" rx="2.2"/><rect class="icon-line" x="13" y="13" width="8" height="8" rx="2.2"/>${A(17, 7, 1.3)}`,
   prospects: `<circle class="icon-tint" cx="9.2" cy="8.2" r="3.6"/><path class="icon-tint" d="M2.8 20c.4-3.9 2.9-6 6.4-6s6 2.1 6.4 6Z"/><circle class="icon-line" cx="9.2" cy="8.2" r="3.6"/><path class="icon-line" d="M2.8 20c.4-3.9 2.9-6 6.4-6s6 2.1 6.4 6"/><path class="icon-line" d="M16.2 4.9a3.3 3.3 0 0 1 0 6.3M18.6 14.6c1.7.8 2.5 2.4 2.7 5"/>${A(17.4, 8.1, 1.3)}`,
   pipeline: `<rect class="icon-tint" x="3" y="4" width="5.2" height="16" rx="1.9"/><rect class="icon-tint" x="9.4" y="4" width="5.2" height="11" rx="1.9"/><rect class="icon-tint" x="15.8" y="4" width="5.2" height="7" rx="1.9"/><rect class="icon-line" x="3" y="4" width="5.2" height="16" rx="1.9"/><rect class="icon-line" x="9.4" y="4" width="5.2" height="11" rx="1.9"/><rect class="icon-line" x="15.8" y="4" width="5.2" height="7" rx="1.9"/>${A(18.4, 15.6, 1.5)}`,
@@ -282,7 +284,7 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['workbench', 'Outreach workbench', 'wand'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['workbench', 'Outreach workbench', 'wand'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
   ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Partners', 'partners'],
   ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
 ];
@@ -370,7 +372,7 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ workbench: 'Workbench', deliverability: 'Deliverability', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
+  const label = ({ workbench: 'Workbench', deliverability: 'Deliverability', data: 'Data quality', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
@@ -401,6 +403,7 @@ function shellSidebar() {
       ${navItem('proposals', 'Proposals', 'proposals')}
       ${navItem('analytics', 'Analytics', 'analytics')}
       ${navItem('deliverability', 'Deliverability', 'shield', (state.data.mailboxes || []).filter(m => m.status === 'paused').length || null)}
+      ${navItem('data', 'Data quality', 'database', state.dq.data ? (state.dq.data.openMergeReviews || 0) : null)}
       ${navItem('settings', 'Settings', 'settings')}
       <button type="button" class="nav-item mobile-more-button ${['projects','prospects','pipeline','briefings','sent','partners','proposals','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
     </nav>
@@ -697,6 +700,7 @@ function renderView() {
   switch (state.view) {
     case 'workbench': return workbenchView();
     case 'deliverability': return deliverabilityView();
+    case 'data': return dataQualityView();
     case 'discover': return discoverView();
     case 'projects': return projectsView();
     case 'prospects': return prospectsView();
@@ -1187,6 +1191,7 @@ async function dispatchAction(button) {
   const action = button.dataset.action;
   if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
+  if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
   const id = button.dataset.id;
   try {
     if (action === 'close-modal') return closeModal();
@@ -2208,7 +2213,9 @@ function wbStepper(lead) {
     <div class="wb-kv"><span>Mailbox probe</span><strong>${esc(mailbox?.status || 'not probed')}</strong></div>
     <p class="subtle">${esc(mailbox?.reason || verify?.detail || 'The flow checks syntax, MX records and performs an SMTP handshake (no email is sent). Dead mailboxes never reach the pipeline.')}</p>
     ${(lead.contactCheck?.issues || []).length ? `<p class="form-error">Missing: ${esc(lead.contactCheck.issues.join(', '))}</p>` : ''}
-    <div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="wb-verify" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('checkCircle')}Re-check mailbox</button>${s === 'dead' ? `<button type="button" class="button button-danger button-small" data-action="wb-delete" data-id="${esc(lead.id)}">${svgIcon('trash')}Remove dead lead</button>` : ''}</div>`;
+    ${wbQualityRow(lead)}
+    <div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="wb-verify" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('checkCircle')}Re-check mailbox</button><button type="button" class="button button-ghost button-small" data-action="wb-waterfall" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('users')}${lead.contactLeads ? 'Re-run contact waterfall' : 'Find public contacts'}</button>${s === 'dead' ? `<button type="button" class="button button-danger button-small" data-action="wb-delete" data-id="${esc(lead.id)}">${svgIcon('trash')}Remove dead lead</button>` : ''}</div>
+    ${wbWaterfallPanel(lead)}`;
   // 2 · Research (inline review — same contract as the research modal so the existing approve action works)
   const researchBody = brief ? `<div id="research-review" class="wb-research">
       <p class="wb-mission"><strong>Mission:</strong> ${esc(brief.missionSummary || '—')}</p>
@@ -2375,6 +2382,65 @@ async function wbSequenceAction(action, button) {
   }
   return false;
 }
+
+// ---- Batch 3: data quality + contact waterfall ----
+const DQ_GRADE_CLS = { A: 'pill-won', B: 'pill-researched', C: 'pill-pending', D: 'pill-not-proceeding' };
+function dqGradePill(q) { if (!q) return ''; return `<span class="stage-pill ${DQ_GRADE_CLS[q.grade] || 'pill-new'}" title="Freshness ${q.freshness?.score ?? '–'} · completeness ${q.completeness?.score ?? '–'} · verification ${esc(q.verifyStatus || '')}">${svgIcon('database')}Data ${esc(q.grade)} · ${q.score}</span>`; }
+function wbQualityRow(lead) {
+  const q = lead.dataQuality; if (!q) return '';
+  const reasons = [...(q.freshness?.reasons || []), ...(q.completeness?.missing?.length ? [`missing ${q.completeness.missing.slice(0, 4).join(', ')}`] : [])];
+  return `<div class="wb-quality">${dqGradePill(q)}${q.reverifyDue ? `<span class="stage-pill pill-pending">${svgIcon('clock')}Re-verify due</span>` : ''}${lead.contactSource?.kind === 'waterfall' ? `<span class="stage-pill pill-new">${svgIcon('users')}Contact via ${esc(lead.contactSource.hops.join(' + '))}</span>` : ''}${reasons.length ? `<small class="subtle">${esc(reasons.join(' · '))}</small>` : '<small class="subtle">Verified, complete and fresh.</small>'}</div>`;
+}
+const HOP_STATUS = { done: ['pill-won', 'checked'], empty: ['pill-new', 'nothing found'], skipped: ['pill-pending', 'skipped'] };
+function wbWaterfallPanel(lead) {
+  const wf = lead.contactLeads; if (!wf) return '';
+  const hops = wf.hops.map(h => { const [cls, word] = HOP_STATUS[h.status] || HOP_STATUS.empty; return `<span class="stage-pill ${cls}" title="${esc(h.reason || (h.urls || []).join('\n') || '')}">${esc(h.label)} · ${h.status === 'done' ? `${h.people} found` : esc(h.reason || word)}</span>`; }).join('');
+  const rows = wf.contacts.length ? wf.contacts.map(c => `<li class="wf-contact wf-${esc(c.status)}">
+      <div class="wf-main"><strong>${esc(c.name)}</strong><span class="subtle">${esc(c.title || 'title not stated')}</span><small class="subtle">${c.hops.map(h => esc(h)).join(' + ')} · ${Math.round(c.confidence * 100)}% ${esc(c.level)}${c.sources[0] ? ` · <a class="text-link" href="${esc(c.sources[0])}" target="_blank" rel="noopener noreferrer">source ${svgIcon('external')}</a>` : ''}</small></div>
+      <div class="wf-actions">${c.status === 'pending' ? `<button type="button" class="button button-primary button-small" data-action="wb-wf-decide" data-id="${esc(lead.id)}" data-contact="${esc(c.id)}" data-decision="accept">${svgIcon('check')}${lead.contactName ? 'Replace contact' : 'Set as contact'}</button><button type="button" class="button button-secondary button-small" data-action="wb-wf-decide" data-id="${esc(lead.id)}" data-contact="${esc(c.id)}" data-decision="candidate">${svgIcon('plus')}Candidate</button><button type="button" class="button button-ghost button-small" data-action="wb-wf-decide" data-id="${esc(lead.id)}" data-contact="${esc(c.id)}" data-decision="reject">${svgIcon('xCircle')}Not relevant</button>` : `<span class="stage-pill ${c.status === 'accepted' ? 'pill-won' : 'pill-new'}">${esc(c.status)}</span>`}</div>
+    </li>`).join('') : '<li class="subtle">No publicly listed CSI / foundation / transformation people were found. Try adding the website in Edit details, or configure a search provider in Settings to climb the report and leadership rungs.</li>';
+  return `<div class="wb-waterfall"><div class="wb-waterfall-head"><h4>${svgIcon('users')}Public contact leads <small class="subtle">names & titles only · ran ${isoDate(wf.ranAt)} in ${wf.durationMs}ms</small></h4><div class="chip-row">${hops}</div></div><ul class="wf-list">${rows}</ul><p class="subtle wf-note">POPIA: emails and phone numbers are never harvested. Add a public work address yourself once the right person is confirmed.</p></div>`;
+}
+async function loadDataQuality(force = false) {
+  if (state.dq.loading) return;
+  if (state.dq.data && !force) return;
+  state.dq.loading = true; renderApp();
+  try { state.dq.data = await API('/api/data'); state.dq.error = ''; }
+  catch (err) { state.dq.error = err.message; }
+  finally { state.dq.loading = false; renderApp(); }
+}
+function dataQualityView() {
+  const d = state.dq.data;
+  const head = pageHead('Data quality', 'Data engine', 'Identity resolution at ingest, a merge-review queue instead of silent duplicates, freshness scoring with automatic re-verification after 90 days, and a public-contact waterfall with per-hop confidence.', `<button type="button" class="button button-secondary" data-action="dq-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-primary" data-action="dq-reverify" ${state.dq.busy ? 'disabled' : ''}>${svgIcon('checkCircle')}${state.dq.busy ? 'Re-verifying…' : 'Re-verify stale now'}</button>`);
+  if (!d) { loadDataQuality(); return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('database')}</div><p>${state.dq.error ? esc(state.dq.error) : 'Scoring records…'}</p></div>`; }
+  const tiles = metricCard('Average data score', String(d.averageScore), `${d.totals.leads} pipeline records · A ${d.gradeCounts.A || 0} · B ${d.gradeCounts.B || 0} · C ${d.gradeCounts.C || 0} · D ${d.gradeCounts.D || 0}`, 'database')
+    + metricCard('Re-verify due', String(d.reverifyDue), `mailboxes older than ${d.reverifyAfterDays} days`, 'checkCircle', d.reverifyDue ? 'weekly sweep + button' : '', d.reverifyDue > 0)
+    + metricCard('Stale or incomplete', String(d.stale + d.incomplete), `${d.stale} stale · ${d.incomplete} missing key fields`, 'clock', '', (d.stale + d.incomplete) > 0)
+    + metricCard('Merge reviews', String(d.openMergeReviews), 'possible duplicates waiting for a human', 'users', d.openMergeReviews ? 'decide below' : '', d.openMergeReviews > 0);
+  const reviews = d.mergeReviews.length ? d.mergeReviews.map(r => `<li class="dq-review">
+      <div class="dq-review-main"><div class="dq-pair"><strong>${esc(r.recordCompany)}</strong><span class="subtle">${esc(r.recordType)}</span><span class="dq-vs">≈</span><strong>${esc(r.matchCompany)}</strong><span class="subtle">${esc(r.matchType)}</span></div><small class="subtle">${Math.round(r.score * 100)}% · ${esc(r.reasons.join('; '))} · opened ${isoDate(r.createdAt)} by ${esc(r.createdBy || 'system')}</small></div>
+      <div class="dq-review-actions"><button type="button" class="button button-primary button-small" data-action="dq-merge" data-id="${esc(r.id)}" data-primary="${esc(r.matchType === 'leads' ? r.matchId : r.recordType === 'leads' ? r.recordId : r.matchId)}">${svgIcon('check')}Merge</button><button type="button" class="button button-secondary button-small" data-action="dq-keep" data-id="${esc(r.id)}">${svgIcon('users')}Keep both</button><button type="button" class="button button-ghost button-small" data-action="dq-dismiss" data-id="${esc(r.id)}">${svgIcon('xCircle')}Dismiss</button></div>
+    </li>`).join('') : `<li class="subtle">No open merge reviews. New records are compared by registrable domain, email and fuzzy organisation name at the moment they enter.</li>`;
+  const attention = d.attention.length ? d.attention.map(a => `<li class="dq-att"><span class="stage-pill ${DQ_GRADE_CLS[a.grade] || 'pill-new'}">${esc(a.grade)} · ${a.score}</span><div><strong>${esc(a.company)}</strong><small class="subtle">${esc(a.contactName || 'no contact')}${a.email ? ` · ${esc(a.email)}` : ''} · ${esc(a.reasons.join(' · '))}</small></div><button type="button" class="button button-ghost button-small" data-action="open-lead" data-id="${esc(a.id)}">${svgIcon('eye')}Open</button></li>`).join('') : '<li class="subtle">Everything is verified, complete and fresh.</li>';
+  return `${head}
+  <section class="metric-grid dlv-tiles">${tiles}</section>
+  <div class="dlv-grid">
+    <section class="panel"><div class="panel-head"><h3>${svgIcon('users')}Merge reviews</h3><span class="subtle">Merging keeps the worked record, fills its empty fields from the duplicate, re-points events and bookings, then removes the duplicate.</span></div><ul class="dq-list">${reviews}</ul></section>
+    <section class="panel"><div class="panel-head"><h3>${svgIcon('clock')}Needs attention</h3><span class="subtle">Lowest scores first · re-verification runs weekly (Mon 06:30 SAST) and on demand.</span></div><ul class="dq-list">${attention}</ul></section>
+  </div>`;
+}
+async function dqAction(action, button) {
+  const id = button.dataset.id;
+  if (action === 'dq-refresh') { await loadDataQuality(true); return true; }
+  if (action === 'dq-reverify') { state.dq.busy = true; renderApp(); try { const r = await API('/api/data/reverify', { method: 'POST', body: JSON.stringify({ limit: 10 }) }); toast(`Re-verified ${r.checked} mailbox(es)${r.remaining ? ` · ${r.remaining} still due` : ''}.`); } catch (err) { toast(err.message, true); } finally { state.dq.busy = false; await loadDataQuality(true); await refresh(); } return true; }
+  if (['dq-merge', 'dq-keep', 'dq-dismiss'].includes(action)) {
+    const body = { action: action.slice(3) }; if (body.action === 'merge') { body.primaryId = button.dataset.primary; if (!confirm('Merge these records? The duplicate will be removed after its empty-field values are copied across.')) return true; }
+    try { const r = await API(`/api/data/merge-reviews/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(body) }); state.dq.data = r.summary; toast(body.action === 'merge' ? `Merged · filled ${r.review.resolution.filled.length ? r.review.resolution.filled.join(', ') : 'no fields'}.` : 'Kept as separate records.'); await refresh(); }
+    catch (err) { toast(err.message, true); }
+    return true;
+  }
+  return false;
+}
 async function wbRunFlow(id, { force = false, redraft = false } = {}) {
   state.wb.busy[id] = true; renderApp();
   try { await API(`/api/leads/${encodeURIComponent(id)}/flow`, { method: 'POST', body: JSON.stringify({ force, redraft }) }); }
@@ -2392,6 +2458,8 @@ async function wbAction(action, button) {
   if (action === 'wb-filter') { state.wb.filter = button.dataset.filter; state.wb.selectedId = null; renderApp(); return true; }
   if (action === 'wb-select') { state.wb.selectedId = id; renderApp(); return true; }
   if (action.startsWith('seq-') || action === 'triage-apply') return wbSequenceAction(action, button);
+  if (action === 'wb-waterfall') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/waterfall`, { method: 'POST', body: '{}' }); toast(r.contactLeads.contacts.length ? `${r.contactLeads.contacts.length} public contact lead(s) found — review them in step 1.` : 'No publicly listed CSI people found on the rungs available.'); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
+  if (action === 'wb-wf-decide') { const decision = button.dataset.decision; const lead = getLead(id); const replace = decision === 'accept' && lead?.contactName ? confirm(`Replace ${lead.contactName} with this person as the primary contact?`) : false; if (decision === 'accept' && lead?.contactName && !replace) return true; try { const r = await API(`/api/leads/${encodeURIComponent(id)}/contact-leads`, { method: 'POST', body: JSON.stringify({ id: button.dataset.contact, action: decision, replace }) }); toast(decision === 'accept' ? 'Contact set — add their public work email in Edit details, then re-run the flow.' : decision === 'candidate' ? 'Captured in Discover as a candidate.' : 'Marked not relevant.'); await refresh(); } catch (err) { toast(err.message, true); } return true; }
   if (action === 'wb-run') { await wbRunFlow(id, { force: button.dataset.force === 'true' }); return true; }
   if (action === 'wb-redraft') { await wbRunFlow(id, { redraft: true }); return true; }
   if (action === 'wb-verify') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/verify-mailbox`, { method: 'POST', body: '{}' }); toast(`Mailbox: ${r.mailbox.status} — ${r.mailbox.reason}`, ['invalid', 'undeliverable'].includes(r.mailbox.status)); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
@@ -2417,7 +2485,15 @@ async function wbAddSubmit(form) {
   if (!data.company) return toast('Organisation name is required.', true);
   state.wb.busy.add = true; renderApp();
   try {
-    const lead = await API('/api/leads', { method: 'POST', body: JSON.stringify({ ...data, sourceName: data.sourceUrl ? 'Website' : 'Manual entry', stage: 'New' }) });
+    const payload = { ...data, sourceName: data.sourceUrl ? 'Website' : 'Manual entry', stage: 'New' };
+    let lead;
+    try { lead = await API('/api/leads', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (err) {
+      if (err.code !== 'duplicate' || !err.duplicates?.length) throw err;
+      const d = err.duplicates[0];
+      if (!confirm(`${d.company} already exists (${d.reasons[0]}). Add anyway? It will be queued for a merge review.`)) { delete state.wb.busy.add; state.wb.selectedId = d.type === 'leads' ? d.id : state.wb.selectedId; renderApp(); return; }
+      lead = await API('/api/leads', { method: 'POST', body: JSON.stringify({ ...payload, allowDuplicate: true }) });
+    }
     state.wb.selectedId = lead.id; state.wb.filter = 'all';
     delete state.wb.busy.add;
     await refresh();

@@ -24,6 +24,7 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 const PROPOSAL_DIR = path.join(DATA_DIR, 'proposals');
 const configStore = createConfigStore(DATA_DIR);
 const store = createSqliteStore(DATA_DIR);
+const dataEngine = require('./lib/data-engine');
 const research = createFunderResearch({ log: message => console.warn(`[research] ${message}`), allowLoopback: process.env.RESEARCH_ALLOW_LOOPBACK === 'true' && process.env.NODE_ENV !== 'production' });
 const sendingLocks = new Set();
 const mailboxVerifier = createEmailVerifier({ heloHost: process.env.SMTP_PROBE_HELO || 'verify.chelo.local', fromAddress: process.env.SMTP_PROBE_FROM || 'verify@chelo.local' });
@@ -59,6 +60,12 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
+if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
+const waterfall = dataEngine.createWaterfall({
+  fetchText: async url => (await research.fetchPublicText(url)).text,
+  search: async query => { const cfg = configStore.getSearchConfig(); if (!cfg || !cfg.apiKey) return null; return research.runSearch(cfg, query); },
+  log: message => console.warn(`[waterfall] ${message}`)
+});
 // One-time migration: the legacy single SMTP block in Settings becomes the first registered mailbox.
 try {
   const legacy = configStore.getSmtpConfig();
@@ -1075,6 +1082,113 @@ function triageQueue() {
   const now = Date.now();
   return db.leads.filter(l => l.triage && !l.triage.handled).map(l => ({ leadId: l.id, company: l.company, contactName: l.contactName, category: l.triage.category, confidence: l.triage.confidence, receivedAt: l.triage.receivedAt, dueAt: l.triage.dueAt, overdue: Boolean(l.triage.dueAt && Date.parse(l.triage.dueAt) < now), excerpt: l.triage.excerpt, hints: l.triage.hints })).sort((a, b) => (b.overdue - a.overdue) || Date.parse(a.dueAt || a.receivedAt) - Date.parse(b.dueAt || b.receivedAt));
 }
+// ---------------- Data engine (Batch 3): identity resolution, freshness, contact waterfall ----------------
+function dedupPools(excludeId = null) { return { leads: db.leads.filter(l => l.id !== excludeId), candidates: db.candidates.filter(c => c.id !== excludeId && !c.promotedLeadId), partners: db.partners.filter(p => p.id !== excludeId) }; }
+function checkDuplicates(record, { excludeId = null } = {}) {
+  const matches = dataEngine.findDuplicates(record, dedupPools(excludeId));
+  return { matches, exact: matches.filter(m => m.level === 'exact'), likely: matches.filter(m => m.level === 'likely') };
+}
+function openMergeReview(record, recordType, match, actor = 'system') {
+  if (db.mergeReviews.some(r => r.status === 'open' && ((r.recordId === record.id && r.matchId === match.id) || (r.recordId === match.id && r.matchId === record.id)))) return null;
+  const review = { id: id('merge'), status: 'open', recordId: record.id, recordType, recordCompany: record.company, matchId: match.id, matchType: match.type, matchCompany: match.company, score: match.score, reasons: match.reasons, createdAt: new Date().toISOString(), createdBy: actor, resolvedAt: null, resolvedBy: null, resolution: null };
+  db.mergeReviews.unshift(review);
+  configStore.recordAudit({ actor, action: 'data.merge-review.opened', entityType: recordType === 'leads' ? 'lead' : 'candidate', entityId: record.id, summary: `${record.company} looks like ${match.company} (${Math.round(match.score * 100)}%: ${match.reasons.join('; ')})` });
+  return review;
+}
+function queueLikelyDuplicates(record, recordType, likely, actor) { for (const m of likely.slice(0, 3)) openMergeReview(record, recordType, m, actor); }
+function recordById(type, idValue) { const list = type === 'leads' ? db.leads : type === 'candidates' ? db.candidates : db.partners; return list.find(r => r.id === idValue) || null; }
+function removeRecord(type, idValue) { if (type === 'leads') db.leads = db.leads.filter(r => r.id !== idValue); else if (type === 'candidates') db.candidates = db.candidates.filter(r => r.id !== idValue); else db.partners = db.partners.filter(r => r.id !== idValue); }
+function resolveMergeReview(review, body, actor) {
+  const action = String(body.action || '');
+  if (!['merge', 'keep', 'dismiss'].includes(action)) throw new Error('Action must be merge, keep or dismiss.');
+  if (review.status !== 'open') throw new Error('This review is already resolved.');
+  const now = new Date().toISOString();
+  if (action === 'merge') {
+    const a = recordById(review.recordType, review.recordId); const b = recordById(review.matchType, review.matchId);
+    if (!a || !b) throw new Error('One of the records no longer exists.');
+    // Primary: explicit choice, else the record that has already been worked (sent / sequence / partner), else the older one.
+    const worked = r => Number(Boolean(r.sentAt || r.emailStatus === 'Sent' || r.sequence || r.partnerId)) * 2 + Number(Boolean(r.research));
+    let primary = body.primaryId && [a, b].find(r => r.id === body.primaryId) ? [a, b].find(r => r.id === body.primaryId) : (worked(b) > worked(a) ? b : worked(a) > worked(b) ? a : (Date.parse(a.createdAt || 0) <= Date.parse(b.createdAt || 0) ? a : b));
+    const duplicate = primary === a ? b : a; const duplicateType = primary === a ? review.matchType : review.recordType; const primaryType = primary === a ? review.recordType : review.matchType;
+    if (primaryType !== 'leads' && duplicateType === 'leads') { throw new Error('Choose the pipeline record as the primary when merging a candidate into it.'); }
+    const filled = dataEngine.mergeRecords(primary, duplicate);
+    if (duplicateType === 'leads') { db.emailEvents.forEach(e => { if (e.leadId === duplicate.id) e.leadId = primary.id; }); db.bookings.forEach(b2 => { if (b2.leadId === duplicate.id) b2.leadId = primary.id; }); db.candidates.forEach(c => { if (c.promotedLeadId === duplicate.id) c.promotedLeadId = primary.id; }); }
+    removeRecord(duplicateType, duplicate.id);
+    primary.updatedAt = now;
+    review.resolution = { action, primaryId: primary.id, primaryType, removedId: duplicate.id, removedType: duplicateType, filled };
+    configStore.recordAudit({ actor, action: 'data.merged', entityType: primaryType === 'leads' ? 'lead' : 'candidate', entityId: primary.id, summary: `Merged ${duplicate.company} (${duplicate.id}) into ${primary.company}; filled ${filled.join(', ') || 'nothing'}` });
+    addActivity(`Merged duplicate ${duplicate.company} into ${primary.company}`, 'lead', actor);
+  } else {
+    review.resolution = { action };
+    configStore.recordAudit({ actor, action: `data.merge-review.${action === 'keep' ? 'kept-separate' : 'dismissed'}`, entityType: 'lead', entityId: review.recordId, summary: `${review.recordCompany} and ${review.matchCompany} kept as separate records` });
+  }
+  review.status = 'resolved'; review.resolvedAt = now; review.resolvedBy = actor;
+  return review;
+}
+function dataSummary() {
+  const now = new Date();
+  const graded = db.leads.filter(l => !l.isDemo).map(l => ({ lead: l, q: dataEngine.dataQuality(l, now) }));
+  const gradeCounts = graded.reduce((acc, g) => { acc[g.q.grade] = (acc[g.q.grade] || 0) + 1; return acc; }, {});
+  const reverifyDue = graded.filter(g => g.q.reverifyDue && g.lead.email && !g.lead.doNotContact);
+  const stale = graded.filter(g => g.q.freshness.label === 'stale');
+  const incomplete = graded.filter(g => g.q.completeness.score < 60);
+  const openReviews = db.mergeReviews.filter(r => r.status === 'open');
+  return {
+    totals: { leads: db.leads.length, candidates: db.candidates.filter(c => !c.promotedLeadId).length, partners: db.partners.length },
+    gradeCounts, reverifyDue: reverifyDue.length, stale: stale.length, incomplete: incomplete.length, openMergeReviews: openReviews.length,
+    averageScore: graded.length ? Math.round(graded.reduce((acc, g) => acc + g.q.score, 0) / graded.length) : 0,
+    attention: graded.filter(g => g.q.reverifyDue || g.q.freshness.label === 'stale' || g.q.completeness.score < 60).sort((a, b) => a.q.score - b.q.score).slice(0, 60).map(g => ({ id: g.lead.id, company: g.lead.company, contactName: g.lead.contactName, email: g.lead.email, score: g.q.score, grade: g.q.grade, reverifyDue: g.q.reverifyDue, reasons: [...g.q.freshness.reasons, ...(g.q.completeness.missing.length ? [`missing ${g.q.completeness.missing.slice(0, 4).join(', ')}`] : [])] })),
+    mergeReviews: openReviews.slice(0, 100),
+    reverifyAfterDays: dataEngine.REVERIFY_AFTER_DAYS
+  };
+}
+async function reverifyStale({ limit = 10, actor = 'system' } = {}) {
+  const now = new Date();
+  const due = db.leads.filter(l => !l.isDemo && l.email && !l.doNotContact && dataEngine.freshness(l, now).reverifyDue).sort((a, b) => Date.parse(a.mailboxCheck?.checkedAt || 0) - Date.parse(b.mailboxCheck?.checkedAt || 0)).slice(0, Math.max(1, Math.min(50, limit)));
+  const results = [];
+  for (const lead of due) {
+    try {
+      mailboxVerifier._cache.delete(normalizeEmail(lead.email));
+      const mailbox = await mailboxVerifier.verify(lead.email, { skipSmtp: SMTP_PROBE_DISABLED });
+      const before = lead.mailboxCheck?.status || 'unknown';
+      lead.mailboxCheck = { ...mailbox, reverified: true }; lead.updatedAt = new Date().toISOString();
+      if (['invalid', 'undeliverable'].includes(mailbox.status)) { rememberSuppressedEmail(lead.email); if (lead.sequence) stopLeadSequence(lead, 'bounced', actor); if (lead.flow) flowStep(lead, 'verify', { status: 'dead', detail: mailbox.reason, mailbox: mailbox.status }); }
+      configStore.recordAudit({ actor, action: 'data.reverified', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: mailbox ${before} → ${mailbox.status} (${mailbox.reason || ''})` });
+      results.push({ leadId: lead.id, company: lead.company, before, after: mailbox.status });
+    } catch (err) { results.push({ leadId: lead.id, company: lead.company, error: String(err.message || err).slice(0, 160) }); }
+  }
+  if (results.length) saveDb();
+  return { checked: results.length, remaining: Math.max(0, db.leads.filter(l => !l.isDemo && l.email && !l.doNotContact && dataEngine.freshness(l, new Date()).reverifyDue).length), results };
+}
+async function runContactWaterfall(lead, actor) {
+  const result = await waterfall.run(lead, dedupPools(lead.id));
+  lead.contactLeads = { ...result, decided: (lead.contactLeads?.decided || []) };
+  // keep earlier decisions on the same person
+  for (const c of lead.contactLeads.contacts) { const prior = lead.contactLeads.decided.find(d => d.name.toLowerCase() === c.name.toLowerCase()); if (prior) c.status = prior.status; }
+  lead.updatedAt = new Date().toISOString();
+  configStore.recordAudit({ actor, action: 'data.waterfall.ran', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${result.contacts.length} public contact lead(s) across ${result.hops.filter(h => h.status === 'done').length} hop(s) in ${result.durationMs}ms` });
+  return lead.contactLeads;
+}
+function decideContactLead(lead, body, actor) {
+  const wf = lead.contactLeads; if (!wf) throw new Error('Run the contact waterfall first.');
+  const c = wf.contacts.find(x => x.id === body.id); if (!c) throw new Error('Unknown contact lead.');
+  const action = String(body.action || '');
+  if (!['accept', 'candidate', 'reject'].includes(action)) throw new Error('Action must be accept, candidate or reject.');
+  c.status = action === 'reject' ? 'rejected' : 'accepted';
+  wf.decided = [...(wf.decided || []).filter(d => d.name.toLowerCase() !== c.name.toLowerCase()), { name: c.name, status: c.status, at: new Date().toISOString() }];
+  let outcome = { action };
+  if (action === 'accept') {
+    if (lead.contactName && lead.contactName.toLowerCase() !== c.name.toLowerCase() && !body.replace) throw new Error(`This record already has ${lead.contactName}; choose "replace" or capture as a candidate instead.`);
+    lead.contactName = c.name; lead.title = c.title || lead.title || ''; lead.contactSource = { kind: 'waterfall', hops: c.hops, confidence: c.confidence, sources: c.sources, at: new Date().toISOString() };
+    outcome.applied = true;
+  } else if (action === 'candidate') {
+    const candidate = { id: id('cand'), company: lead.company, contactName: c.name, title: c.title || '', email: '', phone: '', sector: lead.sector || '', province: lead.province || '', project: lead.project || '', projectId: lead.projectId || '', amount: lead.amount || 0, sourceName: 'Contact waterfall', sourceUrl: c.sources[0] || lead.website || '', website: lead.website || '', notes: `Found via ${c.hops.join(' + ')} (${Math.round(c.confidence * 100)}% confidence). Add a public work email before outreach.`, status: 'New candidate', createdAt: new Date().toISOString(), source: 'waterfall', fromLeadId: lead.id, fitScore: 0 };
+    db.candidates.unshift(candidate); outcome.candidateId = candidate.id;
+  }
+  lead.updatedAt = new Date().toISOString();
+  configStore.recordAudit({ actor, action: `data.contact-lead.${action}`, entityType: 'lead', entityId: lead.id, summary: `${c.name} (${c.title || 'no title'}) ${action === 'reject' ? 'rejected' : action === 'accept' ? 'set as contact' : 'captured as candidate'} — ${c.hops.join(' + ')}` });
+  return outcome;
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1260,7 +1374,7 @@ function clientLead(lead) {
     const { openToken, ...safeDraft } = draft;
     return safeDraft;
   };
-  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft) };
+  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft), dataQuality: dataEngine.dataQuality(lead) };
 }
 function safeFilename(name) { return path.basename(String(name || '')); }
 function mimeBase64(value) {
@@ -1418,6 +1532,13 @@ async function handleApi(req, res, url) {
       const result = await sendEngine.tick({ limit: 25 });
       await refreshMailboxHealth().catch(() => {});
       return sendJson(res, 200, { ok: true, ran: result.ran });
+    }
+    if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/data-tick') {
+      const secret = process.env.CRON_SECRET || '';
+      const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
+      const result = await reverifyStale({ limit: 20, actor: 'cron' });
+      return sendJson(res, 200, { ok: true, ...result });
     }
     if (method === 'GET' && pathname === '/api/auth/status') return sendJson(res, 200, authStatus(req));
     if (method === 'POST' && pathname === '/api/auth/demo') {
@@ -1619,14 +1740,16 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const name = clampText(body.name, 120); const website = String(body.website || '').trim();
       if (!name) return sendJson(res, 400, { error: 'Organisation name is required.' });
-      if (db.leads.some(l => l.company.toLowerCase() === name.toLowerCase())) return sendJson(res, 409, { error: `${name} is already in your database.` });
       const email = normalizeEmail(body.email);
+      const dup = checkDuplicates({ company: name, email, website });
+      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, { error: `${dup.exact[0].company} is already in your workspace (${dup.exact[0].reasons[0]}).`, duplicates: dup.exact, code: 'duplicate' });
       const contactCheck = await inspectContactRecord({ company: name, contactName: body.contactName || '', email, sourceUrl: website });
       if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason });
       const lead = safeLead({ company: name, contactName: clampText(body.contactName, 120), title: clampText(body.title, 120), email, sourceUrl: website, sourceName: 'Web discovery', sector: clampText(body.sector, 80), notes: clampText(body.summary, 400), stage: 'New' }, contactCheck);
       lead.website = website;
       lead.discovery = { query: clampText(body.query, 200), summary: clampText(body.summary, 400), sources: Array.isArray(body.sources) ? body.sources.slice(0, 3).map(String) : [], addedAt: new Date().toISOString() };
       db.leads.unshift(lead);
+      queueLikelyDuplicates(lead, 'leads', dup.likely, actorName());
       configStore.recordAudit({ actor: actorName(), action: 'discovery.added', entityType: 'lead', entityId: lead.id, summary: `${name} added from web discovery (${website || 'no website'})` });
       addActivity(`${name} added from web discovery`, 'lead', actorName());
       saveDb();
@@ -1700,6 +1823,16 @@ async function handleApi(req, res, url) {
       const result = await sendEngine.tick({ limit: 10 });
       return sendJson(res, 200, { ok: true, ran: result.ran, results: (result.results || []).map(j => ({ id: j.id, status: j.status, leadId: j.leadId, error: j.lastError })) });
     }
+    if (method === 'GET' && pathname === '/api/data') return sendJson(res, 200, dataSummary());
+    if (method === 'POST' && pathname === '/api/data/reverify') { const body = await readBody(req); return sendJson(res, 200, await reverifyStale({ limit: Number(body.limit) || 10, actor: actorName() })); }
+    const mergeRoute = pathname.match(/^\/api\/data\/merge-reviews\/([^/]+)$/);
+    if (method === 'POST' && mergeRoute) {
+      const review = db.mergeReviews.find(r => r.id === mergeRoute[1]); if (!review) return sendJson(res, 404, { error: 'Merge review not found.' });
+      const body = await readBody(req);
+      try { resolveMergeReview(review, body, actorName()); saveDb(); return sendJson(res, 200, { review, summary: dataSummary() }); }
+      catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+    if (method === 'POST' && pathname === '/api/data/check-duplicates') { const body = await readBody(req); return sendJson(res, 200, checkDuplicates({ company: body.company, email: normalizeEmail(body.email), website: body.website }, { excludeId: body.excludeId || null })); }
     if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(), categories: triage.CATEGORIES });
     if (method === 'GET' && pathname === '/api/workbench') {
       const leads = db.leads.map(workbenchLead);
@@ -1850,11 +1983,14 @@ async function handleApi(req, res, url) {
       if (email && isSuppressedEmail(email) && !body.doNotContact) return sendJson(res, 409, { error: 'This address is on the do-not-contact suppression list.' });
       const dates = verificationDateFields(body);
       if (!dates.ok) return sendJson(res, 400, { error: dates.issues.join(' ') });
+      const dup = checkDuplicates({ company: body.company, email, website: body.website || body.sourceUrl });
+      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, { error: `${dup.exact[0].company} is already in your workspace (${dup.exact[0].reasons[0]}).`, duplicates: dup.exact, code: 'duplicate' });
       const contactCheck = await inspectContactRecord({ ...body, email });
       if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason || 'Email validation failed; the invalid contact was not saved.' });
       const lead = safeLead({ ...body, ...dates, email }, contactCheck);
       if (lead.doNotContact) rememberSuppressedEmail(lead.email);
       db.leads.unshift(lead);
+      queueLikelyDuplicates(lead, 'leads', body.allowDuplicate === true ? dup.matches : dup.likely, actorName());
       addActivity(`New prospect added: ${lead.company}${contactCheck.status === 'ready' ? '' : ' · contact details need clarification'}`, 'lead', actorName());
       saveDb();
       return sendJson(res, 201, lead);
@@ -1903,7 +2039,9 @@ async function handleApi(req, res, url) {
       });
       for (const result of rowResults) {
         if (result.status === 'ready' || result.status === 'needs-clarification' || result.status === 'retry-required') {
+          const fuzzy = checkDuplicates(result.candidate, { excludeId: result.candidate.id });
           db.candidates.unshift(result.candidate); imported++;
+          if (fuzzy.matches.length) { queueLikelyDuplicates(result.candidate, 'candidates', fuzzy.matches, actorName()); result.mergeReview = true; }
           if (result.status === 'needs-clarification') needsClarification++;
           if (result.status === 'retry-required') retryRequired++;
         } else if (result.status === 'deleted-invalid') invalidDeleted++;
@@ -2014,6 +2152,7 @@ async function handleApi(req, res, url) {
         }
         const lead = safeLead(candidate, check);
         db.leads.unshift(lead);
+        queueLikelyDuplicates(lead, 'leads', checkDuplicates(lead, { excludeId: lead.id }).matches.filter(x => x.id !== candidate.id), actorName());
         candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
         addActivity(`${candidate.company} added to the pipeline`, 'lead', actorName());
         saveDb();
@@ -2406,6 +2545,16 @@ async function handleApi(req, res, url) {
         if (body.reason) lead.sequence.stoppedReason = `Stopped by staff: ${String(body.reason).slice(0, 120)}`;
         saveDb();
         return sendJson(res, 200, { sequence: lead.sequence, lead: clientLead(lead) });
+      }
+      if (method === 'POST' && action === 'waterfall') {
+        if (lead.doNotContact) return sendJson(res, 409, { error: 'This organisation is on the do-not-contact list.' });
+        try { const wf = await runContactWaterfall(lead, actorName()); saveDb(); return sendJson(res, 200, { ok: true, contactLeads: wf, lead: workbenchLead(lead) }); }
+        catch (err) { return sendJson(res, 502, { error: `Waterfall failed: ${String(err.message || err).slice(0, 200)}` }); }
+      }
+      if (method === 'POST' && action === 'contact-leads') {
+        const body = await readBody(req);
+        try { const outcome = decideContactLead(lead, body, actorName()); saveDb(); return sendJson(res, 200, { ok: true, outcome, lead: workbenchLead(lead) }); }
+        catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
       if (method === 'POST' && action === 'triage') {
         const body = await readBody(req);
