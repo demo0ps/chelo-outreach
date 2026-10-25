@@ -43,3 +43,10 @@ Upload timeout defaults to 25 s and can be raised with `SUPABASE_TIMEOUT_MS`.
 
 ### Transport note (serverless)
 Uploads use a dedicated `node:https` request with `agent:false` + `Connection: close` (one fresh TLS connection per call) and retry once on timeout/reset. Reason: on Vercel the process is frozen between invocations; a kept-alive socket the Supabase edge has since closed makes POST uploads hang until timeout while GETs still appear to work. Symptom seen in production 2026-10-25: `push: The operation was aborted due to timeout` with the bucket present and GETs logged at Supabase.
+
+### Push ordering on Vercel (root cause of 2026-10-25 failures)
+Vercel may freeze the function as soon as the HTTP response completes. The push used to run *after* `res.finish`, so
+the upload (or its TLS handshake) was suspended mid-flight and surfaced later as `aborted due to timeout` or
+`Client network socket disconnected before secure TLS connection was established`. `api/index.js` now wraps
+`res.end()` for mutating requests: checkpoint + upload finish first (budget `SYNC_PUSH_BUDGET_MS`, default 40 s),
+then the response body is ended. Cost: mutating requests take ~0.5–2 s longer; reads are unaffected.
