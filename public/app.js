@@ -10,6 +10,7 @@ const API = async (url, options = {}) => {
 };
 
 const state = {
+  palette: null,
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
   view: 'overview', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
@@ -272,13 +273,105 @@ function navItem(view, title, icon, count = null) {
     <span class="nav-icon">${svgIcon(icon)}</span><span class="nav-label">${esc(title)}</span>${count != null && count > 0 ? `<span class="nav-count">${count}</span>` : ''}
   </button>`;
 }
+function isMac() { return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || ''); }
+function settingsSectionLabel(section) { return ({ integrations: 'Integrations', team: 'Team & governance', briefings: 'Briefings', audit: 'Audit trail', research: 'Research', general: 'General' })[section] || (section ? section.charAt(0).toUpperCase() + section.slice(1) : ''); }
+
+// ---- Command palette (⌘K / Ctrl+K) ----
+const VIEW_META = [
+  ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Partners', 'partners'],
+  ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
+];
+function paletteItems(query) {
+  const q = (query || '').trim().toLowerCase();
+  const match = text => !q || text.toLowerCase().includes(q);
+  const groups = [];
+  const nav = VIEW_META.filter(([, title]) => match(title)).map(([view, title, icon]) => ({ id: 'view:' + view, group: 'Go to', icon, title, hint: 'View', run: () => setView(view) }));
+  if (nav.length) groups.push(['Go to', nav]);
+  const actions = [
+    { id: 'act:new-lead', icon: 'plus', title: 'Add prospect', hint: 'Action', run: () => openModal('lead-form') },
+    { id: 'act:import', icon: 'upload', title: 'Import candidates from CSV', hint: 'Action', run: () => { setView('discover'); setTimeout(() => $('#candidate-csv')?.click(), 50); } },
+    { id: 'act:copilot', icon: 'spark', title: 'Open POPIA copilot', hint: 'Action', run: () => openModal('copilot') },
+    { id: 'act:briefings', icon: 'bell', title: 'Review briefing requests', hint: 'Action', run: () => setView('briefings') },
+    { id: 'act:settings-team', icon: 'users', title: 'Team & approval policy', hint: 'Settings', run: () => { state.settingsSection = 'team'; setView('settings'); } },
+    { id: 'act:settings-integrations', icon: 'link', title: 'Email & research integrations', hint: 'Settings', run: () => { state.settingsSection = 'integrations'; setView('settings'); } }
+  ].filter(a => match(a.title));
+  if (actions.length) groups.push(['Actions', actions]);
+  if (q.length >= 2) {
+    const leads = (state.data.leads || []).filter(l => match(`${l.company} ${l.contactName || ''} ${l.project || ''}`)).slice(0, 6)
+      .map(l => ({ id: 'lead:' + l.id, icon: 'building', title: l.company, hint: l.stage || 'Prospect', run: () => openModal('lead-detail', l.id) }));
+    if (leads.length) groups.push(['Prospects', leads]);
+    const projects = (state.data.projects || []).filter(p => match(`${p.name} ${p.sector || ''} ${p.province || ''}`)).slice(0, 4)
+      .map(p => ({ id: 'project:' + p.id, icon: 'grid', title: p.name, hint: p.province || 'Project', run: () => openModal('project-detail', p.id) }));
+    if (projects.length) groups.push(['Projects', projects]);
+    const partners = (state.data.partners || []).filter(p => match(p.company || '')).slice(0, 4)
+      .map(p => ({ id: 'partner:' + p.id, icon: 'partners', title: p.company, hint: 'Partner', run: () => openModal('partner', p.id) }));
+    if (partners.length) groups.push(['Partners', partners]);
+  }
+  return groups;
+}
+function renderPalette() {
+  if (!state.palette) return '';
+  const groups = paletteItems(state.palette.query);
+  const flat = groups.flatMap(([, items]) => items);
+  const active = Math.min(state.palette.index || 0, Math.max(flat.length - 1, 0));
+  let i = 0;
+  const list = groups.length ? groups.map(([name, items]) => `<div class="cmdk-group">${esc(name)}</div>${items.map(item => { const idx = i++; return `<button type="button" class="cmdk-item ${idx === active ? 'is-active' : ''}" data-cmdk="${esc(item.id)}" data-index="${idx}">${svgIcon(item.icon)}<span>${esc(item.title)}</span><small>${esc(item.hint || '')}</small></button>`; }).join('')}`).join('')
+    : `<div class="cmdk-empty">No matches for “${esc(state.palette.query)}”</div>`;
+  return `<div class="cmdk-backdrop" id="cmdk-backdrop" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk">
+      <div class="cmdk-input">${svgIcon('search')}<input id="cmdk-input" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a view, prospect, project or action…" value="${esc(state.palette.query)}" /><kbd class="kbd">esc</kbd></div>
+      <div class="cmdk-list" id="cmdk-list">${list}</div>
+      <div class="cmdk-foot"><span><kbd class="kbd">↑↓</kbd>navigate</span><span><kbd class="kbd">↵</kbd>open</span><span><kbd class="kbd">esc</kbd>close</span></div>
+    </div>
+  </div>`;
+}
+function openPalette(query = '') { state.palette = { query, index: 0 }; renderPalette_mount(); }
+function closePalette() { state.palette = null; renderPalette_mount(); }
+function renderPalette_mount() {
+  let root = document.getElementById('cmdk-root');
+  if (!root) { root = document.createElement('div'); root.id = 'cmdk-root'; document.body.appendChild(root); }
+  root.innerHTML = renderPalette();
+  const input = document.getElementById('cmdk-input');
+  if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+}
+function runPaletteItem(id) {
+  const item = paletteItems(state.palette?.query).flatMap(([, items]) => items).find(i => i.id === id);
+  closePalette();
+  if (item) item.run();
+}
+document.addEventListener('keydown', event => {
+  const mod = event.metaKey || event.ctrlKey;
+  if (mod && (event.key === 'k' || event.key === 'K')) { event.preventDefault(); if (!document.getElementById('app')) return; state.palette ? closePalette() : openPalette(); return; }
+  if (!state.palette) return;
+  const flat = paletteItems(state.palette.query).flatMap(([, items]) => items);
+  if (event.key === 'Escape') { event.preventDefault(); closePalette(); }
+  else if (event.key === 'ArrowDown') { event.preventDefault(); state.palette.index = flat.length ? (state.palette.index + 1) % flat.length : 0; renderPalette_mount(); }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); state.palette.index = flat.length ? (state.palette.index - 1 + flat.length) % flat.length : 0; renderPalette_mount(); }
+  else if (event.key === 'Enter') { event.preventDefault(); const item = flat[state.palette.index]; if (item) runPaletteItem(item.id); }
+}, true);
+document.addEventListener('input', event => {
+  if (event.target && event.target.id === 'cmdk-input' && state.palette) { state.palette.query = event.target.value; state.palette.index = 0; const list = document.getElementById('cmdk-list'); if (list) { list.innerHTML = renderPalette().match(/<div class="cmdk-list" id="cmdk-list">([\s\S]*)<\/div>\s*<div class="cmdk-foot">/)[1]; } }
+});
+document.addEventListener('click', event => {
+  if (!state.palette) return;
+  const item = event.target.closest('[data-cmdk]');
+  if (item) { event.preventDefault(); runPaletteItem(item.dataset.cmdk); return; }
+  if (event.target.id === 'cmdk-backdrop') closePalette();
+});
+document.addEventListener('mouseover', event => {
+  if (!state.palette) return;
+  const item = event.target.closest('.cmdk-item');
+  if (item && Number(item.dataset.index) !== state.palette.index) { state.palette.index = Number(item.dataset.index); document.querySelectorAll('.cmdk-item').forEach(el => el.classList.toggle('is-active', el === item)); }
+});
+
 function shellHeader() {
   const label = ({ overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
-    <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><span>Chelo</span>&nbsp; / &nbsp;<strong>${label}</strong></div>
+    <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
     <div class="topbar-right">
-      <label class="top-search">${svgIcon('search')}<input id="global-search" type="search" placeholder="Search prospects, partners…" value="${esc(state.query)}" aria-label="Search" /></label>
+      <label class="top-search">${svgIcon('search')}<input id="global-search" type="search" placeholder="Search or jump to…" value="${esc(state.query)}" aria-label="Search" /><kbd class="kbd" title="Command palette">${isMac() ? '⌘' : 'Ctrl'} K</kbd></label>
       <span class="top-separator"></span>
       <button type="button" class="icon-button" aria-label="Briefing requests" title="Briefing requests" data-view="briefings">${svgIcon('bell')}${pending ? '<span class="notification-dot"></span>' : ''}</button>
       ${state.auth.demoAccess ? '<span class="demo-access-badge">DEMO ADMIN</span>' : ''}<span class="avatar top-avatar top-avatar-wrap" title="${esc(state.auth.displayName || state.auth.username || 'Administrator')} · ${esc(roleLabel(state.auth.role))}">${initials(state.auth.displayName || state.auth.username || 'Administrator')}</span>
@@ -1739,7 +1832,7 @@ document.addEventListener('drop', async event => {
   } catch (err) { toast(err.message, true); }
 });
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || state.palette) return;
   if (state.mobileMoreOpen) { state.mobileMoreOpen = false; renderApp(); return; }
   if (state.modal) closeModal();
 });

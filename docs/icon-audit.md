@@ -182,3 +182,11 @@ Committed & promoted. Remaining: user to eyeball live site; report any specific 
 - [x] Kanban glyph redrawn as a bordered board with 3 lanes + cards (no longer reads as inverted bars)
 - [x] Verified arrow directions: upload/download/arrow/back/logout/external/trend/send all correct
 - [ ] user visual confirmation on Chrome desktop
+
+## UI redesign (Linear/Vercel aesthetic) — 2026-10-25
+Decisions: dark zinc-950 sidebar + light zinc app; single purple accent; restyle + ⌘K palette, breadcrumbs, dense tables, sticky headers; Geist bundled locally.
+- [x] public/ui.css design-system layer (tokens, type, surfaces, depth, motion, focus rings, palette)
+- [x] Geist Sans/Mono variable woff2 in public/fonts (server mime + immutable cache)
+- [x] Breadcrumb "Workspace / View / Section", ⌘K hint in search, command palette (views, actions, prospects, projects, partners)
+- [x] tools/render-audit.js committed (replaces /tmp harness)
+- [ ] user visual confirmation; follow-ups: per-view polish from screenshots
