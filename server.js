@@ -25,7 +25,10 @@ const emailDomainCheckCache = new Map();
 const PORT = Number(process.env.PORT || 3000);
 const DEMO_ADMIN_ACCESS = process.env.DEMO_ADMIN_ACCESS === 'true' && process.env.NODE_ENV !== 'production' && Boolean(process.env.DATA_DIR);
 const DEMO_OPEN_ACCESS = process.env.DEMO_OPEN_ACCESS === 'true' && process.env.NODE_ENV !== 'production' && Boolean(process.env.DATA_DIR);
-const DEMO_OPEN_CSRF_TOKEN = DEMO_OPEN_ACCESS ? crypto.randomBytes(32).toString('hex') : '';
+// Deterministic when SETTINGS_ENCRYPTION_KEY is set so multi-instance demo hosts (e.g. serverless) agree on the token.
+const DEMO_OPEN_CSRF_TOKEN = DEMO_OPEN_ACCESS
+  ? (process.env.SETTINGS_ENCRYPTION_KEY ? crypto.createHash('sha256').update(`chelo-demo-csrf:${process.env.SETTINGS_ENCRYPTION_KEY}`).digest('hex') : crypto.randomBytes(32).toString('hex'))
+  : '';
 const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
@@ -2075,7 +2078,7 @@ function serveSharedProposal(res, token) {
   return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal.pdf`, 'inline');
 }
 
-const server = http.createServer(async (req, res) => {
+const requestHandler = async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
   const trackedOpen = url.pathname.match(/^\/track\/open\/([a-f0-9]{48})\.gif$/);
@@ -2112,11 +2115,14 @@ const server = http.createServer(async (req, res) => {
   if (share && req.method === 'GET') return serveSharedProposal(res, share[1]);
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); return res.end('Method not allowed'); }
   return serveStatic(req, res, url.pathname);
-});
+};
+const server = http.createServer(requestHandler);
 
-server.listen(PORT, HOST, () => {
-  console.log(`Chelo Partnerships Workspace running at http://${HOST}:${PORT}`);
-  console.log(`Data directory: ${DATA_DIR} (SQLite WAL: ${path.basename(store.sqlitePath)}). Demo prospects are fictional; verified projects are Chelo seed records.`);
-});
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    console.log(`Chelo Partnerships Workspace running at http://${HOST}:${PORT}`);
+    console.log(`Data directory: ${DATA_DIR} (SQLite WAL: ${path.basename(store.sqlitePath)}). Demo prospects are fictional; verified projects are Chelo seed records.`);
+  });
+}
 
-module.exports = { server };
+module.exports = { server, requestHandler, flushPendingWrites: () => { if (savePending) flushDb(); } };
