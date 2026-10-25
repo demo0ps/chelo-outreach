@@ -13,7 +13,7 @@ const state = {
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
   dq: { data: null, loading: false, error: '', busy: false },
-  wb: { selectedId: null, filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
+  wb: { selectedId: null, sort: 'fit', filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
   view: 'workbench', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
@@ -491,7 +491,7 @@ function overviewView() {
     <section class="bottom-grid">
       <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('prospects')}Recently updated prospects</h2><p class="panel-description">Source-backed relationships, not just names on a list</p></div><button class="panel-action" data-view="prospects">${svgIcon('arrow')}See all →</button></div><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / contact</th><th>Stage</th><th>Potential ask</th><th>Fit</th><th></th></tr></thead><tbody>${leadRows || `<tr><td colspan="5" class="panel-empty">No prospects yet.</td></tr>`}</tbody></table></div></div>
       <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('calendar')}Upcoming briefings</h2><p class="panel-description">Requests and confirmed conversations</p></div><button class="panel-action" data-view="briefings">${svgIcon('settings')}Manage →</button></div><div class="booking-list">${bookingRows || `<div class="panel-empty"><strong>No briefings scheduled</strong>When a donor requests a time, it will appear here.</div>`}</div></div>
-    </section>${radarPanel}`;
+    </section>${radarPanel}${signalsPanel()}`;
 }
 
 function filteredLeads() {
@@ -749,6 +749,8 @@ function leadFormModal(lead) {
     <div class="form-group"><label for="email">Work email</label><input class="form-control" id="email" name="email" type="email" value="${esc(lead?.email || '')}" placeholder="name@organisation.org" /></div>
     <div class="form-group"><label for="phone">Phone number</label><input class="form-control" id="phone" name="phone" value="${esc(lead?.phone || '')}" placeholder="+27 …" /></div>
     <div class="form-group"><label for="sector">Sector</label><input class="form-control" id="sector" name="sector" value="${esc(lead?.sector || '')}" placeholder="e.g. Financial services" /></div>
+    <div class="form-group"><label for="financialYearEnd">Financial year-end (times the approach)</label><select class="form-control" id="financialYearEnd" name="financialYearEnd"><option value="">Unknown</option>${FYE_MONTHS.map((m, i) => `<option value="${i + 1}" ${Number(lead?.financialYearEnd) === i + 1 ? 'selected' : ''}>${m}${i + 1 === 3 ? ' (most common)' : i + 1 === 6 ? ' (common)' : i + 1 === 12 ? ' (common)' : ''}</option>`).join('')}</select></div>
+    <div class="form-group"><label for="lead-province">Head office / footprint province</label><input class="form-control" id="lead-province" name="province" value="${esc(lead?.province || '')}" placeholder="e.g. Gauteng or National" /></div>
     <div class="form-group"><label for="amount">Potential contribution (ZAR)</label><input class="form-control" id="amount" name="amount" type="number" min="0" step="1000" value="${Number(lead?.amount || 0) || ''}" placeholder="250000" /></div>
     <div class="form-group full"><label for="projectId">Verified project to back</label><select class="form-control" id="projectId" name="projectId">${projectOptions(lead?.projectId)}</select><span class="form-hint">Linked projects feed the funding-gap ledger. Choose “Other” to keep a free-text focus.</span></div>
     <div class="form-group full project-freeform ${lead?.projectId ? 'is-hidden' : ''}"><label for="project">Impact / project focus (free text)</label><input class="form-control" id="project" name="project" value="${esc(lead?.project || 'Education impact partnership')}" placeholder="What could this partner fund?" /></div>
@@ -2140,6 +2142,7 @@ function workbenchView() {
   const counts = leads.reduce((acc, l) => { const s = wbStatusOf(l); acc[s] = (acc[s] || 0) + 1; acc.all += 1; return acc; }, { all: 0 });
   const q = state.query.trim().toLowerCase();
   const visible = leads.filter(l => (state.wb.filter === 'all' ? wbStatusOf(l) !== 'dead' : wbStatusOf(l) === state.wb.filter) && (!q || `${l.company} ${l.contactName} ${l.email} ${l.project || ''}`.toLowerCase().includes(q)));
+  if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
   return `${pageHead('Outreach workbench', 'From lead to sent email in one place', 'Add or discover organisations, let Chelo verify the mailbox, research their CSI focus and draft the email — you review the findings, approve and send.', `<button type="button" class="button button-secondary" data-view="discover">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
@@ -2147,6 +2150,7 @@ function workbenchView() {
   <div class="wb-layout">
     <section class="panel wb-list-panel">
       <div class="wb-filters" role="tablist">${WB_FILTERS.map(([key, label]) => `<button type="button" class="wb-filter ${state.wb.filter === key ? 'is-active' : ''}" data-action="wb-filter" data-filter="${key}" role="tab">${esc(label)}<span class="wb-filter-count">${counts[key] || 0}</span></button>`).join('')}</div>
+      <div class="wb-sort"><span class="subtle">Order by</span><button type="button" class="wb-sort-btn ${state.wb.sort === 'fit' ? 'is-active' : ''}" data-action="wb-sort" data-sort="fit" title="Sector × province × SED × approach window × warmth">${svgIcon('target')}Fit & timing</button><button type="button" class="wb-sort-btn ${state.wb.sort === 'recent' ? 'is-active' : ''}" data-action="wb-sort" data-sort="recent">${svgIcon('clock')}Recent</button></div>
       <div class="wb-list">${visible.length ? visible.map(l => wbRow(l, selected && selected.id === l.id)).join('') : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('discover')}</div><p>No leads here yet. Add one above, import a CSV or discover organisations on the web.</p></div>`}</div>
     </section>
     <section class="wb-detail">${selected ? wbStepper(selected) : `<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('target')}</div><p>Select a lead to work on it.</p></div>`}</section>
@@ -2177,7 +2181,7 @@ function wbRow(l, active) {
   return `<button type="button" class="wb-row ${active ? 'is-active' : ''} wb-row-${s}" data-action="wb-select" data-id="${esc(l.id)}">
     <span class="wb-row-avatar">${initials(l.company)}</span>
     <span class="wb-row-copy"><strong>${esc(l.company)}</strong><small>${esc(l.contactName || 'No contact yet')}${l.project ? ` · ${esc(l.project)}` : ''}</small></span>
-    <span class="wb-row-status">${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
+    <span class="wb-row-status">${fitPill(l.fit)}${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
   </button>`;
 }
 function wbStepState(lead, name) { return lead.flow?.steps?.[name] || null; }
@@ -2235,7 +2239,8 @@ function wbStepper(lead) {
   // 3 · Match
   const matchBody = `<label class="form-group"><span>Chelo project this funder should hear about</span>
       <select class="form-control" data-wb-project="${esc(lead.id)}"><option value="">— choose a verified project —</option>${projects.map(p => `<option value="${esc(p.id)}" ${lead.projectId === p.id ? 'selected' : ''}>${esc(p.name)} · ${esc(p.sector || '')} · ${esc(p.province || '')}${brief?.suggestedProjectId === p.id ? ' (suggested from research)' : ''}</option>`).join('')}</select></label>
-    <p class="subtle">${esc(match?.detail || 'Pick the project whose outcomes match their CSI focus; the email and PDF will anchor on it.')}</p>`;
+    <p class="subtle">${esc(match?.detail || 'Pick the project whose outcomes match their CSI focus; the email and PDF will anchor on it.')}</p>
+    ${wbFitPanel(lead)}`;
   // 4 · Draft
   const d = lead.emailDraft;
   const draftBody = d ? `<label class="form-group"><span>Subject</span><input id="email-subject" class="form-control" value="${esc(d.subject || '')}" ${emailStatus === 'Sent' ? 'readonly' : ''} /></label>
@@ -2278,7 +2283,7 @@ function wbStepper(lead) {
     ${lead.flow?.error ? `<p class="form-error">${esc(lead.flow.error)}</p>` : ''}
     ${wbStep(1, 'Verify email', verify?.status, verify?.detail, verifyBody, { open: openStep === 'verify' })}
     ${wbStep(2, 'Research CSI focus', researchStep?.status, researchStep?.detail, researchBody, { open: openStep === 'research' })}
-    ${wbStep(3, 'Match a Chelo project', match?.status, match?.detail, matchBody, { open: openStep === 'match' })}
+    ${wbStep(3, 'Match project · fit & timing', match?.status, lead.fit ? `Fit ${lead.fit.score} · ${lead.fit.window?.label || 'FYE unknown'}` : match?.detail, matchBody, { open: openStep === 'match' })}
     ${wbStep(4, 'Draft email', draft?.status, draft?.detail, draftBody, { open: openStep === 'draft' })}
     ${wbStep(5, 'Review & approve sequence', wbSequenceStepStatus(lead, emailStatus), wbSequenceStepDetail(lead, emailStatus), reviewBody, { open: openStep === 'review' })}
     ${wbStep(6, 'Track, triage & relationship', lead.triage && !lead.triage.handled ? 'review' : emailStatus === 'Sent' ? 'sent' : null, lead.triage && !lead.triage.handled ? `Reply: ${wbTriageLabel(lead.triage.category)}` : lead.stage === 'Won' ? 'Partner' : '', trackBody, { open: openStep === 'track' })}
@@ -2441,6 +2446,32 @@ async function dqAction(action, button) {
   }
   return false;
 }
+
+// ---- Batch 4: signals + fit ----
+const FYE_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const FIT_BAND_CLS = { strong: 'pill-won', good: 'pill-researched', fair: 'pill-pending', weak: 'pill-not-proceeding' };
+const WINDOW_CLS = { budgeting: 'win-budgeting', allocation: 'win-allocation', closing: 'win-closing', 'mid-year': 'win-mid', 'grant-window': 'win-budgeting', outside: 'win-mid', unknown: 'win-unknown' };
+function fitPill(fit) { if (!fit) return ''; return `<span class="fit-pill ${FIT_BAND_CLS[fit.band] || 'pill-new'}" title="${esc(fit.weakest ? `Weakest: ${fit.weakest.key} — ${fit.weakest.reason}` : '')}">${svgIcon('target')}${fit.score}</span>${fit.window?.known || fit.window?.phase === 'grant-window' ? `<span class="win-chip ${WINDOW_CLS[fit.window.phase] || ''}" title="${esc(fit.window.detail || '')}">${esc(fit.window.label)}</span>` : ''}`; }
+const FIT_LABELS = { sector: 'Sector match', province: 'Province', sed: 'B-BBEE SED', window: 'Approach window', warmth: 'Warmth' };
+function wbFitPanel(lead) {
+  const fit = lead.fit; if (!fit) return '';
+  const w = fit.window || {};
+  const bars = Object.entries(fit.components).map(([k, c]) => `<div class="fit-row"><span class="fit-label">${esc(FIT_LABELS[k] || k)}</span><span class="fit-bar"><span class="fit-bar-fill fit-${c.score >= 80 ? 'hi' : c.score >= 55 ? 'mid' : 'lo'}" style="width:${c.score}%"></span></span><span class="fit-val">${c.score}</span><small class="subtle">${esc(c.reason)}</small></div>`).join('');
+  const fyeSel = `<label class="form-group fit-fye"><span>Financial year-end ${lead.fyeSource === 'research' ? `<small class="subtle">· inferred from research${lead.fyeEvidence?.text ? ` (“${esc(lead.fyeEvidence.text)}”)` : ''} — confirm or correct</small>` : lead.fyeSource === 'staff' ? '<small class="subtle">· set by staff</small>' : ''}</span><select class="form-control" data-wb-fye="${esc(lead.id)}"><option value="">Unknown</option>${FYE_MONTHS.map((m, i) => `<option value="${i + 1}" ${Number(lead.financialYearEnd) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></label>`;
+  const timeline = w.known ? `<div class="fit-window ${WINDOW_CLS[w.phase] || ''}"><strong>${esc(w.label)}</strong><span>${esc(w.detail || '')}</span><small class="subtle">Budgeting ${esc(w.budgeting.from)} → ${esc(w.budgeting.to)} · Allocation ${esc(w.allocation.from)} → ${esc(w.allocation.to)}${w.daysToNextBudgeting > 0 ? ` · next budgeting window opens in ${w.daysToNextBudgeting} days` : ''}</small></div>` : w.phase === 'grant-window' || w.phase === 'outside' ? `<div class="fit-window ${WINDOW_CLS[w.phase]}"><strong>${esc(w.label)}</strong><span>Using the grant window months set on this record.</span></div>` : `<div class="fit-window win-unknown"><strong>Approach timing unknown</strong><span>Add the financial year-end: SA CSI budgets (≈1% NPAT for B-BBEE SED) are planned 2–5 months before year-end and allocated in the first quarter after it.</span></div>`;
+  return `<div class="wb-fit"><div class="wb-fit-head"><h4>${svgIcon('target')}Fit score <span class="fit-pill ${FIT_BAND_CLS[fit.band]}">${fit.score} · ${esc(fit.band)}</span></h4><small class="subtle">weighted geometric mean · sector 30% · window 25% · warmth 20% · province 15% · SED 10% — a weak factor drags the whole score</small></div>${bars}<div class="fit-timing">${fyeSel}${timeline}</div></div>`;
+}
+
+function signalsPanel() {
+  const leads = (state.data.leads || []).filter(l => l.fit && !l.doNotContact && l.stage !== 'Won');
+  const inWindow = leads.filter(l => ['budgeting', 'allocation', 'grant-window'].includes(l.fit.window?.phase)).sort((a, b) => b.fit.score - a.fit.score).slice(0, 6);
+  const soon = leads.filter(l => l.fit.window?.known && l.fit.window.phase !== 'budgeting' && l.fit.window.daysToNextBudgeting <= 45).sort((a, b) => a.fit.window.daysToNextBudgeting - b.fit.window.daysToNextBudgeting).slice(0, 4);
+  const missing = leads.filter(l => !l.fit.window?.known && l.fit.window?.phase !== 'grant-window').length;
+  const row = l => `<li class="sig-row"><div><strong>${esc(l.company)}</strong><small class="subtle">${esc(l.project || 'no project yet')}${l.fit.window?.known ? ` · FYE ${esc(l.fit.window.monthLabel)}` : ''}</small></div>${fitPill(l.fit)}<button type="button" class="button button-ghost button-small" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></li>`;
+  return `<section class="panel sig-panel"><div class="panel-head"><h3>${svgIcon('target')}Approach windows</h3><span class="subtle">Deterministic from each company's financial year-end — budgets are set 2–5 months before FYE and allocated in the quarter after.${missing ? ` ${missing} record(s) still need an FYE.` : ''}</span></div>
+    <div class="sig-grid"><div><h4>In window now</h4><ul class="sig-list">${inWindow.length ? inWindow.map(row).join('') : '<li class="subtle">No funders are in a budgeting or allocation window right now.</li>'}</ul></div>
+    <div><h4>Opening within 45 days</h4><ul class="sig-list">${soon.length ? soon.map(l => `<li class="sig-row"><div><strong>${esc(l.company)}</strong><small class="subtle">budgeting opens ${esc(l.fit.window.nextBudgetingOpens)} · in ${l.fit.window.daysToNextBudgeting} days</small></div>${fitPill(l.fit)}<button type="button" class="button button-ghost button-small" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></li>`).join('') : '<li class="subtle">Nothing opening in the next 45 days.</li>'}</ul></div></div></section>`;
+}
 async function wbRunFlow(id, { force = false, redraft = false } = {}) {
   state.wb.busy[id] = true; renderApp();
   try { await API(`/api/leads/${encodeURIComponent(id)}/flow`, { method: 'POST', body: JSON.stringify({ force, redraft }) }); }
@@ -2456,6 +2487,7 @@ async function wbAction(action, button) {
   const id = button.dataset.id;
   if (action === 'wb-focus-add') { $('#wb-add-form input[name="company"]')?.focus(); return true; }
   if (action === 'wb-filter') { state.wb.filter = button.dataset.filter; state.wb.selectedId = null; renderApp(); return true; }
+  if (action === 'wb-sort') { state.wb.sort = button.dataset.sort; renderApp(); return true; }
   if (action === 'wb-select') { state.wb.selectedId = id; renderApp(); return true; }
   if (action.startsWith('seq-') || action === 'triage-apply') return wbSequenceAction(action, button);
   if (action === 'wb-waterfall') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/waterfall`, { method: 'POST', body: '{}' }); toast(r.contactLeads.contacts.length ? `${r.contactLeads.contacts.length} public contact lead(s) found — review them in step 1.` : 'No publicly listed CSI people found on the rungs available.'); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
@@ -2502,6 +2534,8 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const fye = event.target.closest('[data-wb-fye]');
+  if (fye) { try { await API(`/api/leads/${encodeURIComponent(fye.dataset.wbFye)}`, { method: 'PATCH', body: JSON.stringify({ financialYearEnd: fye.value ? Number(fye.value) : null }) }); toast(fye.value ? `Financial year-end set to ${FYE_MONTHS[Number(fye.value) - 1]} — approach window updated.` : 'Financial year-end cleared.'); await refresh(); } catch (err) { toast(err.message, true); } return; }
   const sel = event.target.closest('[data-wb-project]');
   if (!sel) return;
   const id = sel.dataset.wbProject;

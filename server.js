@@ -10,6 +10,7 @@ const createSqliteStore = require('./lib/sqlite-store');
 const { clampText, toPdfText, pdfEscape, parseVerifiedMetrics, makeProposalPdf } = require('./lib/pdf-engine');
 const calendar = require('./lib/calendar-ics');
 const popia = require('./lib/popia-copilot');
+const signals = require('./lib/signals');
 const inbound = require('./lib/inbound-sync');
 const createFunderResearch = require('./lib/funder-research');
 const createEmailVerifier = require('./lib/email-verify');
@@ -54,7 +55,7 @@ const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape', 'National'];
-const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
+const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
@@ -271,6 +272,8 @@ function safeLead(body, contactCheck = null) {
     amount: Math.max(0, Number(body.amount || 0)),
     stage: STAGES.includes(body.stage) ? body.stage : 'New',
     fitScore: Math.max(0, Math.min(100, Number(body.fitScore || 70))),
+    financialYearEnd: Number.isInteger(Number(body.financialYearEnd)) && Number(body.financialYearEnd) >= 1 && Number(body.financialYearEnd) <= 12 ? Number(body.financialYearEnd) : null, fyeSource: body.financialYearEnd ? 'staff' : '',
+    province: clampText(body.province, 120),
     notes: String(body.notes || '').trim(),
     owner: String(body.owner || 'Nandi').trim(),
     nextAction: String(body.nextAction || 'Review lead fit').trim(),
@@ -452,6 +455,8 @@ function updateLead(lead, body, actor = 'staff') {
     if (['projectId', 'project', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline'].includes(key)) continue;
     if (key === 'amount') lead.amount = Math.max(0, Number(value || 0));
     else if (key === 'fitScore') lead.fitScore = Math.max(0, Math.min(100, Number(value || 0)));
+    else if (key === 'financialYearEnd') { const m = Number(value); lead.financialYearEnd = Number.isInteger(m) && m >= 1 && m <= 12 ? m : null; if (body.fyeSource === undefined) lead.fyeSource = lead.financialYearEnd ? 'staff' : ''; }
+    else if (key === 'province' || key === 'footprint') lead[key] = clampText(value, 120);
     else if (key === 'stage') lead.stage = STAGES.includes(value) ? value : lead.stage;
     else if (key === 'doNotContact') lead.doNotContact = Boolean(value);
     else if (key === 'relationshipContext') lead[key] = clampText(value, 800);
@@ -923,6 +928,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
         );
         brief.requestedBy = actor;
         lead.research = brief;
+        applyResearchSignals(lead, brief, actor);
         configStore.recordAudit({ actor, action: 'research.gathered', entityType: 'lead', entityId: lead.id, summary: `Auto-research for ${lead.company} via ${brief.provider} (${brief.mode}); ${brief.findings.length} finding(s)` });
       }
       flowStep(lead, 'research', { status: lead.research.status === 'approved' ? 'approved' : 'needs-review', detail: `${lead.research.findings.length} cited finding(s) from ${lead.research.sources.length} source(s)`, findings: lead.research.findings.length, provider: lead.research.provider, mode: lead.research.mode });
@@ -1189,6 +1195,33 @@ function decideContactLead(lead, body, actor) {
   configStore.recordAudit({ actor, action: `data.contact-lead.${action}`, entityType: 'lead', entityId: lead.id, summary: `${c.name} (${c.title || 'no title'}) ${action === 'reject' ? 'rejected' : action === 'accept' ? 'set as contact' : 'captured as candidate'} — ${c.hops.join(' + ')}` });
   return outcome;
 }
+// ---------------- Signals v1 (Batch 4): FYE → approach window, fit score ----------------
+function applyResearchSignals(lead, brief, actor) {
+  const fye = brief?.signals?.financialYearEnd;
+  if (fye && !lead.financialYearEnd) {
+    lead.financialYearEnd = fye.month; lead.fyeSource = 'research'; lead.fyeEvidence = { text: fye.evidence, sourceUrl: fye.sourceUrl };
+    configStore.recordAudit({ actor, action: 'signals.fye.inferred', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: financial year-end ${signals.MONTHS[fye.month - 1]} inferred from "${fye.evidence}"` });
+  }
+}
+function leadFit(lead, now = new Date()) {
+  const project = lead.projectId ? db.projects.find(p => p.id === lead.projectId) || null : null;
+  return signals.fitScore(lead, { project, events: db.emailEvents, bookings: db.bookings, now });
+}
+function signalsSummary() {
+  const now = new Date();
+  const rows = db.leads.filter(l => !l.doNotContact && l.stage !== 'Won').map(l => { const fit = leadFit(l, now); return { id: l.id, company: l.company, contactName: l.contactName, project: l.project || '', stage: l.stage, financialYearEnd: l.financialYearEnd || null, fyeSource: l.fyeSource || '', fit: fit.score, band: fit.band, window: fit.window, weakest: fit.weakest }; });
+  const known = rows.filter(r => r.window?.known);
+  const phases = known.reduce((acc, r) => { acc[r.window.phase] = (acc[r.window.phase] || 0) + 1; return acc; }, {});
+  return {
+    totals: { leads: rows.length, withFye: known.length, withoutFye: rows.length - known.length },
+    phases,
+    inWindow: known.filter(r => ['budgeting', 'allocation'].includes(r.window.phase)).sort((a, b) => b.fit - a.fit).slice(0, 50),
+    openingSoon: known.filter(r => r.window.phase !== 'budgeting' && r.window.daysToNextBudgeting <= 45).sort((a, b) => a.window.daysToNextBudgeting - b.window.daysToNextBudgeting).slice(0, 50),
+    missingFye: rows.filter(r => !r.window?.known).sort((a, b) => b.fit - a.fit).slice(0, 50),
+    ranking: rows.sort((a, b) => b.fit - a.fit).slice(0, 100),
+    weights: signals.WEIGHTS
+  };
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1374,7 +1407,7 @@ function clientLead(lead) {
     const { openToken, ...safeDraft } = draft;
     return safeDraft;
   };
-  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft), dataQuality: dataEngine.dataQuality(lead) };
+  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft), dataQuality: dataEngine.dataQuality(lead), fit: leadFit(lead) };
 }
 function safeFilename(name) { return path.basename(String(name || '')); }
 function mimeBase64(value) {
@@ -1824,6 +1857,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true, ran: result.ran, results: (result.results || []).map(j => ({ id: j.id, status: j.status, leadId: j.leadId, error: j.lastError })) });
     }
     if (method === 'GET' && pathname === '/api/data') return sendJson(res, 200, dataSummary());
+    if (method === 'GET' && pathname === '/api/signals') return sendJson(res, 200, signalsSummary());
     if (method === 'POST' && pathname === '/api/data/reverify') { const body = await readBody(req); return sendJson(res, 200, await reverifyStale({ limit: Number(body.limit) || 10, actor: actorName() })); }
     const mergeRoute = pathname.match(/^\/api\/data\/merge-reviews\/([^/]+)$/);
     if (method === 'POST' && mergeRoute) {
@@ -2195,6 +2229,7 @@ async function handleApi(req, res, url) {
         );
         brief.requestedBy = actorName();
         lead.research = brief;
+        applyResearchSignals(lead, brief, actorName());
         lead.updatedAt = new Date().toISOString();
         configStore.recordAudit({ actor: actorName(), action: 'research.gathered', entityType: 'lead', entityId: lead.id, summary: `Funder brief gathered for ${lead.company} via ${brief.provider} (${brief.mode}); ${brief.sources.length} source(s) read, ${brief.findings.length} finding(s), ${brief.redactions.total} identifier(s) scrubbed before processing` });
         addActivity(`Funder research brief gathered for ${lead.company} (awaiting review)`, 'research', actorName());
