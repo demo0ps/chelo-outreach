@@ -65,9 +65,9 @@ Human reply at any step halts the ladder (Batch 2 rule). Ethics linter (I6): eve
 ---
 
 ## Decisions 2026-10-25 (user)
-- Figures: use cheloapp.com's. Text-readable facts: "over 500 donors"; live project Philemon Montsho Primary — repainting 24 classrooms, R35.3K of R84.2K raised, 21 contributors; Motse School e-learning screens with Bolt. Homepage counters render as animated widgets ("-1,416+", "R-20m+") in server HTML → exact totals to be confirmed by user before quoting.
+- Figures (user screenshot 2026-10-25): **500+ lives impacted · 500+ verified schools · R7m+ donated · 500+ donors**. ⚠ "500+ lives" vs "500+ schools" look like shared placeholders — confirm before quoting in a cold email; quote only "R7m+ traceably donated" and "500+ donors" until then. Text-readable facts: "over 500 donors"; live project Philemon Montsho Primary — repainting 24 classrooms, R35.3K of R84.2K raised, 21 contributors; Motse School e-learning screens with Bolt. Homepage counters render as animated widgets ("-1,416+", "R-20m+") in server HTML → exact totals to be confirmed by user before quoting.
 - Mechanism we can promise (from /how-it-works): verified quotes → funds paid **directly to the supplier** → milestone verification → success story shared, recognising donors. This is the instrumental line for CSI managers.
-- Logo: pull from cheloapp.com (asset path not exposed in HTML text; user to upload file or we hotlink once path known). Used on hosted page, booking confirmation and .ics only — never in step 1.
+- Logo: user says use the cheloapp.com favicon. Sandbox cannot download from cheloapp.com (egress blocked) → user to upload the file, or we reference the live favicon URL at build time. Used on hosted page, booking confirmation and .ics only — never in step 1.
 - Hero: funder, via **co-branded pictures** (may change). Every ladder promise = "a co-branded photo of the finished classroom with {{Company}}", nothing more.
 - Sender: each staff member from their own mailbox (named).
 - Booking: Chelo-hosted slots + .ics (existing calendar-ics lib).
