@@ -27,3 +27,16 @@ Concurrency: a manifest `version` detects two warm instances writing past each o
 Free-tier notes: Supabase pauses projects after 7 days without API activity — the daily cron (`/api/cron/data-tick`) keeps it awake. Storage use is a few MB.
 
 Tests: `tests/remote-sync.test.js` (unit against a fake Storage API: changed-only uploads, versioned manifest, pull restores a wiped directory, conflict counting, bad-key never throws; plus end-to-end: real server boots with sync → creates login + lead → SIGTERM pushes → brand-new directory boots, pulls, and the login + lead are there).
+
+## Diagnosing "push: The operation was aborted due to timeout"
+
+Open `https://<your-app>/api/storage?probe=1` (logged in). The `probe` object reports one round-trip to the bucket:
+
+| verdict | meaning | fix |
+|---|---|---|
+| `ok` | reachable + authorised | nothing; the next mutation will push |
+| `unreachable-timeout` | Supabase did not answer in 8 s | the Supabase project is almost certainly **paused** (free tier) — dashboard → Restore |
+| `auth-failed` | 401/403 | `SUPABASE_SERVICE_KEY` is not the service_role/secret key |
+| `bucket-missing` | 404 | bucket is created on cold start; redeploy or check `SUPABASE_BUCKET` |
+
+Upload timeout defaults to 25 s and can be raised with `SUPABASE_TIMEOUT_MS`.

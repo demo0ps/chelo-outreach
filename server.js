@@ -2084,7 +2084,11 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
     if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
     if (method === 'GET' && pathname === '/api/ops') return sendJson(res, 200, opsSnapshot());
-    if (method === 'GET' && pathname === '/api/storage') return sendJson(res, 200, { durable: Boolean(module.exports.remoteSync), dataDir: DATA_DIR, ephemeralHost: Boolean(process.env.VERCEL), sync: module.exports.remoteSync ? module.exports.remoteSync.status() : null });
+    if (method === 'GET' && pathname === '/api/storage') {
+      const rs = module.exports.remoteSync;
+      const probe = rs && url.searchParams.get('probe') ? await rs.probe() : undefined;
+      return sendJson(res, 200, { durable: Boolean(rs), dataDir: DATA_DIR, ephemeralHost: Boolean(process.env.VERCEL), sync: rs ? rs.status() : null, probe });
+    }
     if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/mailboxes') { const body = await readBody(req); return sendJson(res, 200, await findCatalogueMailboxes({ limit: Number(body.limit) || 12, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/verify') { const body = await readBody(req); return sendJson(res, 200, await reverifyOrganisations({ limit: Number(body.limit) || 60, actor: actorName() })); }

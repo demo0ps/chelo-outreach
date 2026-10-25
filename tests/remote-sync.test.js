@@ -87,3 +87,13 @@ test('remote-sync: end-to-end with the real server — mutations persist across 
   const leads = (await a2('GET', '/api/leads')).payload; assert.ok(leads.some(l => l.company === 'Durable Co'), 'lead survived the cold start');
   const st2 = (await a2('GET', '/api/storage')).payload; assert.ok(st2.sync.lastPullAt);
 });
+
+test('probe reports verdicts for ok / auth / timeout', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-probe-'));
+  const mk = fetchImpl => createRemoteSync({ url: 'https://x.supabase.co', serviceKey: 'k', dataDir: dir, fetchImpl });
+  assert.equal((await mk(async () => new Response('{}', { status: 200 })).probe()).verdict, 'ok');
+  assert.equal((await mk(async () => new Response('no', { status: 403 })).probe()).verdict, 'auth-failed');
+  assert.equal((await mk(async () => new Response('no', { status: 404 })).probe()).verdict, 'bucket-missing');
+  const r = await mk(async () => { throw new Error('The operation was aborted due to timeout'); }).probe();
+  assert.equal(r.verdict, 'unreachable-timeout'); assert.match(r.hint, /PAUSED/);
+});
