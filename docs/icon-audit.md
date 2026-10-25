@@ -190,3 +190,8 @@ Decisions: dark zinc-950 sidebar + light zinc app; single purple accent; restyle
 - [x] Breadcrumb "Workspace / View / Section", ⌘K hint in search, command palette (views, actions, prospects, projects, partners)
 - [x] tools/render-audit.js committed (replaces /tmp harness)
 - [ ] user visual confirmation; follow-ups: per-view polish from screenshots
+
+## Sidebar revision — navy + 3D glossy app tiles (2026-10-25)
+Decisions: deep navy-indigo sidebar (signature), iOS-style per-item coloured gradient tiles with white embossed glyph, sidebar only.
+- [x] ui.css sidebar block rewritten: navy gradient, 28px tiles (radial highlight, gloss cap ::before, inset rim ::after, inner top highlight + bottom shade, drop shadow), per-view hues via --tile-a/b/c, raised glowing active pill, hover lift
+- [ ] user visual confirmation
