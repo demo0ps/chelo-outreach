@@ -36,3 +36,17 @@ Discover → "Discovered funders · SA CSI catalogue" panel: progress bar, count
 
 ## Tests
 `tests/catalogue.test.js` — catalogue integrity (≥200 rows, unique keys, no PII, valid project links, FYE ranges, all six projects covered) and an end-to-end import run (dedup-link against an existing lead, batch continuation, idempotency, verification endpoint never crashes without DNS, fit computed, org graph merges siblings, signals ranking populated).
+
+## Published-mailbox finder (Batch 5.6)
+`lib/mailbox-finder.js` fills the email gap without ever touching personal data:
+1. Crawls up to 8 pages on the organisation's **own** domain (`/`, `/contact`, `/contact-us`, `/csi`, `/corporate-social-investment`, `/foundation`, `/sustainability`, `/about-us`, …) using the same SSRF-guarded fetcher as research (raw HTML, so footers/`mailto:` links count; `[at]`/`%40` obfuscation decoded).
+2. Keeps only **role-based** local parts on the org's own domain — priority: `csi@/csr@/sed@/community@` (1.0) → `foundation@/trust@/grants@/sponsorship@/partnerships@` (0.95) → `sustainability@/corporateaffairs@/communications@` (0.8) → `info@/enquiries@/contact@` (0.6). `media@/press@/careers@/noreply@` are listed but never selected. Anything that looks like `first.last@` or `j.surname@` is **discarded before storage**.
+3. If nothing is published, it tries pattern guesses `csi@`, `foundation@`, `info@` — these are only auto-used when the mail server positively confirms them (SMTP `deliverable`); otherwise they are listed as "unconfirmed" for staff to pick.
+4. Every candidate is verified (MX + SMTP where port 25 is open). `invalid`/`undeliverable` are shown as dead and cannot be selected.
+5. On success: `lead.email`, `contactName = 'CSI / Social Investment team'` (or `<Foundation> team`), `contactKind = 'generic-mailbox'`, `contactSource = {kind: published-mailbox | pattern-verified-mailbox, sourceUrl, verification}`, `contactLastVerifiedAt`, and the intake `contactCheck` is recomputed so the lead becomes draft-ready. Audit entry `lead.mailbox_found` (address masked).
+
+Endpoints: `POST /api/leads/catalogue/mailboxes {limit≤40}` (bulk, 4 concurrent; the UI loops in batches of 10), `POST /api/leads/:id/find-mailbox`, `POST /api/leads/:id/use-mailbox {email}` (staff pick one of the listed candidates). The daily cron tick (`/api/cron/data-tick`) also searches 8 outstanding organisations per run, so on a persistent host the catalogue fills itself over a few weeks. `mailboxSearch.status`: `published | pattern-verified | unconfirmed | none-published | unreachable` (unreachable retries after 24h).
+
+UI: Discover panel → **Find mailboxes (N)** with live progress and counts (found / none published / still to search); Workbench step 1 → **Find published mailbox** button and a candidate list with **Use this**.
+
+Limits: it only finds what organisations publish. Expect roughly a third to half of SA corporates to publish a generic CSI/foundation/info mailbox; the rest need the waterfall (public CSI lead name + title) and a staff-entered public address.

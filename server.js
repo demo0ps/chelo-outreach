@@ -19,6 +19,7 @@ const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
 const relationships = require('./lib/relationships');
 const discoveredCatalogue = require('./lib/discovered-leads');
+const { createMailboxFinder } = require('./lib/mailbox-finder');
 const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;
@@ -69,6 +70,11 @@ const waterfall = dataEngine.createWaterfall({
   fetchText: async url => (await research.fetchPublicText(url)).text,
   search: async query => { const cfg = configStore.getSearchConfig(); if (!cfg || !cfg.apiKey) return null; return research.runSearch(cfg, query); },
   log: message => console.warn(`[waterfall] ${message}`)
+});
+const mailboxFinder = createMailboxFinder({
+  fetchPage: async url => research.fetchPublicText(url, { includeHtml: true }),
+  verify: async email => mailboxVerifier.verify(email, { skipSmtp: SMTP_PROBE_DISABLED }),
+  log: message => console.warn(`[mailbox-finder] ${message}`)
 });
 // One-time migration: the legacy single SMTP block in Settings becomes the first registered mailbox.
 try {
@@ -1305,7 +1311,8 @@ function catalogueStatus() {
   const failed = imported.filter(l => l.orgCheck && ['invalid', 'unreachable'].includes(l.orgCheck.status)).length;
   const pending = imported.filter(l => !l.orgCheck || l.orgCheck.status === 'retry').length;
   const byProject = rows.reduce((acc, r) => { acc[r.project] = (acc[r.project] || 0) + 1; return acc; }, {});
-  return { catalogue: 'sa-csi-2026', total: rows.length, imported: imported.length, remaining: rows.filter(r => !have.has(r.catalogKey)).length, verification: { verified, failed, pending }, byProject, contactsNeeded: imported.filter(l => !normalizeEmail(l.email)).length };
+  const mailboxes = { found: imported.filter(l => normalizeEmail(l.email)).length, searched: imported.filter(l => l.mailboxSearch).length, nonePublished: imported.filter(l => l.mailboxSearch && !normalizeEmail(l.email)).length, toSearch: imported.filter(l => mailboxSearchDue(l)).length };
+  return { catalogue: 'sa-csi-2026', total: rows.length, imported: imported.length, mailboxes, remaining: rows.filter(r => !have.has(r.catalogKey)).length, verification: { verified, failed, pending }, byProject, contactsNeeded: imported.filter(l => !normalizeEmail(l.email)).length };
 }
 async function verifyOrganisation(lead) {
   const domain = relationships.registrableDomain(lead.website) || relationships.registrableDomain(lead.sourceUrl);
@@ -1360,6 +1367,39 @@ async function reverifyOrganisations({ limit = 60, actor = 'staff' } = {}) {
   const results = await mapWithConcurrency(due, 8, async lead => { try { lead.orgCheck = await verifyOrganisation(lead); } catch (err) { lead.orgCheck = { status: 'retry', reason: err.message, checkedAt: new Date().toISOString() }; } return lead.orgCheck.status; });
   if (due.length) saveDb();
   return { checked: due.length, results: results.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {}), status: catalogueStatus() };
+}
+
+// ---- Published generic-mailbox finder (Batch 5.6) ----
+function mailboxSearchDue(lead) {
+  if (normalizeEmail(lead.email) || lead.doNotContact) return false;
+  if (!lead.mailboxSearch) return true;
+  const age = Date.now() - Date.parse(lead.mailboxSearch.ranAt || 0);
+  return lead.mailboxSearch.status === 'unreachable' && age > 24 * 3600e3; // retry unreachable sites daily; "none published" is final until staff re-run
+}
+async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true } = {}) {
+  const result = await mailboxFinder.find({ company: lead.company, website: lead.website, sourceUrl: lead.sourceUrl, email: lead.email }, { tryPatterns });
+  lead.mailboxSearch = { ranAt: result.ranAt, durationMs: result.durationMs, domain: result.domain, pages: result.pages.slice(0, 8), status: result.status, candidates: result.candidates.map(c => ({ email: c.email, kind: c.kind, score: c.score, pattern: Boolean(c.pattern), sources: c.sources.slice(0, 3), verification: c.verification })) };
+  const chosen = result.chosen;
+  if (chosen && !normalizeEmail(lead.email) && !isSuppressedEmail(chosen.email)) {
+    lead.email = chosen.email;
+    if (!String(lead.contactName || '').trim()) lead.contactName = /foundation|trust/i.test(chosen.local) ? `${lead.foundationName || lead.company} team` : 'CSI / Social Investment team';
+    if (!String(lead.title || '').trim()) lead.title = 'Generic organisation mailbox';
+    lead.contactKind = 'generic-mailbox';
+    lead.contactSource = { kind: chosen.pattern ? 'pattern-verified-mailbox' : 'published-mailbox', sourceUrl: chosen.sources[0] || '', verification: chosen.verification, at: result.ranAt };
+    lead.contactLastVerifiedAt = result.ranAt.slice(0, 10);
+    if (!lead.sourceName) lead.sourceName = 'Organisation website';
+    lead.contactCheck = await inspectContactRecord(lead);
+    lead.updatedAt = new Date().toISOString();
+    configStore.recordAudit({ actor, action: 'lead.mailbox_found', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${chosen.pattern ? 'pattern-verified' : 'published'} mailbox ${maskEmail(chosen.email)} (${chosen.kind}; ${chosen.verification.status})` });
+  }
+  return lead.mailboxSearch;
+}
+async function findCatalogueMailboxes({ limit = 12, actor = 'staff' } = {}) {
+  const due = db.leads.filter(l => l.catalogKey && mailboxSearchDue(l)).slice(0, Math.max(1, Math.min(40, limit)));
+  const outcomes = await mapWithConcurrency(due, 4, async lead => { try { const r = await findLeadMailbox(lead, actor); return r.status; } catch (err) { lead.mailboxSearch = { ranAt: new Date().toISOString(), status: 'unreachable', error: String(err.message || err).slice(0, 200), candidates: [], pages: [] }; return 'unreachable'; } });
+  const results = outcomes.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {});
+  if (due.length) { addActivity(`Mailbox finder checked ${due.length} discovered funders · ${(results.published || 0) + (results['pattern-verified'] || 0)} mailboxes found`, 'lead', actor); saveDb(); }
+  return { searched: due.length, results, status: catalogueStatus() };
 }
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
@@ -1710,8 +1750,10 @@ async function handleApi(req, res, url) {
       const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
       const result = await reverifyStale({ limit: 20, actor: 'cron' });
-      const stewardship = stewardshipTick({ actor: 'cron' }); saveDb();
-      return sendJson(res, 200, { ok: true, ...result, stewardship });
+      const stewardship = stewardshipTick({ actor: 'cron' });
+      let mailboxes = null; try { mailboxes = await findCatalogueMailboxes({ limit: 8, actor: 'cron' }); } catch (err) { mailboxes = { error: String(err.message || err).slice(0, 160) }; }
+      saveDb();
+      return sendJson(res, 200, { ok: true, ...result, stewardship, mailboxes });
     }
     if (method === 'GET' && pathname === '/api/auth/status') return sendJson(res, 200, authStatus(req));
     if (method === 'POST' && pathname === '/api/auth/demo') {
@@ -2002,6 +2044,7 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
     if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
     if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
+    if (method === 'POST' && pathname === '/api/leads/catalogue/mailboxes') { const body = await readBody(req); return sendJson(res, 200, await findCatalogueMailboxes({ limit: Number(body.limit) || 12, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/verify') { const body = await readBody(req); return sendJson(res, 200, await reverifyOrganisations({ limit: Number(body.limit) || 60, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/stewardship/tick') { const r = stewardshipTick({ actor: actorName() }); saveDb(); return sendJson(res, 200, { ok: true, ...r }); }
     const taskRoute = pathname.match(/^\/api\/stewardship\/tasks\/([^/]+)$/);
@@ -2810,6 +2853,22 @@ async function handleApi(req, res, url) {
         if (lead.doNotContact) return sendJson(res, 409, { error: 'This organisation is on the do-not-contact list.' });
         try { const wf = await runContactWaterfall(lead, actorName()); saveDb(); return sendJson(res, 200, { ok: true, contactLeads: wf, lead: workbenchLead(lead) }); }
         catch (err) { return sendJson(res, 502, { error: `Waterfall failed: ${String(err.message || err).slice(0, 200)}` }); }
+      }
+      if (method === 'POST' && action === 'find-mailbox') {
+        if (lead.doNotContact) return sendJson(res, 409, { error: 'This organisation is on the do-not-contact list.' });
+        try { const search = await findLeadMailbox(lead, actorName()); saveDb(); return sendJson(res, 200, { ok: true, mailboxSearch: search, lead: workbenchLead(lead) }); }
+        catch (err) { return sendJson(res, 502, { error: `Mailbox finder failed: ${String(err.message || err).slice(0, 200)}` }); }
+      }
+      if (method === 'POST' && action === 'use-mailbox') {
+        const body = await readBody(req); const email = normalizeEmail(body.email);
+        const cand = (lead.mailboxSearch?.candidates || []).find(c => c.email === email);
+        if (!cand) return sendJson(res, 400, { error: 'Pick one of the mailboxes the finder listed.' });
+        if (isSuppressedEmail(email)) return sendJson(res, 409, { error: 'That address is on the suppression list.' });
+        lead.email = email; lead.contactKind = 'generic-mailbox'; if (!lead.contactName) lead.contactName = 'CSI / Social Investment team'; if (!lead.title) lead.title = 'Generic organisation mailbox';
+        lead.contactSource = { kind: cand.pattern ? 'pattern-mailbox (staff-selected)' : 'published-mailbox (staff-selected)', sourceUrl: cand.sources?.[0] || '', verification: cand.verification, at: new Date().toISOString() };
+        lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10); lead.contactCheck = await inspectContactRecord(lead); lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'lead.mailbox_selected', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: staff selected ${maskEmail(email)}` });
+        saveDb(); return sendJson(res, 200, { ok: true, lead: workbenchLead(lead) });
       }
       if (method === 'POST' && action === 'contact-leads') {
         const body = await readBody(req);

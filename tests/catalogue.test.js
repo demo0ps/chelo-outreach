@@ -87,4 +87,17 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   const signals = (await api('GET', '/api/signals')).payload;
   assert.ok(signals.totals.withFye >= 190); assert.ok(signals.ranking.length >= 100);
   assert.equal(again.status.catalogue, 'sa-csi-2026');
+
+  // Published-mailbox finder: bulk + single + staff selection (no internet in CI → unreachable/unconfirmed, never a crash)
+  const mb = (await api('POST', '/api/leads/catalogue/mailboxes', { limit: 3 })).payload;
+  assert.equal(mb.searched, 3); assert.equal(mb.status.mailboxes.searched, 3);
+  const one = (await api('POST', `/api/leads/${sample.id}/find-mailbox`)).payload;
+  assert.ok(['unreachable', 'unconfirmed', 'published', 'pattern-verified', 'none-published'].includes(one.mailboxSearch.status));
+  assert.ok(one.mailboxSearch.candidates.every(c => !/^[a-z]+\.[a-z]+@/.test(c.email)), 'no personal addresses');
+  if (one.mailboxSearch.candidates.length) {
+    const pick = one.mailboxSearch.candidates[0].email;
+    const used = (await api('POST', `/api/leads/${sample.id}/use-mailbox`, { email: pick })).payload;
+    assert.equal(used.lead.email, pick); assert.equal(used.lead.contactKind, 'generic-mailbox'); assert.ok(used.lead.contactName);
+    assert.equal((await api('POST', `/api/leads/${sample.id}/use-mailbox`, { email: 'nope@vodacom.co.za' })).status, 400);
+  }
 });
