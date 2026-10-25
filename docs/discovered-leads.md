@@ -3,7 +3,7 @@
 A curated, organisation-level catalogue of South African CSI / SED funders that staff can load into the pipeline in one click, with every organisation's domain verified on the way in and duplicates linked rather than copied.
 
 ## What is in the catalogue
-- `data/discovered-leads.js` — catalogue `sa-csi-2026`, ~330 rows: JSE-listed companies, corporate foundations and trusts, banks/insurers/miners/retailers/telcos/energy IPPs, large private groups and a few family foundations with public CSI programmes.
+- `lib/discovered-leads.js` — catalogue `sa-csi-2026`, ~330 rows: JSE-listed companies, corporate foundations and trusts, banks/insurers/miners/retailers/telcos/energy IPPs, large private groups and a few family foundations with public CSI programmes.
 - Per row: organisation, website, sector, province (head office / main footprint), typical financial year-end month, CSI focus (→ `partnerPriorities`), foundation name / parent company (→ org graph), tier (→ suggested ask) and a short note.
 - Each row is mapped to one of the six verified Chelo projects (solar classrooms GP, literacy WC, WASH EC, STEM KZN, ECD LP, youth employability ZA) by focus and geography.
 - **No personal data**: no names, emails or phones. Contacts are found afterwards through the research brief and the public-contact waterfall (Batch 3), which only surfaces public CSI/foundation leadership names and titles.

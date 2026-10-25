@@ -18,7 +18,7 @@ const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
 const relationships = require('./lib/relationships');
-const discoveredCatalogue = require('./data/discovered-leads');
+const discoveredCatalogue = require('./lib/discovered-leads');
 const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const catalogue = require('../data/discovered-leads');
+const catalogue = require('../lib/discovered-leads');
 
 const ROOT = path.join(__dirname, '..');
 function startServer(env) {
