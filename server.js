@@ -12,6 +12,7 @@ const calendar = require('./lib/calendar-ics');
 const popia = require('./lib/popia-copilot');
 const inbound = require('./lib/inbound-sync');
 const createFunderResearch = require('./lib/funder-research');
+const createEmailVerifier = require('./lib/email-verify');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -21,6 +22,9 @@ const configStore = createConfigStore(DATA_DIR);
 const store = createSqliteStore(DATA_DIR);
 const research = createFunderResearch({ log: message => console.warn(`[research] ${message}`), allowLoopback: process.env.RESEARCH_ALLOW_LOOPBACK === 'true' && process.env.NODE_ENV !== 'production' });
 const sendingLocks = new Set();
+const mailboxVerifier = createEmailVerifier({ heloHost: process.env.SMTP_PROBE_HELO || 'verify.chelo.local', fromAddress: process.env.SMTP_PROBE_FROM || 'verify@chelo.local' });
+const SMTP_PROBE_DISABLED = process.env.SMTP_PROBE_DISABLED === 'true';
+const flowRuns = new Map(); // leadId -> Promise (dedupes concurrent runs)
 const emailDomainCheckCache = new Map();
 const PORT = Number(process.env.PORT || 3000);
 const DEMO_ADMIN_ACCESS = process.env.DEMO_ADMIN_ACCESS === 'true' && process.env.NODE_ENV !== 'production' && Boolean(process.env.DATA_DIR);
@@ -33,7 +37,7 @@ const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape', 'National'];
-const ALLOWED_LEAD_FIELDS = new Set(['company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
+const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
@@ -792,6 +796,93 @@ async function generateProposalDraft(lead, input = {}) {
   return { draft, mode: 'openai', message: `AI draft generated with ${model}. Staff-selected project/amount preserved; review every claim before sharing.` };
 }
 
+
+// ---- Lead flow orchestrator: verify → research → match → draft (human reviews research + approves/sends) ----
+const FLOW_STEPS = ['verify', 'research', 'match', 'draft', 'review', 'track'];
+function flowStep(lead, name, patch) {
+  lead.flow = lead.flow || { steps: {} };
+  lead.flow.steps = lead.flow.steps || {};
+  lead.flow.steps[name] = { ...(lead.flow.steps[name] || {}), ...patch, at: new Date().toISOString() };
+  lead.flow.step = name;
+  lead.flow.updatedAt = new Date().toISOString();
+}
+function deriveFlowStatus(lead) {
+  const f = lead.flow; if (!f) return 'new';
+  if (f.status === 'running' || f.status === 'dead' || f.status === 'error' || f.status === 'blocked') return f.status;
+  if (lead.emailStatus === 'Sent') return 'sent';
+  if (lead.emailStatus === 'Approved') return 'approved';
+  if (lead.research && lead.research.status === 'pending-review') return 'needs-review';
+  if (lead.emailDraft) return 'ready';
+  return f.status || 'new';
+}
+async function runLeadFlow(lead, { actor = 'system', origin = '', force = false, redraft = false } = {}) {
+  if (flowRuns.has(lead.id)) return flowRuns.get(lead.id);
+  const task = (async () => {
+    lead.flow = { ...(lead.flow || {}), steps: { ...((lead.flow || {}).steps || {}) }, status: 'running', error: null, startedAt: new Date().toISOString() };
+    const now = () => new Date().toISOString();
+    try {
+      // 1 · Verify
+      flowStep(lead, 'verify', { status: 'running' });
+      if (lead.doNotContact || isSuppressedEmail(lead.email)) { flowStep(lead, 'verify', { status: 'blocked', detail: 'On the do-not-contact list.' }); lead.flow.status = 'blocked'; return lead.flow; }
+      if (!normalizeEmail(lead.email)) { flowStep(lead, 'verify', { status: 'needs-email', detail: 'No email address yet. Add a work email from a public page or your own records to continue.' }); lead.flow.status = 'blocked'; return lead.flow; }
+      const contact = await inspectContactRecord(lead);
+      lead.contactCheck = contact;
+      if (contact.status === 'invalid') { flowStep(lead, 'verify', { status: 'dead', detail: contact.reason }); lead.flow.status = 'dead'; lead.mailboxCheck = { status: 'invalid', reason: contact.reason, checkedAt: now() }; configStore.recordAudit({ actor, action: 'flow.dead-email', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${contact.reason}` }); return lead.flow; }
+      const mailbox = await mailboxVerifier.verify(lead.email, { skipSmtp: SMTP_PROBE_DISABLED });
+      lead.mailboxCheck = mailbox;
+      if (['invalid', 'undeliverable'].includes(mailbox.status)) { flowStep(lead, 'verify', { status: 'dead', detail: mailbox.reason }); lead.flow.status = 'dead'; configStore.recordAudit({ actor, action: 'flow.dead-email', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${mailbox.reason}` }); addActivity(`Dead email detected for ${lead.company}; kept out of the pipeline`, 'lead', actor); return lead.flow; }
+      flowStep(lead, 'verify', { status: mailbox.status === 'deliverable' ? 'verified' : 'accepted', detail: mailbox.reason, mailbox: mailbox.status, contact: contact.status, issues: contact.issues || [] });
+      // 2 · Research
+      flowStep(lead, 'research', { status: 'running' });
+      if (force || !lead.research || research.isStale(lead.research) || lead.research.status === 'rejected') {
+        const brief = await research.researchFunder(
+          { company: lead.company, website: String(lead.website || lead.sourceUrl || '').trim(), sector: lead.sector },
+          { searchConfig: configStore.getSearchConfig(), aiConfig: configStore.getAIConfig(), projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
+        );
+        brief.requestedBy = actor;
+        lead.research = brief;
+        configStore.recordAudit({ actor, action: 'research.gathered', entityType: 'lead', entityId: lead.id, summary: `Auto-research for ${lead.company} via ${brief.provider} (${brief.mode}); ${brief.findings.length} finding(s)` });
+      }
+      flowStep(lead, 'research', { status: lead.research.status === 'approved' ? 'approved' : 'needs-review', detail: `${lead.research.findings.length} cited finding(s) from ${lead.research.sources.length} source(s)`, findings: lead.research.findings.length, provider: lead.research.provider, mode: lead.research.mode });
+      // 3 · Match project
+      if (!lead.projectId && lead.research.suggestedProjectId && db.projects.some(p => p.id === lead.research.suggestedProjectId)) {
+        updateLead(lead, { projectId: lead.research.suggestedProjectId }, actor);
+        flowStep(lead, 'match', { status: 'suggested', detail: `Suggested from research: ${lead.project}`, projectId: lead.projectId });
+      } else if (lead.projectId) flowStep(lead, 'match', { status: 'set', detail: lead.project, projectId: lead.projectId });
+      else flowStep(lead, 'match', { status: 'needs-choice', detail: 'Pick the Chelo project that best matches their CSI focus.' });
+      if (lead.stage === 'New' && lead.research) updateLead(lead, { stage: 'Researched' }, actor);
+      // 4 · Draft
+      const canDraft = contact.status === 'ready' && lead.projectId;
+      if (canDraft && (redraft || !lead.emailDraft || force) && lead.emailStatus !== 'Sent' && lead.emailStatus !== 'Approved') {
+        const emailResult = await generateOutreachEmail(lead, { userNotes: '', rewriteNotes: '' }, origin);
+        lead.proposalData = { ...(lead.proposalData || {}), company: lead.company, contactName: lead.contactName, project: lead.project, amount: Number(lead.amount || 0) };
+        lead.emailDraft = { ...emailResult.draft, generationMode: emailResult.mode, updatedAt: now() };
+        lead.emailStatus = 'Draft'; delete lead.approvedAt;
+        flowStep(lead, 'draft', { status: 'drafted', detail: emailResult.message || `Draft generated (${emailResult.mode})`, mode: emailResult.mode, usedApprovedResearch: lead.research.status === 'approved' });
+        addActivity(`Outreach draft auto-generated for ${lead.company}`, 'email', actor);
+      } else if (lead.emailDraft) flowStep(lead, 'draft', { status: lead.emailStatus === 'Sent' ? 'sent' : lead.emailStatus === 'Approved' ? 'approved' : 'drafted', detail: `Draft ${String(lead.emailStatus || 'Draft').toLowerCase()}` });
+      else flowStep(lead, 'draft', { status: 'blocked', detail: !lead.projectId ? 'Choose a project first.' : `Complete contact details: ${(contact.issues || []).join(', ') || 'contact name / source'}.` });
+      lead.flow.status = lead.emailDraft ? 'ready' : 'blocked';
+      lead.flow.step = 'review';
+      return lead.flow;
+    } catch (err) {
+      lead.flow.status = 'error'; lead.flow.error = String(err.message || err).slice(0, 300);
+      flowStep(lead, lead.flow.step || 'verify', { status: 'error', detail: lead.flow.error });
+      return lead.flow;
+    } finally {
+      lead.flow.finishedAt = now(); lead.updatedAt = now();
+      saveDb();
+      flowRuns.delete(lead.id);
+    }
+  })();
+  flowRuns.set(lead.id, task);
+  return task;
+}
+function workbenchLead(lead) {
+  const c = clientLead(lead);
+  return { ...c, flowStatus: deriveFlowStatus(lead) };
+}
+
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1308,6 +1399,47 @@ async function handleApi(req, res, url) {
       const settings = configStore.publicSettings();
       return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured, settings });
     }
+    // ---- Workbench: discovery + lead flow ----
+    if (method === 'GET' && pathname === '/api/discovery/search') {
+      const q = String(url.searchParams.get('q') || '').trim();
+      const searchConfig = configStore.getSearchConfig();
+      if (!searchConfig.apiKey) return sendJson(res, 409, { error: 'Add a web search provider key in Settings → Integrations to discover organisations on the web.', organisations: [] });
+      const result = await research.discoverOrganisations(searchConfig, q);
+      const known = new Set(db.leads.map(l => String(l.website || l.sourceUrl || '').replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase()).filter(Boolean));
+      result.organisations = result.organisations.map(o => ({ ...o, alreadyTracked: known.has(o.domain) || db.leads.some(l => l.company.toLowerCase() === o.name.toLowerCase()) }));
+      configStore.recordAudit({ actor: actorName(), action: 'discovery.search', entityType: 'system', summary: `Web discovery: "${q}" → ${result.organisations.length} organisation(s)` });
+      return sendJson(res, 200, result);
+    }
+    if (method === 'POST' && pathname === '/api/discovery/add') {
+      const body = await readBody(req);
+      const name = clampText(body.name, 120); const website = String(body.website || '').trim();
+      if (!name) return sendJson(res, 400, { error: 'Organisation name is required.' });
+      if (db.leads.some(l => l.company.toLowerCase() === name.toLowerCase())) return sendJson(res, 409, { error: `${name} is already in your database.` });
+      const email = normalizeEmail(body.email);
+      const contactCheck = await inspectContactRecord({ company: name, contactName: body.contactName || '', email, sourceUrl: website });
+      if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason });
+      const lead = safeLead({ company: name, contactName: clampText(body.contactName, 120), title: clampText(body.title, 120), email, sourceUrl: website, sourceName: 'Web discovery', sector: clampText(body.sector, 80), notes: clampText(body.summary, 400), stage: 'New' }, contactCheck);
+      lead.website = website;
+      lead.discovery = { query: clampText(body.query, 200), summary: clampText(body.summary, 400), sources: Array.isArray(body.sources) ? body.sources.slice(0, 3).map(String) : [], addedAt: new Date().toISOString() };
+      db.leads.unshift(lead);
+      configStore.recordAudit({ actor: actorName(), action: 'discovery.added', entityType: 'lead', entityId: lead.id, summary: `${name} added from web discovery (${website || 'no website'})` });
+      addActivity(`${name} added from web discovery`, 'lead', actorName());
+      saveDb();
+      return sendJson(res, 201, { ok: true, lead: workbenchLead(lead) });
+    }
+    if (method === 'GET' && pathname === '/api/workbench') {
+      const leads = db.leads.map(workbenchLead);
+      const counts = leads.reduce((acc, l) => { acc[l.flowStatus] = (acc[l.flowStatus] || 0) + 1; return acc; }, {});
+      return sendJson(res, 200, { leads, counts, running: [...flowRuns.keys()], smtpProbe: !SMTP_PROBE_DISABLED, searchConfigured: configStore.publicSettings().searchConfigured });
+    }
+    if (method === 'POST' && pathname === '/api/flow/run-pending') {
+      const body = await readBody(req);
+      const limit = Math.min(Number(body.limit) || 3, 5);
+      const pending = db.leads.filter(l => !l.flow && !l.doNotContact && l.emailStatus !== 'Sent').slice(0, limit);
+      const origin = publicOrigin(req);
+      await Promise.all(pending.map(l => runLeadFlow(l, { actor: actorName(), origin })));
+      return sendJson(res, 200, { ok: true, ran: pending.map(l => l.id), remaining: db.leads.filter(l => !l.flow && !l.doNotContact && l.emailStatus !== 'Sent').length });
+    }
     if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, db.leads.map(clientLead));
     if (method === 'GET' && pathname === '/api/candidates') return sendJson(res, 200, db.candidates);
     if (method === 'GET' && pathname === '/api/partners') return sendJson(res, 200, db.partners);
@@ -1615,6 +1747,21 @@ async function handleApi(req, res, url) {
       const lead = findLead(leadRoute[1]);
       const action = leadRoute[2] || '';
       if (!lead) return sendJson(res, 404, { error: 'Prospect not found.' });
+      if (method === 'POST' && action === 'flow') {
+        const body = await readBody(req);
+        const flow = await runLeadFlow(lead, { actor: actorName(), origin: publicOrigin(req), force: body.force === true, redraft: body.redraft === true });
+        return sendJson(res, 200, { ok: true, flow, lead: workbenchLead(lead) });
+      }
+      if (method === 'GET' && action === 'flow') return sendJson(res, 200, { flow: lead.flow || null, running: flowRuns.has(lead.id), lead: workbenchLead(lead) });
+      if (method === 'POST' && action === 'verify-mailbox') {
+        if (!normalizeEmail(lead.email)) return sendJson(res, 400, { error: 'Add an email address first.' });
+        mailboxVerifier._cache.delete(normalizeEmail(lead.email));
+        const mailbox = await mailboxVerifier.verify(lead.email, { skipSmtp: SMTP_PROBE_DISABLED });
+        lead.mailboxCheck = mailbox; lead.updatedAt = new Date().toISOString();
+        if (lead.flow) { flowStep(lead, 'verify', { status: ['invalid', 'undeliverable'].includes(mailbox.status) ? 'dead' : mailbox.status === 'deliverable' ? 'verified' : 'accepted', detail: mailbox.reason, mailbox: mailbox.status }); if (['invalid', 'undeliverable'].includes(mailbox.status)) lead.flow.status = 'dead'; else if (lead.flow.status === 'dead') lead.flow.status = 'blocked'; }
+        saveDb();
+        return sendJson(res, 200, { ok: true, mailbox, lead: workbenchLead(lead) });
+      }
       if (method === 'GET' && action === 'research') {
         return sendJson(res, 200, { brief: lead.research || null, stale: lead.research ? research.isStale(lead.research) : false, searchConfigured: configStore.publicSettings().searchConfigured });
       }
@@ -1655,6 +1802,9 @@ async function handleApi(req, res, url) {
         }
         lead.updatedAt = new Date().toISOString();
         configStore.recordAudit({ actor: actorName(), action: brief.status === 'approved' ? 'research.approved' : 'research.rejected', entityType: 'lead', entityId: lead.id, summary: `Funder brief ${brief.status} for ${lead.company}: ${brief.approvedFindingIds.length} finding(s), ${brief.approvedAlignmentIds.length} alignment point(s), ${brief.approvedContactIds.length} public contact(s) approved` });
+        if (brief.status === 'approved' && body.redraft !== false && lead.emailStatus !== 'Sent' && lead.emailStatus !== 'Approved' && lead.projectId && (await inspectContactRecord(lead)).status === 'ready') {
+          try { const r = await generateOutreachEmail(lead, { userNotes: lead.proposalData?.userNotes || '', rewriteNotes: '' }, publicOrigin(req)); lead.emailDraft = { ...r.draft, generationMode: r.mode, updatedAt: new Date().toISOString() }; lead.emailStatus = 'Draft'; delete lead.approvedAt; if (lead.flow) flowStep(lead, 'draft', { status: 'drafted', detail: 'Re-drafted with approved research', mode: r.mode, usedApprovedResearch: true }); } catch (err) { console.warn('[flow] redraft failed:', err.message); }
+        }
         addActivity(`Funder research brief ${brief.status} for ${lead.company}`, 'research', actorName());
         saveDb();
         return sendJson(res, 200, { ok: true, brief, lead: clientLead(lead) });

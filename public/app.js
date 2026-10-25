@@ -11,9 +11,10 @@ const API = async (url, options = {}) => {
 
 const state = {
   palette: null,
+  wb: { selectedId: null, filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
-  view: 'overview', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
+  view: 'workbench', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
   settingsSection: 'integrations', auditLogs: null, auditQuery: '', analyticsRange: 30, analyticsLoading: false,
   bookingInfo: null, bookingLoading: false, bookingSubmitted: false, bookingError: '',
   optOutInfo: null, optOutDone: false,
@@ -278,7 +279,7 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['workbench', 'Outreach workbench', 'wand'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
   ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Partners', 'partners'],
   ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
 ];
@@ -366,7 +367,7 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
+  const label = ({ workbench: 'Workbench', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
@@ -385,6 +386,7 @@ function shellSidebar() {
     <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${svgIcon('target')}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">impact partnerships</span></span></a>
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
+      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length)}
       ${navItem('overview', 'Overview', 'overview')}
       ${navItem('discover', 'Discover', 'globe', state.data.candidates.filter(c => c.status === 'New candidate').length)}
       ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
@@ -689,6 +691,7 @@ function authGateView() {
 }
 function renderView() {
   switch (state.view) {
+    case 'workbench': return workbenchView();
     case 'discover': return discoverView();
     case 'projects': return projectsView();
     case 'prospects': return prospectsView();
@@ -1146,7 +1149,8 @@ function openModal(type, id = null, extras = {}) { state.modal = { type, id, ...
 function closeModal() { if (state.modal?.type === 'csv-preview') state.csvImportPreview = null; state.modal = null; renderApp(); }
 function setView(view) {
   state.view = view; state.modal = null; state.mobileMoreOpen = false;
-  if (!['discover', 'prospects', 'pipeline', 'partners', 'sent', 'projects'].includes(view)) state.query = '';
+  if (!['workbench', 'discover', 'prospects', 'pipeline', 'partners', 'sent', 'projects'].includes(view)) state.query = '';
+  if (view === 'workbench') wbRunPending();
   if (view === 'overview') loadRadar();
   renderApp(); window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'analytics') loadAnalytics(state.analyticsRange);
@@ -1176,6 +1180,7 @@ function fillProposalDraft(result) {
 
 async function dispatchAction(button) {
   const action = button.dataset.action;
+  if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
   const id = button.dataset.id;
   try {
     if (action === 'close-modal') return closeModal();
@@ -1499,6 +1504,7 @@ async function handleSubmit(event) {
   const type = form.dataset.form;
   if (!type) return;
   event.preventDefault();
+  if (type === 'wb-add') return wbAddSubmit(form);
   try {
     if (type === 'auth-setup' || type === 'auth-login') {
       const data = formDataObject(form);
@@ -1796,7 +1802,7 @@ document.addEventListener('input', event => {
   }
   if (['global-search', 'lead-search', 'candidate-search', 'project-search'].includes(target.id)) {
     state.query = target.value;
-    if (target.id === 'global-search' && target.value.trim() && !['prospects', 'discover', 'partners', 'projects', 'pipeline', 'sent'].includes(state.view)) state.view = 'prospects';
+    if (target.id === 'global-search' && target.value.trim() && !['workbench', 'prospects', 'discover', 'partners', 'projects', 'pipeline', 'sent'].includes(state.view)) state.view = 'prospects';
     const caret = target.selectionStart;
     renderApp();
     const next = document.getElementById(target.id);
@@ -1844,7 +1850,7 @@ async function init() {
   try {
     state.auth = await API('/api/auth/status');
     if (!state.auth.authenticated) { renderAuthGate(); return; }
-    state.data = await API('/api/init'); renderApp(); loadRadar();
+    state.data = await API('/api/init'); renderApp(); loadRadar(); if (state.view === 'workbench') wbRunPending();
   } catch (err) { $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Workspace unavailable</div><h1>Could not load the partnerships workspace.</h1><p>${esc(err.message)}</p></div><div class="booking-card-body">Refresh the page in a moment. Check that the local app server is running.</div></article></main>`; }
 }
 init();
@@ -2093,3 +2099,222 @@ function researchModal(lead) {
   const footer = `<div class="modal-footer-left"><button type="button" class="button button-secondary button-small" data-action="research-run" data-id="${esc(lead.id)}" ${state.researchBusy ? 'disabled' : ''}>${svgIcon('globe')} ${state.researchBusy ? 'Researching…' : 'Re-run'}</button><button type="button" class="button button-secondary button-small" data-action="research-clear" data-id="${esc(lead.id)}">${svgIcon('trash')}Remove</button></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="research-back">${svgIcon('back')}Back</button><button type="button" class="button button-secondary" data-action="research-reject" data-id="${esc(lead.id)}">${svgIcon('xCircle')}Reject brief</button><button type="button" class="button button-primary" data-action="research-approve" data-id="${esc(lead.id)}">${svgIcon('check')} Approve selected &amp; use</button></div>`;
   return modalFrame(`Funder brief · ${lead.company}`, status.label, body, footer, true, 'modal-wide');
 }
+
+// =====================================================================
+// Outreach Workbench — one screen: add/discover → verify → research → match → draft → review & send → track
+// =====================================================================
+const WB_FILTERS = [['all', 'All'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
+function wbStatusOf(lead) {
+  if (lead.flowStatus) return lead.flowStatus;
+  const f = lead.flow; if (!f) return 'new';
+  if (['running', 'dead', 'error', 'blocked'].includes(f.status)) return f.status;
+  if (lead.emailStatus === 'Sent') return 'sent';
+  if (lead.emailStatus === 'Approved') return 'approved';
+  if (lead.research && lead.research.status === 'pending-review') return 'needs-review';
+  if (lead.emailDraft) return 'ready';
+  return f.status || 'new';
+}
+const WB_STATUS_META = { new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+function wbPill(status) { const [label, cls] = WB_STATUS_META[status] || [status, 'pill-new']; return `<span class="stage-pill ${cls}">${esc(label)}</span>`; }
+function wbSelected() { return getLead(state.wb.selectedId) || null; }
+
+function workbenchView() {
+  const leads = state.data.leads.filter(l => !l.isDemo || state.auth.demoAccess || true);
+  const counts = leads.reduce((acc, l) => { const s = wbStatusOf(l); acc[s] = (acc[s] || 0) + 1; acc.all += 1; return acc; }, { all: 0 });
+  const q = state.query.trim().toLowerCase();
+  const visible = leads.filter(l => (state.wb.filter === 'all' ? wbStatusOf(l) !== 'dead' : wbStatusOf(l) === state.wb.filter) && (!q || `${l.company} ${l.contactName} ${l.email} ${l.project || ''}`.toLowerCase().includes(q)));
+  if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
+  const selected = wbSelected();
+  return `${pageHead('Outreach workbench', 'From lead to sent email in one place', 'Add or discover organisations, let Chelo verify the mailbox, research their CSI focus and draft the email — you review the findings, approve and send.', `<button type="button" class="button button-secondary" data-view="discover">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  ${wbIntakeBar()}
+  <div class="wb-layout">
+    <section class="panel wb-list-panel">
+      <div class="wb-filters" role="tablist">${WB_FILTERS.map(([key, label]) => `<button type="button" class="wb-filter ${state.wb.filter === key ? 'is-active' : ''}" data-action="wb-filter" data-filter="${key}" role="tab">${esc(label)}<span class="wb-filter-count">${counts[key] || 0}</span></button>`).join('')}</div>
+      <div class="wb-list">${visible.length ? visible.map(l => wbRow(l, selected && selected.id === l.id)).join('') : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('discover')}</div><p>No leads here yet. Add one above, import a CSV or discover organisations on the web.</p></div>`}</div>
+    </section>
+    <section class="wb-detail">${selected ? wbStepper(selected) : `<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('target')}</div><p>Select a lead to work on it.</p></div>`}</section>
+  </div>`;
+}
+function wbIntakeBar() {
+  const d = state.wb.discovery;
+  return `<section class="panel wb-intake">
+    <form class="wb-add-form" data-form="wb-add" id="wb-add-form">
+      <div class="wb-add-fields">
+        <input class="form-control" name="company" placeholder="Organisation" required autocomplete="organization" />
+        <input class="form-control" name="contactName" placeholder="Contact name" autocomplete="off" />
+        <input class="form-control" name="email" type="email" placeholder="Work email (public page or your records)" />
+        <input class="form-control" name="sourceUrl" placeholder="Source URL / website" />
+      </div>
+      <button type="submit" class="button button-primary" ${state.wb.busy.add ? 'disabled' : ''}>${svgIcon('spark')}${state.wb.busy.add ? 'Adding & running…' : 'Add & run'}</button>
+    </form>
+    <div class="wb-discover">
+      <label class="wb-discover-input">${svgIcon('globe')}<input id="wb-discover-q" class="form-control" placeholder="Discover on the web — e.g. “JSE mining companies with education CSI”" value="${esc(d.query)}" /></label>
+      <button type="button" class="button button-secondary" data-action="wb-discover" ${d.busy ? 'disabled' : ''}>${svgIcon('search')}${d.busy ? 'Searching…' : 'Discover'}</button>
+    </div>
+    ${d.error ? `<p class="form-error">${esc(d.error)}</p>` : ''}
+    ${d.results.length ? `<div class="wb-discover-results">${d.results.map(o => `<article class="wb-org ${o.alreadyTracked ? 'is-tracked' : ''}"><div class="wb-org-copy"><strong>${esc(o.name)}</strong><a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(o.domain)}</a><p>${esc(o.summary || 'No public summary captured.')}</p></div><button type="button" class="button button-small ${o.alreadyTracked ? 'button-ghost' : 'button-secondary'}" data-action="wb-discover-add" data-domain="${esc(o.domain)}" ${o.alreadyTracked ? 'disabled' : ''}>${svgIcon(o.alreadyTracked ? 'check' : 'plus')}${o.alreadyTracked ? 'Tracked' : 'Add'}</button></article>`).join('')}<p class="subtle">Organisation facts only — emails and phone numbers are never scraped (POPIA). Add the public contact yourself in the lead's details.</p></div>` : ''}
+  </section>`;
+}
+function wbRow(l, active) {
+  const s = wbStatusOf(l);
+  return `<button type="button" class="wb-row ${active ? 'is-active' : ''} wb-row-${s}" data-action="wb-select" data-id="${esc(l.id)}">
+    <span class="wb-row-avatar">${initials(l.company)}</span>
+    <span class="wb-row-copy"><strong>${esc(l.company)}</strong><small>${esc(l.contactName || 'No contact yet')}${l.project ? ` · ${esc(l.project)}` : ''}</small></span>
+    <span class="wb-row-status">${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
+  </button>`;
+}
+function wbStepState(lead, name) { return lead.flow?.steps?.[name] || null; }
+function wbStepTone(status) {
+  if (!status) return 'idle';
+  if (['verified', 'approved', 'drafted', 'set', 'suggested', 'sent', 'accepted'].includes(status)) return 'done';
+  if (['running'].includes(status)) return 'running';
+  if (['dead', 'error'].includes(status)) return 'bad';
+  return 'attention';
+}
+function wbStep(index, title, status, detail, body, { open = false } = {}) {
+  const tone = wbStepTone(status);
+  return `<details class="wb-step wb-step-${tone}" ${open ? 'open' : ''}>
+    <summary><span class="wb-step-index">${tone === 'done' ? svgIcon('check') : tone === 'bad' ? svgIcon('xCircle') : tone === 'running' ? '<span class="wb-spinner"></span>' : index}</span><span class="wb-step-title">${esc(title)}</span><span class="wb-step-detail">${esc(detail || '')}</span></summary>
+    <div class="wb-step-body">${body}</div>
+  </details>`;
+}
+function wbStepper(lead) {
+  const s = wbStatusOf(lead);
+  const busy = state.wb.busy[lead.id];
+  const verify = wbStepState(lead, 'verify'); const researchStep = wbStepState(lead, 'research'); const match = wbStepState(lead, 'match'); const draft = wbStepState(lead, 'draft');
+  const brief = lead.research;
+  const mailbox = lead.mailboxCheck;
+  const projects = state.data.projects || [];
+  const emailStatus = lead.emailStatus || 'None';
+  const openStep = s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify';
+  const header = `<div class="wb-detail-head">
+    <div><div class="eyebrow"><span class="eyebrow-dot"></span>${esc(lead.stage || 'New')}</div><h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ' · no email yet'}</p></div>
+    <div class="wb-detail-actions">${wbPill(s)}<button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button><button type="button" class="button button-secondary button-small" data-action="wb-run" data-id="${esc(lead.id)}" ${busy || s === 'running' ? 'disabled' : ''}>${svgIcon('refresh')}${busy || s === 'running' ? 'Working…' : 'Re-run flow'}</button></div>
+  </div>`;
+  // 1 · Verify
+  const verifyBody = `<div class="wb-kv"><span>Syntax & domain</span><strong>${esc(lead.contactCheck?.emailStatus || 'not checked')}</strong></div>
+    <div class="wb-kv"><span>Mailbox probe</span><strong>${esc(mailbox?.status || 'not probed')}</strong></div>
+    <p class="subtle">${esc(mailbox?.reason || verify?.detail || 'The flow checks syntax, MX records and performs an SMTP handshake (no email is sent). Dead mailboxes never reach the pipeline.')}</p>
+    ${(lead.contactCheck?.issues || []).length ? `<p class="form-error">Missing: ${esc(lead.contactCheck.issues.join(', '))}</p>` : ''}
+    <div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="wb-verify" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('checkCircle')}Re-check mailbox</button>${s === 'dead' ? `<button type="button" class="button button-danger button-small" data-action="wb-delete" data-id="${esc(lead.id)}">${svgIcon('trash')}Remove dead lead</button>` : ''}</div>`;
+  // 2 · Research (inline review — same contract as the research modal so the existing approve action works)
+  const researchBody = brief ? `<div id="research-review" class="wb-research">
+      <p class="wb-mission"><strong>Mission:</strong> ${esc(brief.missionSummary || '—')}</p>
+      ${brief.focusAreas?.length ? `<div class="chip-row">${brief.focusAreas.map(f => `<span class="chip">${esc(f)}</span>`).join('')}</div>` : ''}
+      <div class="wb-research-group"><h4>${svgIcon('info')}Findings · tick what is accurate</h4>${brief.findings.length ? brief.findings.map(f => `<label class="check-row"><input type="checkbox" name="finding" value="${esc(f.id)}" ${brief.status === 'approved' ? (brief.approvedFindingIds || []).includes(f.id) ? 'checked' : '' : 'checked'} /> <span>${esc(f.text)} <small class="subtle">[${esc(f.ref || f.sourceIds?.[0] || 'S')}]</small></span></label>`).join('') : '<p class="subtle">No cited findings were found. Add the website in Edit details and re-run.</p>'}</div>
+      <div class="wb-research-group"><h4>${svgIcon('target')}Alignment with Chelo (education focus)</h4>${brief.alignmentPoints.map(a => `<label class="check-row"><input type="checkbox" name="alignment" value="${esc(a.id)}" ${brief.status === 'approved' ? (brief.approvedAlignmentIds || []).includes(a.id) ? 'checked' : '' : 'checked'} /> <span>${esc(a.text)}</span></label>`).join('') || '<p class="subtle">No alignment points yet.</p>'}</div>
+      ${brief.contacts?.length ? `<div class="wb-research-group"><h4>${svgIcon('users')}Public CSI leads (names & titles only)</h4>${brief.contacts.map(c => `<label class="check-row"><input type="checkbox" name="contact" value="${esc(c.id)}" ${(brief.approvedContactIds || []).includes(c.id) ? 'checked' : ''} /> <span>${esc(c.name)} — ${esc(c.title || '')}</span></label>`).join('')}</div>` : ''}
+      <details class="wb-sources"><summary>${brief.sources.length} source(s) · ${esc(brief.provider || 'local')} · ${esc(brief.mode || '')}</summary>${brief.sources.map(src => `<a class="source-link" href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(src.title || src.url)}</a>`).join('')}</details>
+      <input type="hidden" id="research-mission" value="${esc(brief.missionSummary || '')}" /><input type="hidden" id="research-notes" value="" />
+      <div class="wb-step-actions">
+        ${brief.status === 'approved' ? `<span class="stage-pill pill-won">${svgIcon('check')}Approved ${isoDate(brief.reviewedAt)}</span>` : ''}
+        <button type="button" class="button button-primary button-small" data-action="research-approve" data-id="${esc(lead.id)}">${svgIcon('checkCircle')}${brief.status === 'approved' ? 'Update approval' : 'Approve & draft email'}</button>
+        <button type="button" class="button button-ghost button-small" data-action="research-reject" data-id="${esc(lead.id)}">${svgIcon('xCircle')}Reject brief</button>
+        <button type="button" class="button button-ghost button-small" data-action="wb-run" data-force="true" data-id="${esc(lead.id)}">${svgIcon('refresh')}Research again</button>
+      </div>
+    </div>` : `<p class="subtle">${esc(researchStep?.detail || 'Research runs automatically once the mailbox passes verification.')}</p>`;
+  // 3 · Match
+  const matchBody = `<label class="form-group"><span>Chelo project this funder should hear about</span>
+      <select class="form-control" data-wb-project="${esc(lead.id)}"><option value="">— choose a verified project —</option>${projects.map(p => `<option value="${esc(p.id)}" ${lead.projectId === p.id ? 'selected' : ''}>${esc(p.name)} · ${esc(p.sector || '')} · ${esc(p.province || '')}${brief?.suggestedProjectId === p.id ? ' (suggested from research)' : ''}</option>`).join('')}</select></label>
+    <p class="subtle">${esc(match?.detail || 'Pick the project whose outcomes match their CSI focus; the email and PDF will anchor on it.')}</p>`;
+  // 4 · Draft
+  const d = lead.emailDraft;
+  const draftBody = d ? `<label class="form-group"><span>Subject</span><input id="email-subject" class="form-control" value="${esc(d.subject || '')}" ${emailStatus === 'Sent' ? 'readonly' : ''} /></label>
+      <label class="form-group"><span>Email</span><textarea id="email-body" class="form-control wb-email-body" rows="12" ${emailStatus === 'Sent' ? 'readonly' : ''}>${esc(d.body || '')}</textarea></label>
+      <p class="subtle">${esc(draft?.detail || '')} ${d.generationMode ? `· ${esc(d.generationMode)}` : ''}${draft?.usedApprovedResearch ? ' · uses approved research' : ' · generic until research is approved'}</p>
+      <div class="wb-step-actions">
+        <button type="button" class="button button-secondary button-small" data-action="email-save-draft" data-id="${esc(lead.id)}" ${emailStatus === 'Sent' ? 'disabled' : ''}>${svgIcon('save')}Save edits</button>
+        <button type="button" class="button button-ghost button-small" data-action="wb-redraft" data-id="${esc(lead.id)}" ${busy || emailStatus === 'Sent' ? 'disabled' : ''}>${svgIcon('wand')}Regenerate draft</button>
+        <button type="button" class="button button-ghost button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Proposal PDF</button>
+      </div>` : `<p class="subtle">${esc(draft?.detail || 'The draft is generated automatically once the mailbox is verified and a project is chosen.')}</p>`;
+  // 5 · Review & send
+  const approvalPending = emailStatus === 'Pending second approval';
+  const reviewBody = d ? `<div class="wb-preview"><div class="wb-preview-head"><span>To</span><strong>${esc(lead.contactName || '')} &lt;${esc(lead.email || '')}&gt;</strong></div><div class="wb-preview-head"><span>Subject</span><strong>${esc(d.subject || '')}</strong></div><pre class="wb-preview-body">${esc(d.body || '')}</pre></div>
+      <div class="wb-step-actions">
+        ${emailStatus === 'Draft' || emailStatus === 'None' ? `<button type="button" class="button button-primary button-small" data-action="email-approve" data-id="${esc(lead.id)}">${svgIcon('checkCircle')}Approve</button>` : ''}
+        ${approvalPending ? `<button type="button" class="button button-primary button-small" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>` : ''}
+        ${emailStatus === 'Approved' ? `<button type="button" class="button button-primary button-small" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button><button type="button" class="button button-secondary button-small" data-action="email-open" data-id="${esc(lead.id)}">${svgIcon('mail')}Open in email client</button><button type="button" class="button button-ghost button-small" data-action="mark-sent" data-id="${esc(lead.id)}">${svgIcon('check')}Mark as sent</button>` : ''}
+        ${['Approved', 'Pending second approval'].includes(emailStatus) ? `<button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
+        ${emailStatus === 'Sent' ? `<span class="stage-pill pill-won">${svgIcon('check')}Sent ${isoDate(lead.sentAt || lead.updatedAt)}</span>` : ''}
+      </div>` : '<p class="subtle">Nothing to review yet.</p>';
+  // 6 · Track
+  const events = (lead.emailEvents || []).slice(-6).reverse();
+  const booking = (state.data.bookings || []).find(b => b.leadId === lead.id);
+  const trackBody = `<div class="wb-track-grid">
+      <div class="wb-kv"><span>Status</span><strong>${esc(emailStatus)}</strong></div>
+      <div class="wb-kv"><span>Opens</span><strong>${lead.openCount || (lead.emailEvents || []).filter(e => e.type === 'open').length || 0}</strong></div>
+      <div class="wb-kv"><span>Reply</span><strong>${lead.repliedAt ? isoDate(lead.repliedAt) : '—'}</strong></div>
+      <div class="wb-kv"><span>Briefing</span><strong>${booking ? esc(booking.status) : '—'}</strong></div>
+    </div>
+    ${events.length ? `<ul class="wb-events">${events.map(e => `<li>${svgIcon(e.type === 'bounce' ? 'xCircle' : e.type === 'reply' ? 'reply' : e.type === 'open' ? 'eye' : 'activity')}<span>${esc(e.type)}</span><small>${isoDate(e.at)}</small></li>`).join('')}</ul>` : ''}
+    <div class="wb-step-actions">
+      ${emailStatus === 'Sent' ? `<button type="button" class="button button-secondary button-small" data-action="follow-up" data-id="${esc(lead.id)}">${svgIcon('send')}Draft follow-up</button><button type="button" class="button button-ghost button-small" data-action="mark-replied" data-id="${esc(lead.id)}">${svgIcon('reply')}Mark replied</button>` : ''}
+      ${lead.stage !== 'Won' ? `<button type="button" class="button button-ghost button-small" data-action="mark-won" data-id="${esc(lead.id)}">${svgIcon('trophy')}Mark won → Partners</button>` : `<span class="stage-pill pill-won">${svgIcon('trophy')}Partner</span>`}
+      <button type="button" class="button button-ghost button-small" data-action="opt-out" data-id="${esc(lead.id)}">${svgIcon('ban')}Do not contact</button>
+    </div>`;
+  return `<div class="panel wb-stepper">${header}
+    ${lead.flow?.error ? `<p class="form-error">${esc(lead.flow.error)}</p>` : ''}
+    ${wbStep(1, 'Verify email', verify?.status, verify?.detail, verifyBody, { open: openStep === 'verify' })}
+    ${wbStep(2, 'Research CSI focus', researchStep?.status, researchStep?.detail, researchBody, { open: openStep === 'research' })}
+    ${wbStep(3, 'Match a Chelo project', match?.status, match?.detail, matchBody, { open: openStep === 'match' })}
+    ${wbStep(4, 'Draft email', draft?.status, draft?.detail, draftBody, { open: openStep === 'draft' })}
+    ${wbStep(5, 'Review, approve & send', emailStatus === 'Sent' ? 'sent' : emailStatus === 'Approved' ? 'approved' : d ? 'review' : null, emailStatus === 'None' ? '' : emailStatus, reviewBody, { open: openStep === 'review' })}
+    ${wbStep(6, 'Track & relationship', emailStatus === 'Sent' ? 'sent' : null, lead.stage === 'Won' ? 'Partner' : '', trackBody, { open: openStep === 'track' })}
+  </div>`;
+}
+async function wbRunFlow(id, { force = false, redraft = false } = {}) {
+  state.wb.busy[id] = true; renderApp();
+  try { await API(`/api/leads/${encodeURIComponent(id)}/flow`, { method: 'POST', body: JSON.stringify({ force, redraft }) }); }
+  catch (err) { toast(err.message, true); }
+  finally { delete state.wb.busy[id]; await refresh(); }
+}
+async function wbRunPending() {
+  if (state.wb.pendingRan) return; state.wb.pendingRan = true;
+  try { const r = await API('/api/flow/run-pending', { method: 'POST', body: JSON.stringify({ limit: 3 }) }); if (r.ran.length) { await refresh(); if (r.remaining > 0) { state.wb.pendingRan = false; wbRunPending(); } } }
+  catch { /* silent: pending runs are best-effort */ }
+}
+async function wbAction(action, button) {
+  const id = button.dataset.id;
+  if (action === 'wb-focus-add') { $('#wb-add-form input[name="company"]')?.focus(); return true; }
+  if (action === 'wb-filter') { state.wb.filter = button.dataset.filter; state.wb.selectedId = null; renderApp(); return true; }
+  if (action === 'wb-select') { state.wb.selectedId = id; renderApp(); return true; }
+  if (action === 'wb-run') { await wbRunFlow(id, { force: button.dataset.force === 'true' }); return true; }
+  if (action === 'wb-redraft') { await wbRunFlow(id, { redraft: true }); return true; }
+  if (action === 'wb-verify') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/verify-mailbox`, { method: 'POST', body: '{}' }); toast(`Mailbox: ${r.mailbox.status} — ${r.mailbox.reason}`, ['invalid', 'undeliverable'].includes(r.mailbox.status)); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
+  if (action === 'wb-delete') { if (!confirm('Remove this dead lead from the database?')) return true; await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'DELETE' }); state.wb.selectedId = null; await refresh(); toast('Dead lead removed.'); return true; }
+  if (action === 'wb-discover') {
+    const q = $('#wb-discover-q')?.value?.trim() || ''; if (!q) return toast('Describe the organisations you want to find.', true) || true;
+    state.wb.discovery = { ...state.wb.discovery, query: q, busy: true, error: '' }; renderApp();
+    try { const r = await API(`/api/discovery/search?q=${encodeURIComponent(q)}`); state.wb.discovery = { query: q, busy: false, results: r.organisations || [], error: r.warnings?.length && !r.organisations?.length ? r.warnings.join(' ') : '' }; }
+    catch (err) { state.wb.discovery = { ...state.wb.discovery, busy: false, results: [], error: err.message }; }
+    renderApp(); return true;
+  }
+  if (action === 'wb-discover-add') {
+    const org = state.wb.discovery.results.find(o => o.domain === button.dataset.domain); if (!org) return true;
+    button.disabled = true;
+    try { const r = await API('/api/discovery/add', { method: 'POST', body: JSON.stringify({ ...org, query: state.wb.discovery.query }) }); org.alreadyTracked = true; state.wb.selectedId = r.lead.id; state.wb.filter = 'all'; await refresh(); toast(`${org.name} added. Add a public work email in Edit details to start verification.`); }
+    catch (err) { toast(err.message, true); button.disabled = false; }
+    return true;
+  }
+  return false;
+}
+async function wbAddSubmit(form) {
+  const data = formDataObject(form);
+  if (!data.company) return toast('Organisation name is required.', true);
+  state.wb.busy.add = true; renderApp();
+  try {
+    const lead = await API('/api/leads', { method: 'POST', body: JSON.stringify({ ...data, sourceName: data.sourceUrl ? 'Website' : 'Manual entry', stage: 'New' }) });
+    state.wb.selectedId = lead.id; state.wb.filter = 'all';
+    delete state.wb.busy.add;
+    await refresh();
+    toast(`${lead.company} added — verifying, researching and drafting…`);
+    await wbRunFlow(lead.id);
+  } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
+}
+document.addEventListener('change', async event => {
+  const sel = event.target.closest('[data-wb-project]');
+  if (!sel) return;
+  const id = sel.dataset.wbProject;
+  try { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ projectId: sel.value }) }); toast('Project linked — redrafting the email…'); await wbRunFlow(id, { redraft: true }); }
+  catch (err) { toast(err.message, true); }
+});

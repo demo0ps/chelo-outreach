@@ -195,3 +195,6 @@ Decisions: dark zinc-950 sidebar + light zinc app; single purple accent; restyle
 Decisions: deep navy-indigo sidebar (signature), iOS-style per-item coloured gradient tiles with white embossed glyph, sidebar only.
 - [x] ui.css sidebar block rewritten: navy gradient, 28px tiles (radial highlight, gloss cap ::before, inset rim ::after, inner top highlight + bottom shade, drop shadow), per-view hues via --tile-a/b/c, raised glowing active pill, hover lift
 - [ ] user visual confirmation
+
+## 2026-10-25 · v11 Workbench
+- New `workbench` nav tile (amber gradient, `wand` glyph). Stepper step indices use `check` / `xCircle` / spinner; filter chips and list rows (`.wb-filter`, `.wb-row`) are navigation controls and are exempt from the icon-less-button audit.
