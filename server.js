@@ -17,6 +17,7 @@ const createEmailVerifier = require('./lib/email-verify');
 const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
+const relationships = require('./lib/relationships');
 const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;
@@ -55,13 +56,14 @@ const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape', 'National'];
-const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
+const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
 if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
+for (const key of ['people', 'touches', 'pledges', 'stewardshipTasks']) if (!Array.isArray(db[key])) db[key] = [];
 const waterfall = dataEngine.createWaterfall({
   fetchText: async url => (await research.fetchPublicText(url)).text,
   search: async query => { const cfg = configStore.getSearchConfig(); if (!cfg || !cfg.apiKey) return null; return research.runSearch(cfg, query); },
@@ -274,6 +276,7 @@ function safeLead(body, contactCheck = null) {
     fitScore: Math.max(0, Math.min(100, Number(body.fitScore || 70))),
     financialYearEnd: Number.isInteger(Number(body.financialYearEnd)) && Number(body.financialYearEnd) >= 1 && Number(body.financialYearEnd) <= 12 ? Number(body.financialYearEnd) : null, fyeSource: body.financialYearEnd ? 'staff' : '',
     province: clampText(body.province, 120),
+    introducer: clampText(body.introducer, 160), introducedVia: clampText(body.introducedVia, 160), foundationName: clampText(body.foundationName, 160), parentCompany: clampText(body.parentCompany, 160),
     notes: String(body.notes || '').trim(),
     owner: String(body.owner || 'Nandi').trim(),
     nextAction: String(body.nextAction || 'Review lead fit').trim(),
@@ -434,11 +437,13 @@ function ensurePartner(lead, actor = 'staff') {
       sourceName: lead.sourceName || '', sourceUrl: lead.sourceUrl || '',
       sourceLastVerifiedAt: lead.sourceLastVerifiedAt || '', contactLastVerifiedAt: lead.contactLastVerifiedAt || '',
       relationshipContext: lead.relationshipContext || '', partnerPriorities: lead.partnerPriorities || '',
+      introducer: lead.introducer || '', introducedVia: lead.introducedVia || '', foundationName: lead.foundationName || '', parentCompany: lead.parentCompany || '', financialYearEnd: lead.financialYearEnd || null, website: lead.website || '', sector: lead.sector || '', province: lead.province || '',
       status: 'Active', partnerSince: new Date().toISOString(), owner: lead.owner || 'Nandi',
       notes: lead.notes || ''
     };
     db.partners.unshift(partner);
     addActivity(`${lead.company} converted to partner`, 'won', actor);
+    try { stewardshipTick({ partnerId: partner.id, actor }); } catch (err) { console.warn(`[stewardship] initial plan skipped: ${err.message}`); }
   } else {
     Object.assign(partner, { company: lead.company, contactName: lead.contactName, title: lead.title, email: lead.email, phone: lead.phone, projectId: lead.projectId || '', project: lead.project, amount: Number(lead.amount || 0), sourceName: lead.sourceName || '', sourceUrl: lead.sourceUrl || '', sourceLastVerifiedAt: lead.sourceLastVerifiedAt || '', contactLastVerifiedAt: lead.contactLastVerifiedAt || '', relationshipContext: lead.relationshipContext || '', partnerPriorities: lead.partnerPriorities || '', owner: lead.owner || partner.owner });
   }
@@ -457,6 +462,7 @@ function updateLead(lead, body, actor = 'staff') {
     else if (key === 'fitScore') lead.fitScore = Math.max(0, Math.min(100, Number(value || 0)));
     else if (key === 'financialYearEnd') { const m = Number(value); lead.financialYearEnd = Number.isInteger(m) && m >= 1 && m <= 12 ? m : null; if (body.fyeSource === undefined) lead.fyeSource = lead.financialYearEnd ? 'staff' : ''; }
     else if (key === 'province' || key === 'footprint') lead[key] = clampText(value, 120);
+    else if (['introducer', 'introducedVia', 'foundationName', 'parentCompany'].includes(key)) lead[key] = clampText(value, 160);
     else if (key === 'stage') lead.stage = STAGES.includes(value) ? value : lead.stage;
     else if (key === 'doNotContact') lead.doNotContact = Boolean(value);
     else if (key === 'relationshipContext') lead[key] = clampText(value, 800);
@@ -1222,6 +1228,71 @@ function signalsSummary() {
     weights: signals.WEIGHTS
   };
 }
+
+// ---- Batch 5: relationship memory + stewardship ----
+function relationshipRecord(idValue) {
+  const partner = db.partners.find(p => p.id === idValue) || db.partners.find(p => p.leadId === idValue) || null;
+  const lead = findLead(idValue) || (partner?.leadId ? findLead(partner.leadId) : null);
+  if (!partner && !lead) return null;
+  return { lead, partner };
+}
+function relIds({ lead, partner }) { return new Set([lead?.id, partner?.id, partner?.leadId].filter(Boolean)); }
+function relationshipView(rec, { now = new Date(), timelineLimit = 200 } = {}) {
+  const { lead, partner } = rec; const ids = relIds(rec);
+  const people = db.people.filter(p => ids.has(p.leadId) || ids.has(p.partnerId));
+  const touches = db.touches.filter(t => ids.has(t.leadId) || ids.has(t.partnerId));
+  const pledges = db.pledges.filter(p => ids.has(p.partnerId) || ids.has(p.leadId)).map(p => ({ ...p, status: relationships.pledgeStatus(p, now) }));
+  const tasks = db.stewardshipTasks.filter(t => ids.has(t.partnerId) || ids.has(t.leadId));
+  const timeline = relationships.timelineFor({ lead, partner, messages: db.messages, emailEvents: db.emailEvents, bookings: db.bookings, touches, pledges, tasks, activities: db.activities });
+  const last = relationships.lastTouch(timeline); const inbound = relationships.lastInbound(timeline);
+  const open = tasks.filter(t => t.status === 'open');
+  const health = relationships.relationshipHealth({ lastTouchAt: last?.at || null, lastInboundAt: inbound?.at || null, openTasks: open, overduePledges: pledges.filter(p => p.status === 'overdue').length, now });
+  const graph = relationships.buildOrgGraph({ leads: db.leads, partners: db.partners, candidates: db.candidates, people: db.people, projects: db.projects, pledges: db.pledges });
+  const neighbourhood = relationships.neighbourhood(graph, partner?.id || lead.id) || relationships.neighbourhood(graph, lead?.id);
+  const renewal = partner ? relationships.renewalAnchor(partner, pledges, now) : null;
+  return {
+    id: partner?.id || lead.id, leadId: lead?.id || partner?.leadId || null, partnerId: partner?.id || null,
+    company: partner?.company || lead.company, isPartner: Boolean(partner), owner: partner?.owner || lead?.owner || '',
+    introducer: partner?.introducer || lead?.introducer || '', introducedVia: partner?.introducedVia || lead?.introducedVia || '',
+    foundationName: partner?.foundationName || lead?.foundationName || '', parentCompany: partner?.parentCompany || lead?.parentCompany || '',
+    financialYearEnd: partner?.financialYearEnd || lead?.financialYearEnd || null, renewal: renewal ? { at: renewal.at.toISOString().slice(0, 10), basis: renewal.basis } : null,
+    health, lastTouch: last, lastInbound: inbound, nextDue: relationships.nextDue(open),
+    people: people.map(p => ({ ...p, email: p.email ? maskEmail(p.email) : '' })), touches: touches.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 50), pledges, pledgeTotals: relationships.pledgeTotals(pledges, now),
+    tasks: tasks.slice().sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1)), graph: neighbourhood, timeline: timeline.slice(0, timelineLimit)
+  };
+}
+function maskEmail(email) { const [u, d] = String(email).split('@'); if (!d) return ''; return `${u.slice(0, 1)}***@${d}`; }
+function stewardshipTick({ partnerId = null, actor = 'system', now = new Date() } = {}) {
+  const partners = db.partners.filter(p => (!partnerId || p.id === partnerId) && p.status !== 'Inactive');
+  let created = 0;
+  for (const partner of partners) {
+    const pledges = db.pledges.filter(p => p.partnerId === partner.id || (partner.leadId && p.leadId === partner.leadId));
+    const planned = relationships.planStewardship(partner, { pledges, now });
+    const existing = db.stewardshipTasks.filter(t => t.partnerId === partner.id);
+    for (const task of relationships.reconcileTasks(existing, planned)) {
+      db.stewardshipTasks.push({ id: id('steward'), partnerId: partner.id, leadId: partner.leadId || '', company: partner.company, status: 'open', createdAt: now.toISOString(), ...task });
+      created++;
+    }
+  }
+  if (created) configStore.recordAudit({ actor, action: 'stewardship.planned', entityType: 'stewardship', summary: `${created} stewardship task${created === 1 ? '' : 's'} scheduled across ${partners.length} partner${partners.length === 1 ? '' : 's'}` });
+  return { created, partners: partners.length };
+}
+function relationshipsSummary(now = new Date()) {
+  const partners = db.partners.map(p => { const v = relationshipView({ lead: p.leadId ? findLead(p.leadId) : null, partner: p }, { now, timelineLimit: 1 }); return { id: p.id, leadId: p.leadId, company: p.company, owner: p.owner, status: p.status, amount: Number(p.amount || 0), partnerSince: p.partnerSince, health: v.health, lastTouch: v.lastTouch, nextDue: v.nextDue, renewal: v.renewal, pledgeTotals: v.pledgeTotals, openTasks: v.tasks.filter(t => t.status === 'open').length, people: v.people.length, introducer: v.introducer }; });
+  const open = db.stewardshipTasks.filter(t => t.status === 'open').map(t => ({ ...t, overdue: new Date(t.dueAt) < now })).sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1));
+  const in7 = new Date(now.getTime() + 7 * 86400000).toISOString();
+  const pledges = db.pledges.map(p => ({ ...p, status: relationships.pledgeStatus(p, now) }));
+  const graph = relationships.buildOrgGraph({ leads: db.leads, partners: db.partners, candidates: db.candidates, people: db.people, projects: db.projects, pledges: db.pledges });
+  return {
+    totals: { partners: partners.length, warm: partners.filter(p => p.health.status === 'warm').length, cooling: partners.filter(p => p.health.status === 'cooling').length, cold: partners.filter(p => p.health.status === 'cold').length, atRisk: partners.filter(p => p.health.status === 'at-risk').length, people: db.people.length, touches: db.touches.length },
+    stewardship: { open: open.length, overdue: open.filter(t => t.overdue).length, dueThisWeek: open.filter(t => !t.overdue && t.dueAt <= in7).length, queue: open.slice(0, 40) },
+    pledges: relationships.pledgeTotals(pledges, now),
+    renewals: partners.filter(p => p.renewal && (new Date(p.renewal.at) - now) / 86400000 <= 120).sort((a, b) => (a.renewal.at < b.renewal.at ? -1 : 1)),
+    graph: { orgs: graph.nodes.filter(n => n.type === 'org').length, foundations: graph.nodes.filter(n => n.type === 'org' && n.kind === 'foundation').length, people: graph.nodes.filter(n => n.type === 'person').length, edges: graph.edges.length, linkedFoundations: graph.edges.filter(e => e.type === 'operates-foundation').length },
+    partners: partners.sort((a, b) => ({ 'at-risk': 0, cold: 1, cooling: 2, warm: 3 }[a.health.status] - { 'at-risk': 0, cold: 1, cooling: 2, warm: 3 }[b.health.status]) || (a.nextDue || 'z').localeCompare(b.nextDue || 'z')),
+    cadence: relationships.CADENCE, roles: relationships.PEOPLE_ROLES, touchKinds: relationships.TOUCH_KINDS, periods: relationships.PLEDGE_PERIODS
+  };
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1571,7 +1642,8 @@ async function handleApi(req, res, url) {
       const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
       const result = await reverifyStale({ limit: 20, actor: 'cron' });
-      return sendJson(res, 200, { ok: true, ...result });
+      const stewardship = stewardshipTick({ actor: 'cron' }); saveDb();
+      return sendJson(res, 200, { ok: true, ...result, stewardship });
     }
     if (method === 'GET' && pathname === '/api/auth/status') return sendJson(res, 200, authStatus(req));
     if (method === 'POST' && pathname === '/api/auth/demo') {
@@ -1858,6 +1930,88 @@ async function handleApi(req, res, url) {
     }
     if (method === 'GET' && pathname === '/api/data') return sendJson(res, 200, dataSummary());
     if (method === 'GET' && pathname === '/api/signals') return sendJson(res, 200, signalsSummary());
+    // ---- Batch 5: relationships + stewardship ----
+    if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
+    if (method === 'POST' && pathname === '/api/stewardship/tick') { const r = stewardshipTick({ actor: actorName() }); saveDb(); return sendJson(res, 200, { ok: true, ...r }); }
+    const taskRoute = pathname.match(/^\/api\/stewardship\/tasks\/([^/]+)$/);
+    if (taskRoute && method === 'POST') {
+      const task = db.stewardshipTasks.find(t => t.id === taskRoute[1]); if (!task) return sendJson(res, 404, { error: 'Task not found.' });
+      const body = await readBody(req); const action = String(body.action || '');
+      const nowIso = new Date().toISOString();
+      if (action === 'done' || action === 'skip') {
+        task.status = action === 'done' ? 'done' : 'skipped'; task.doneAt = nowIso; task.doneBy = actorName(); task.note = clampText(String(body.note || ''), 400);
+        if (action === 'done') db.touches.unshift({ id: id('touch'), leadId: task.leadId || '', partnerId: task.partnerId, kind: task.kind || 'note', summary: task.title, at: nowIso, actor: actorName(), taskId: task.id, personName: '' });
+        configStore.recordAudit({ actor: actorName(), action: `stewardship.${task.status}`, entityType: 'stewardship', entityId: task.id, summary: `${task.company}: ${task.title}` });
+      } else if (action === 'snooze') {
+        const days = Math.min(90, Math.max(1, Number(body.days) || 7)); task.dueAt = new Date(Date.now() + days * 86400000).toISOString(); task.snoozedAt = nowIso;
+      } else return sendJson(res, 400, { error: 'action must be done, skip or snooze.' });
+      saveDb(); return sendJson(res, 200, { ok: true, task });
+    }
+    const relRoute = pathname.match(/^\/api\/relationships\/([^/]+)(?:\/(.*))?$/);
+    if (relRoute) {
+      const rec = relationshipRecord(relRoute[1]); if (!rec) return sendJson(res, 404, { error: 'Relationship not found.' });
+      const sub = relRoute[2] || ''; const ids = relIds(rec);
+      const actor = actorName(); const nowIso = new Date().toISOString();
+      if (method === 'GET' && !sub) return sendJson(res, 200, relationshipView(rec));
+      if (method === 'GET' && sub === 'timeline.csv') {
+        const view = relationshipView(rec, { timelineLimit: 5000 });
+        configStore.recordAudit({ actor, action: 'relationship.timeline_exported', entityType: 'relationship', entityId: view.id, summary: `${view.company}: ${view.timeline.length} timeline rows exported` });
+        res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${safeFilename(view.company).replace(/[^A-Za-z0-9._-]+/g, '-') || 'relationship'}-timeline.csv"` });
+        return res.end(relationships.timelineCsv(view.timeline, { organisation: view.company }));
+      }
+      const body = method === 'GET' ? {} : await readBody(req);
+      const base = { leadId: rec.lead?.id || rec.partner?.leadId || '', partnerId: rec.partner?.id || '' };
+      if (method === 'POST' && sub === 'people') {
+        const name = clampText(String(body.name || '').trim(), 120); if (!name) return sendJson(res, 400, { error: 'Name is required.' });
+        const role = relationships.PEOPLE_ROLES.includes(body.role) ? body.role : 'other';
+        const person = { id: id('person'), ...base, name, title: clampText(String(body.title || ''), 120), role, email: normalizeEmail(body.email || '') || '', notes: clampText(String(body.notes || ''), 400), source: clampText(String(body.source || 'staff'), 60), createdAt: nowIso, createdBy: actor };
+        db.people.unshift(person);
+        if (role === 'introducer') { for (const r of [rec.lead, rec.partner].filter(Boolean)) if (!r.introducer) r.introducer = name; }
+        configStore.recordAudit({ actor, action: 'relationship.person_added', entityType: 'relationship', entityId: base.partnerId || base.leadId, summary: `${rec.partner?.company || rec.lead.company}: ${name} (${role})` });
+        saveDb(); return sendJson(res, 201, relationshipView(rec));
+      }
+      const personRoute = sub.match(/^people\/([^/]+)$/);
+      if (personRoute && (method === 'PATCH' || method === 'DELETE')) {
+        const person = db.people.find(p => p.id === personRoute[1] && (ids.has(p.leadId) || ids.has(p.partnerId))); if (!person) return sendJson(res, 404, { error: 'Person not found.' });
+        if (method === 'DELETE') db.people = db.people.filter(p => p.id !== person.id);
+        else { for (const k of ['name', 'title', 'notes']) if (body[k] !== undefined) person[k] = clampText(String(body[k] || ''), k === 'notes' ? 400 : 120); if (body.role && relationships.PEOPLE_ROLES.includes(body.role)) person.role = body.role; if (body.email !== undefined) person.email = normalizeEmail(body.email) || ''; person.updatedAt = nowIso; }
+        saveDb(); return sendJson(res, 200, relationshipView(rec));
+      }
+      if (method === 'POST' && sub === 'touches') {
+        const kind = relationships.TOUCH_KINDS.includes(body.kind) ? body.kind : 'note';
+        const summary = clampText(String(body.summary || '').trim(), 400); if (!summary) return sendJson(res, 400, { error: 'Add a short summary of the touch.' });
+        const at = body.at && !Number.isNaN(Date.parse(body.at)) ? new Date(body.at).toISOString() : nowIso;
+        db.touches.unshift({ id: id('touch'), ...base, kind, summary, at, actor, personName: clampText(String(body.personName || ''), 120), nextDueAt: body.nextDueAt && /^\d{4}-\d{2}-\d{2}$/.test(body.nextDueAt) ? body.nextDueAt : '' });
+        if (body.nextDueAt && rec.partner) db.stewardshipTasks.push({ id: id('steward'), partnerId: rec.partner.id, leadId: rec.partner.leadId || '', company: rec.partner.company, cadenceKey: `manual:${Date.now().toString(36)}`, kind: 'note', title: clampText(String(body.nextAction || 'Agreed follow-up'), 160), why: `Agreed during ${kind} on ${at.slice(0, 10)}`, dueAt: new Date(`${body.nextDueAt}T07:00:00Z`).toISOString(), status: 'open', createdAt: nowIso });
+        if (rec.lead) { rec.lead.updatedAt = nowIso; if (body.nextDueAt && !rec.partner) rec.lead.nextAction = clampText(String(body.nextAction || `Follow up by ${body.nextDueAt}`), 160); }
+        configStore.recordAudit({ actor, action: 'relationship.touch_logged', entityType: 'relationship', entityId: base.partnerId || base.leadId, summary: `${rec.partner?.company || rec.lead.company}: ${kind} — ${summary.slice(0, 80)}` });
+        saveDb(); return sendJson(res, 201, relationshipView(rec));
+      }
+      if (method === 'POST' && sub === 'pledges') {
+        const amount = Math.max(0, Number(body.amount || 0)); if (!amount) return sendJson(res, 400, { error: 'Pledge amount is required.' });
+        const dateOk = v => v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+        const period = relationships.PLEDGE_PERIODS.includes(body.period) ? body.period : 'once';
+        const project = body.projectId ? db.projects.find(p => p.id === body.projectId) : null;
+        const pledge = { id: id('pledge'), ...base, amount, period, projectId: project?.id || rec.partner?.projectId || rec.lead?.projectId || '', project: project?.name || rec.partner?.project || rec.lead?.project || '', pledgedAt: dateOk(body.pledgedAt) ? `${body.pledgedAt}T09:00:00.000Z` : nowIso, dueAt: dateOk(body.dueAt) ? `${body.dueAt}T09:00:00.000Z` : '', renewalAt: dateOk(body.renewalAt) ? `${body.renewalAt}T09:00:00.000Z` : (period !== 'once' && dateOk(body.pledgedAt || nowIso.slice(0, 10)) ? new Date(Date.parse(`${(body.pledgedAt || nowIso.slice(0, 10))}T09:00:00Z`) + 365 * 86400000).toISOString() : ''), status: 'pledged', receivedAt: null, reference: clampText(String(body.reference || ''), 120), notes: clampText(String(body.notes || ''), 400), actor, createdAt: nowIso };
+        db.pledges.unshift(pledge);
+        if (rec.partner) { rec.partner.amount = db.pledges.filter(p => p.partnerId === rec.partner.id && p.status !== 'cancelled').reduce((s, p) => s + Number(p.amount || 0), 0) || rec.partner.amount; }
+        configStore.recordAudit({ actor, action: 'relationship.pledge_recorded', entityType: 'relationship', entityId: base.partnerId || base.leadId, summary: `${rec.partner?.company || rec.lead.company}: R${amount.toLocaleString('en-ZA')} ${period}` });
+        if (rec.partner) stewardshipTick({ partnerId: rec.partner.id, actor });
+        saveDb(); return sendJson(res, 201, relationshipView(rec));
+      }
+      const pledgeRoute = sub.match(/^pledges\/([^/]+)$/);
+      if (pledgeRoute && method === 'PATCH') {
+        const pledge = db.pledges.find(p => p.id === pledgeRoute[1] && (ids.has(p.partnerId) || ids.has(p.leadId))); if (!pledge) return sendJson(res, 404, { error: 'Pledge not found.' });
+        if (body.status && relationships.PLEDGE_STATUSES.includes(body.status)) { pledge.status = body.status; if (body.status === 'received') { pledge.receivedAt = body.receivedAt && /^\d{4}-\d{2}-\d{2}$/.test(body.receivedAt) ? `${body.receivedAt}T09:00:00.000Z` : nowIso; for (const t of db.stewardshipTasks) if (t.pledgeId === pledge.id && t.status === 'open') { t.status = 'skipped'; t.doneAt = nowIso; t.note = 'Pledge received.'; } } }
+        if (body.amount !== undefined) pledge.amount = Math.max(0, Number(body.amount || 0));
+        for (const k of ['dueAt', 'renewalAt']) if (body[k] !== undefined) pledge[k] = /^\d{4}-\d{2}-\d{2}$/.test(String(body[k])) ? `${body[k]}T09:00:00.000Z` : '';
+        if (body.notes !== undefined) pledge.notes = clampText(String(body.notes || ''), 400);
+        pledge.updatedAt = nowIso;
+        configStore.recordAudit({ actor, action: 'relationship.pledge_updated', entityType: 'relationship', entityId: pledge.id, summary: `${rec.partner?.company || rec.lead.company}: pledge ${pledge.status}` });
+        saveDb(); return sendJson(res, 200, relationshipView(rec));
+      }
+      return sendJson(res, 404, { error: 'Relationship route not found.' });
+    }
     if (method === 'POST' && pathname === '/api/data/reverify') { const body = await readBody(req); return sendJson(res, 200, await reverifyStale({ limit: Number(body.limit) || 10, actor: actorName() })); }
     const mergeRoute = pathname.match(/^\/api\/data\/merge-reviews\/([^/]+)$/);
     if (method === 'POST' && mergeRoute) {
@@ -2757,7 +2911,7 @@ async function handleApi(req, res, url) {
       if (!partnerDates.ok) return sendJson(res, 400, { error: partnerDates.issues.join(' ') });
       const partnerContactChanged = ['company', 'contactName', 'title', 'email', 'phone'].some(key => body[key] !== undefined && String(body[key] || '').trim() !== String(partner[key] || '').trim());
       const partnerSourceChanged = ['sourceName', 'sourceUrl'].some(key => body[key] !== undefined && String(body[key] || '').trim() !== String(partner[key] || '').trim());
-      for (const k of ['company', 'contactName', 'title', 'email', 'phone', 'project', 'status', 'owner', 'notes', 'relationshipContext', 'partnerPriorities', 'sourceName', 'sourceUrl']) {
+      for (const k of ['company', 'contactName', 'title', 'email', 'phone', 'project', 'status', 'owner', 'notes', 'relationshipContext', 'partnerPriorities', 'sourceName', 'sourceUrl', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'renewalAt']) {
         if (body[k] === undefined) continue;
         const value = k === 'email' ? normalizeEmail(body[k]) : String(body[k] || '').trim();
         partner[k] = k === 'relationshipContext' ? clampText(value, 800) : k === 'partnerPriorities' ? clampText(value, 1200) : k === 'sourceName' ? clampText(value, 300) : k === 'sourceUrl' ? clampText(value, 2000) : value;
@@ -2765,13 +2919,17 @@ async function handleApi(req, res, url) {
       partner.contactLastVerifiedAt = partnerContactChanged && partnerDates.contactLastVerifiedAt === normalizeDateOnly(partner.contactLastVerifiedAt) ? '' : partnerDates.contactLastVerifiedAt;
       partner.sourceLastVerifiedAt = partnerSourceChanged && partnerDates.sourceLastVerifiedAt === normalizeDateOnly(partner.sourceLastVerifiedAt) ? '' : partnerDates.sourceLastVerifiedAt;
       if (body.amount !== undefined) partner.amount = Math.max(0, Number(body.amount || 0));
+      if (body.financialYearEnd !== undefined) { const m = Number(body.financialYearEnd); partner.financialYearEnd = Number.isInteger(m) && m >= 1 && m <= 12 ? m : null; }
+      if (partner.renewalAt && !/^\d{4}-\d{2}-\d{2}$/.test(partner.renewalAt)) partner.renewalAt = '';
       const linkedLead = partner.leadId ? findLead(partner.leadId) : null;
       if (linkedLead) {
-        for (const key of ['sourceName', 'sourceUrl', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities']) linkedLead[key] = partner[key] || '';
+        for (const key of ['sourceName', 'sourceUrl', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'introducer', 'introducedVia', 'foundationName', 'parentCompany']) linkedLead[key] = partner[key] || '';
+        if (partner.financialYearEnd && !linkedLead.financialYearEnd) { linkedLead.financialYearEnd = partner.financialYearEnd; linkedLead.fyeSource = 'staff'; }
         linkedLead.updatedAt = new Date().toISOString();
       }
       partner.updatedAt = new Date().toISOString();
       addActivity(`Partner profile updated: ${partner.company}`, 'partner', actorName());
+      try { stewardshipTick({ partnerId: partner.id, actor: actorName() }); } catch {}
       saveDb();
       return sendJson(res, 200, partner);
     }
