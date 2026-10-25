@@ -524,3 +524,18 @@ h1 { font-size:29px; line-height:1.16; font-weight:690; letter-spacing:-.024em; 
   .button:disabled .icon-svg .icon-accent, .is-busy .icon-svg .icon-accent { animation:none; }
   .button:hover .icon-svg, .nav-item:hover .icon-svg, .metric-card:hover .icon-svg { transform:none; }
 }
+
+/* ---- Icon coverage pass (every action carries a glyph) ---- */
+.close-button, .demo-banner .dismiss { display:inline-grid; place-items:center; padding:0; font-size:0; }
+.close-button .icon-svg { width:16px; height:16px; }
+.demo-banner .dismiss { width:28px; height:28px; border-radius:8px; }
+.demo-banner .dismiss .icon-svg { width:15px; height:15px; }
+.demo-banner .dismiss:hover { background:rgba(89,69,232,.08); }
+.demo-banner-icon .icon-svg { width:15px; height:15px; }
+.table-action { display:inline-flex; align-items:center; gap:5px; }
+.table-action .icon-svg { width:13px; height:13px; flex:0 0 auto; }
+.button .icon-svg, .button svg.icon-svg { width:14px; height:14px; flex:0 0 auto; }
+.button-small .icon-svg { width:13px; height:13px; }
+.button-ghost .icon-svg .icon-tint { opacity:.12; }
+a.button { display:inline-flex; align-items:center; gap:7px; }
+.policy-option .icon-svg { width:16px; height:16px; margin-bottom:6px; }
