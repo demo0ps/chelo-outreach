@@ -72,6 +72,7 @@ update statuses every turn. I present candidates with scores; **you choose** wha
 | G3 | API-wide rate limiting (not only login) | security review | seed | 2/2/4/5 | |
 | G4 | Privacy notice text covering cross-border hosting (s72 POPIA) | security review | seed | 3/1/5/5 | Document, not code. |
 | G5 | Ops dashboard (shipped Batch 6) | | shipped | | |
+| G7 | Chelo logo as platform favicon / brand assets (`public/brand/chelo-mark.svg`, lockup PNG) | user 2026-10-25 | shipped | | Logo file supplied by user; mark rebuilt as crisp SVG. |
 | G6 | Self-host option on a R‑priced SA VPS (data residency, always-on worker, no cron limits) | deployment reality notes | seed | 3/3/3/5 | `npm start` already works; needs a one-page runbook. |
 
 ## H. Product / positioning
