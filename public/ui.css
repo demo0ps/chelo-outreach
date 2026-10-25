@@ -578,3 +578,11 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .og-branches{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}.og-branch h4{display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 0 8px;color:var(--z-700)}.og-branch h4 .icon-svg{width:14px;height:14px}
 @media (max-width:720px){.rel-task{grid-template-columns:28px 1fr}.rel-task-actions{grid-column:1/-1;justify-content:flex-start}.rel-pledge-totals{grid-template-columns:1fr 1fr}.rel-card-grid{grid-template-columns:1fr}}
 .rel-tab .icon-svg{width:14px;height:14px}
+
+/* ---- discovered funders catalogue ---- */
+.cat-panel{margin-bottom:14px}.cat-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.cat-head h3{display:inline-flex;align-items:center;gap:8px;margin:0 0 6px;font-size:15px}.cat-head h3 .icon-svg{width:18px;height:18px;color:var(--a-600)}.cat-head p{max-width:760px;margin:0;font-size:12.5px;line-height:1.5}
+.cat-actions{display:flex;gap:6px;flex-wrap:wrap}
+.cat-progress{height:6px;border-radius:999px;background:var(--z-100);margin:14px 0 10px;overflow:hidden}.cat-progress span{display:block;height:100%;background:linear-gradient(90deg,var(--a-600),#8b7dff);transition:width .4s}
+.cat-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}.cat-stats div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--z-200);border-radius:10px}.cat-stats small{font-size:11px;color:var(--z-500)}.cat-stats strong{font-size:16px}.cat-stats strong.ok{color:#15803d}.cat-stats strong.bad{color:#b91c1c}
+.cat-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.cat-chip{font-size:11.5px;padding:3px 9px;border-radius:999px;background:var(--z-100);color:var(--z-700)}.cat-chip b{color:var(--a-600)}
+.org-pill{font-size:10.5px;gap:4px;display:inline-flex;align-items:center}.org-pill .icon-svg{width:12px;height:12px}

@@ -18,6 +18,7 @@ const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
 const relationships = require('./lib/relationships');
+const discoveredCatalogue = require('./data/discovered-leads');
 const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;
@@ -264,6 +265,7 @@ function safeLead(body, contactCheck = null) {
     email: normalizeEmail(body.email),
     phone: String(body.phone || '').trim(),
     sector: String(body.sector || '').trim(),
+    website: clampText(body.website, 2000),
     sourceUrl: clampText(body.sourceUrl, 2000),
     sourceName: clampText(body.sourceName, 300),
     sourceLastVerifiedAt: dates.sourceLastVerifiedAt,
@@ -1293,6 +1295,72 @@ function relationshipsSummary(now = new Date()) {
     cadence: relationships.CADENCE, roles: relationships.PEOPLE_ROLES, touchKinds: relationships.TOUCH_KINDS, periods: relationships.PLEDGE_PERIODS
   };
 }
+
+// ---- Discovered leads catalogue (curated SA CSI funders) + bulk organisation verification ----
+function catalogueStatus() {
+  const rows = discoveredCatalogue.discoveredLeads();
+  const have = new Set([...db.leads, ...db.candidates, ...db.partners].map(l => l.catalogKey).filter(Boolean));
+  const imported = db.leads.filter(l => l.catalogKey);
+  const verified = imported.filter(l => l.orgCheck?.status === 'verified').length;
+  const failed = imported.filter(l => l.orgCheck && ['invalid', 'unreachable'].includes(l.orgCheck.status)).length;
+  const pending = imported.filter(l => !l.orgCheck || l.orgCheck.status === 'retry').length;
+  const byProject = rows.reduce((acc, r) => { acc[r.project] = (acc[r.project] || 0) + 1; return acc; }, {});
+  return { catalogue: 'sa-csi-2026', total: rows.length, imported: imported.length, remaining: rows.filter(r => !have.has(r.catalogKey)).length, verification: { verified, failed, pending }, byProject, contactsNeeded: imported.filter(l => !normalizeEmail(l.email)).length };
+}
+async function verifyOrganisation(lead) {
+  const domain = relationships.registrableDomain(lead.website) || relationships.registrableDomain(lead.sourceUrl);
+  const checkedAt = new Date().toISOString();
+  if (!domain) return { status: 'invalid', reason: 'No website domain on record.', domain: '', checkedAt };
+  const result = await checkEmailDomain(`csi@${domain}`);
+  const status = result.status === 'invalid' ? 'invalid' : result.status === 'retry-required' ? 'retry' : 'verified';
+  return { status, reason: result.reason || '', method: result.method || null, domain, checkedAt };
+}
+async function importDiscoveredLeads({ limit = 60, verify = true, actor = 'staff' } = {}) {
+  const rows = discoveredCatalogue.discoveredLeads();
+  const have = new Set([...db.leads, ...db.candidates, ...db.partners].map(l => l.catalogKey).filter(Boolean));
+  const batch = rows.filter(r => !have.has(r.catalogKey)).slice(0, Math.max(1, Math.min(500, limit)));
+  const created = []; let skippedExisting = 0;
+  const checkedAt = new Date().toISOString();
+  for (const row of batch) {
+    // Same-domain siblings inside the catalogue (foundation ↔ parent, site-level programmes) are intentional and link through the org graph.
+    const external = dataEngine.findDuplicates({ company: row.company, email: '', website: row.website }, { leads: db.leads.filter(l => !l.catalogKey), candidates: db.candidates.filter(c => !c.promotedLeadId), partners: db.partners });
+    const exact = external.find(m => m.level === 'exact');
+    if (exact) {
+      // Already in the workspace by hand: link it to the catalogue row and fill only the blanks (never overwrite staff data).
+      const existing = recordById(exact.type, exact.id);
+      if (existing && exact.type === 'leads') {
+        existing.catalogKey = row.catalogKey; existing.catalogue = row.catalogue;
+        for (const k of ['website', 'province', 'footprint', 'foundationName', 'parentCompany', 'partnerPriorities', 'sector']) if (!existing[k] && row[k]) existing[k] = row[k];
+        if (!existing.financialYearEnd && row.financialYearEnd) { existing.financialYearEnd = row.financialYearEnd; existing.fyeSource = 'research'; existing.fyeEvidence = { text: 'catalogue (typical reporting year-end) — confirm', sourceTitle: 'SA CSI funder catalogue' }; }
+        if (!existing.projectId && row.projectId) Object.assign(existing, projectLinkFields(row));
+        existing.updatedAt = checkedAt;
+      } else if (existing) { existing.catalogKey = row.catalogKey; }
+      skippedExisting++; continue;
+    }
+    const lead = safeLead({ ...row, owner: 'Nandi', nextAction: 'Verify organisation, then find the public CSI contact', stage: 'New' }, { status: 'needs-clarification', emailStatus: 'missing', method: null, issues: ['contact name', 'work email'], checkedAt });
+    lead.catalogKey = row.catalogKey; lead.catalogue = row.catalogue; lead.catalogueTier = row.tier; lead.website = row.website; lead.footprint = row.footprint;
+    lead.fyeSource = row.financialYearEnd ? 'research' : null; lead.fyeEvidence = row.financialYearEnd ? { text: 'catalogue (typical reporting year-end) — confirm', sourceTitle: 'SA CSI funder catalogue' } : null;
+    lead.discovered = { source: 'catalogue', batch: row.catalogue, importedAt: checkedAt, importedBy: actor };
+    db.leads.push(lead); created.push(lead);
+  }
+  let verification = null;
+  if (verify && created.length) {
+    const results = await mapWithConcurrency(created, 8, async lead => { try { lead.orgCheck = await verifyOrganisation(lead); } catch (err) { lead.orgCheck = { status: 'retry', reason: err.message, checkedAt: new Date().toISOString() }; } return lead.orgCheck.status; });
+    verification = results.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {});
+  }
+  if (created.length) {
+    addActivity(`${created.length} discovered funders loaded from the SA CSI catalogue${verification ? ` · ${verification.verified || 0} organisations verified` : ''}`, 'lead', actor);
+    configStore.recordAudit({ actor, action: 'leads.catalogue_imported', entityType: 'workspace', summary: `${created.length} catalogue leads imported (${skippedExisting} skipped as already present)${verification ? `; verification ${JSON.stringify(verification)}` : ''}` });
+    saveDb();
+  }
+  return { created: created.length, skippedExisting, verification, status: catalogueStatus() };
+}
+async function reverifyOrganisations({ limit = 60, actor = 'staff' } = {}) {
+  const due = db.leads.filter(l => l.catalogKey && (!l.orgCheck || l.orgCheck.status === 'retry')).slice(0, limit);
+  const results = await mapWithConcurrency(due, 8, async lead => { try { lead.orgCheck = await verifyOrganisation(lead); } catch (err) { lead.orgCheck = { status: 'retry', reason: err.message, checkedAt: new Date().toISOString() }; } return lead.orgCheck.status; });
+  if (due.length) saveDb();
+  return { checked: due.length, results: results.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {}), status: catalogueStatus() };
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1932,6 +2000,9 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/signals') return sendJson(res, 200, signalsSummary());
     // ---- Batch 5: relationships + stewardship ----
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
+    if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
+    if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
+    if (method === 'POST' && pathname === '/api/leads/catalogue/verify') { const body = await readBody(req); return sendJson(res, 200, await reverifyOrganisations({ limit: Number(body.limit) || 60, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/stewardship/tick') { const r = stewardshipTick({ actor: actorName() }); saveDb(); return sendJson(res, 200, { ok: true, ...r }); }
     const taskRoute = pathname.match(/^\/api\/stewardship\/tasks\/([^/]+)$/);
     if (taskRoute && method === 'POST') {

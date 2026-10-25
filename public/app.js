@@ -14,6 +14,7 @@ const state = {
   dlv: { data: null, loading: false, error: '', editing: null },
   dq: { data: null, loading: false, error: '', busy: false },
   rel: { summary: null, loading: false, error: '', busy: false, view: null, viewId: null, tab: 'timeline' },
+  cat: { status: null, loading: false, busy: false, progress: '' },
   wb: { selectedId: null, sort: 'fit', filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
@@ -543,6 +544,7 @@ function discoverView() {
   }).join('');
   return `${pageHead('Source · review · add', 'Discover', 'Review candidates from Chelo’s local prospect pool and CSV imports. Add each organisation to the pipeline individually.', `<button class="button button-secondary" data-action="candidate-import">${svgIcon('download')} Import CSV</button><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')}CSV template</a>`)}
     <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>Human-reviewed discovery:</strong> CSV imports open a preview with column mapping, row-level warnings and exact-match duplicate suggestions. Server intake checks email syntax/domain, duplicates and opt-outs. Staff contact dates are separate from DNS/MX checks; a passing domain does not verify a mailbox.</span></div>
+    ${cataloguePanel()}
     <section class="metric-grid discover-metrics">${metricCard('Awaiting review', String(pending), 'candidates not yet added', 'globe')}${metricCard('Added to pipeline', String(added), 'human-approved prospects', 'checkCircle')}${metricCard('CSV imports', String(state.data.candidates.filter(c => c.sourceKind === 'CSV import' || /csv/i.test(c.sourceName || '')).length), 'local database records', 'download')}${metricCard('Web search', 'Not connected', 'intentional MVP boundary', 'search')}</section>
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="candidate-search" type="search" placeholder="Search candidates, contacts, projects…" value="${esc(state.query)}" /></label><select class="select-control" id="candidate-filter"><option value="All candidates" ${state.candidateFilter === 'All candidates' ? 'selected' : ''}>All candidates</option><option value="New candidate" ${state.candidateFilter === 'New candidate' ? 'selected' : ''}>Awaiting review</option><option value="Added to pipeline" ${state.candidateFilter === 'Added to pipeline' ? 'selected' : ''}>Added to pipeline</option><option value="Already in pipeline" ${state.candidateFilter === 'Already in pipeline' ? 'selected' : ''}>Already in pipeline</option></select></div><div class="control-right"><span class="subtle">${candidates.length} candidate${candidates.length === 1 ? '' : 's'}</span></div></div>
     <div class="candidate-list">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('globe')}</div><strong>No candidates found</strong><p>Import a CSV or add records to the local candidate database.</p></div>`}</div>
@@ -869,7 +871,7 @@ function leadDetailModal(lead) {
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('partners')}Relationship and partner priorities</span></div><div class="detail-grid"><div class="detail-item"><small>Warm-introduction / relationship context</small><div class="detail-note">${esc(lead.relationshipContext || 'No introduction path recorded yet.')}</div></div><div class="detail-item"><small>Partner priorities and timing</small><div class="detail-note">${esc(lead.partnerPriorities || 'No priorities or timing recorded yet.')}</div></div></div></div>
     ${lead.notes ? `<div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('edit')}Research notes</span></div><div class="detail-note">${esc(lead.notes)}</div></div>` : ''}
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('mail')}Outreach status</span></div><div class="detail-grid"><div class="detail-item"><small>Email</small><strong>${esc(lead.emailStatus || 'Not started')}</strong></div><div class="detail-item"><small>Follow-up</small><strong>${lead.followUpAt ? isoDate(lead.followUpAt) : 'Not scheduled'}</strong></div></div>${lead.proposalFile ? `<div class="attachment-row"><div class="attachment-info"><span class="pdf-icon">PDF</span><span>Chelo partnership proposal<small>Generated ${isoDate(lead.updatedAt)}</small></span></div><a class="button button-secondary button-small" href="${proposalDownload(lead)}" download>${svgIcon('download')}Download</a></div>` : ''}</div>
-    <div class="detail-section rel-strip"><div class="detail-section-title"><span class="section-title-text">${svgIcon('partners')}Relationship memory</span><button type="button" class="button button-ghost button-small" data-action="rel-open" data-id="${esc(lead.id)}">${svgIcon('activity')}Timeline, people & pledges</button></div><div class="rel-strip-grid"><div><small>Introduced by</small><strong>${esc(lead.introducer || '—')}</strong>${lead.introducedVia ? `<span class="subtle">${esc(lead.introducedVia)}</span>` : ''}</div><div><small>Foundation link</small><strong>${esc(lead.foundationName || lead.parentCompany || '—')}</strong></div><div><small>Owner</small><strong>${esc(lead.owner || 'Unassigned')}</strong></div><div><small>Next action</small><strong>${esc(lead.nextAction || '—')}</strong></div></div></div>
+    <div class="detail-section rel-strip"><div class="detail-section-title"><span class="section-title-text">${svgIcon('partners')}Relationship memory</span><button type="button" class="button button-ghost button-small" data-action="rel-open" data-id="${esc(lead.id)}">${svgIcon('activity')}Timeline, people & pledges</button></div><div class="rel-strip-grid"><div><small>Introduced by</small><strong>${esc(lead.introducer || '—')}</strong>${lead.introducedVia ? `<span class="subtle">${esc(lead.introducedVia)}</span>` : ''}</div><div><small>Foundation link</small><strong>${esc(lead.foundationName || lead.parentCompany || '—')}</strong></div><div><small>Owner</small><strong>${esc(lead.owner || 'Unassigned')}</strong></div><div><small>Next action</small><strong>${esc(lead.nextAction || '—')}</strong></div>${lead.orgCheck ? `<div><small>Organisation check</small><strong>${orgPill(lead.orgCheck)}</strong><span class="subtle">${esc(lead.orgCheck.domain || '')}${lead.orgCheck.reason ? ` · ${esc(lead.orgCheck.reason)}` : ''}</span></div>` : ''}${lead.discovered ? `<div><small>Discovered via</small><strong>SA CSI catalogue</strong><span class="subtle">${esc(relDate(lead.discovered.importedAt))}</span></div>` : ''}</div></div>
     ${activities.length ? `<div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('activity')}Recent activity</span></div>${activities.map(a => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon(a.type === 'booking' ? 'calendar' : a.type === 'proposal' ? 'proposals' : 'check')}</div><div class="shortcut-copy"><strong>${esc(a.text)}</strong><span>${isoDate(a.createdAt)}</span></div></div>`).join('')}</div>` : ''}`;
   const footer = `<div class="modal-footer-left"><span class="subtle">Created ${isoDate(lead.createdAt)}</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Close</button>${lead.stage !== 'Won' ? `<button type="button" class="button button-primary" data-action="mark-won" data-id="${esc(lead.id)}">${svgIcon('trophy')}Mark as won</button>` : `<button class="button button-lime" data-view="partners">${svgIcon('partners')}View partner</button>`}</div>`;
   return modalFrame('Prospect details', 'Review context and take the next step.', body, footer);
@@ -1171,6 +1173,7 @@ function setView(view) {
   if (view === 'workbench') wbRunPending();
   if (view === 'overview') loadRadar();
   if (view === 'partners') loadRelationships(true);
+  if (view === 'discover') loadCatalogue();
   renderApp(); window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'analytics') loadAnalytics(state.analyticsRange);
   if (view === 'settings' && state.settingsSection === 'audit') loadAudit();
@@ -1203,6 +1206,7 @@ async function dispatchAction(button) {
   if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('rel-')) { if (await relAction(button.dataset.action, button)) return; }
+  if (String(button.dataset.action || '').startsWith('cat-')) { if (await catAction(button.dataset.action, button)) return; }
   const id = button.dataset.id;
   try {
     if (action === 'close-modal') return closeModal();
@@ -2196,7 +2200,7 @@ function wbRow(l, active) {
   return `<button type="button" class="wb-row ${active ? 'is-active' : ''} wb-row-${s}" data-action="wb-select" data-id="${esc(l.id)}">
     <span class="wb-row-avatar">${initials(l.company)}</span>
     <span class="wb-row-copy"><strong>${esc(l.company)}</strong><small>${esc(l.contactName || 'No contact yet')}${l.project ? ` · ${esc(l.project)}` : ''}</small></span>
-    <span class="wb-row-status">${fitPill(l.fit)}${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
+    <span class="wb-row-status">${orgPill(l.orgCheck)}${fitPill(l.fit)}${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
   </button>`;
 }
 function wbStepState(lead, name) { return lead.flow?.steps?.[name] || null; }
@@ -2580,6 +2584,53 @@ async function relAction(action, button) {
     const relId = state.rel.viewId; if (!relId || !confirm('Remove this person from the relationship?')) return true;
     try { state.rel.view = await API(`/api/relationships/${encodeURIComponent(relId)}/people/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch (err) { toast(err.message, true); }
     renderApp(); return true;
+  }
+  return false;
+}
+
+// ---- Discovered funders catalogue ----
+function orgPill(check) {
+  if (!check) return '';
+  const cls = check.status === 'verified' ? 'pill-won' : check.status === 'invalid' ? 'pill-lost' : 'pill-new';
+  const label = check.status === 'verified' ? 'Org verified' : check.status === 'invalid' ? 'Domain dead' : 'Org check pending';
+  return `<span class="stage-pill org-pill ${cls}" title="${esc(check.reason || '')}${check.domain ? ` (${esc(check.domain)})` : ''}">${svgIcon(check.status === 'verified' ? 'checkCircle' : check.status === 'invalid' ? 'xCircle' : 'clock')}${label}</span>`;
+}
+async function loadCatalogue(force = false) {
+  if (state.cat.loading || (state.cat.status && !force)) return;
+  state.cat.loading = true;
+  try { state.cat.status = await API('/api/leads/catalogue'); } catch (err) { toast(err.message, true); } finally { state.cat.loading = false; renderApp(); }
+}
+function cataloguePanel() {
+  const c = state.cat.status;
+  if (!c) return `<section class="panel cat-panel"><p class="subtle">Loading the discovered-funders catalogue…</p></section>`;
+  const pct = c.total ? Math.round((c.imported / c.total) * 100) : 0;
+  const projects = Object.entries(c.byProject || {}).map(([name, n]) => `<span class="cat-chip">${esc(name)} <b>${n}</b></span>`).join('');
+  return `<section class="panel cat-panel"><div class="cat-head"><div><h3>${svgIcon('globe')}Discovered funders · SA CSI catalogue</h3><p class="subtle">${c.total} South African companies, corporate foundations, trusts and IPPs with active CSI / SED programmes — organisation-level only (no personal data), each mapped to one of your six verified projects with CSI focus, likely financial year-end and a suggested ask. On load, every organisation's domain is verified (MX/DNS) and duplicates against your existing records are linked, not copied. Contacts come next via research + the public-contact waterfall.</p></div>
+      <div class="cat-actions"><button type="button" class="button button-primary" data-action="cat-import" ${state.cat.busy || !c.remaining ? 'disabled' : ''}>${svgIcon('download')}${state.cat.busy ? (state.cat.progress || 'Loading…') : c.remaining ? `Load ${c.remaining} discovered funders` : 'All loaded'}</button>${c.verification.pending ? `<button type="button" class="button button-secondary" data-action="cat-verify" ${state.cat.busy ? 'disabled' : ''}>${svgIcon('refresh')}Verify ${c.verification.pending} pending</button>` : ''}<button type="button" class="button button-ghost" data-view="workbench">${svgIcon('wand')}Open workbench</button></div></div>
+    <div class="cat-progress"><span style="width:${pct}%"></span></div>
+    <div class="cat-stats"><div><small>In pipeline</small><strong>${c.imported} / ${c.total}</strong></div><div><small>Organisation verified</small><strong class="ok">${c.verification.verified}</strong></div><div><small>Domain dead / unreachable</small><strong class="${c.verification.failed ? 'bad' : ''}">${c.verification.failed}</strong></div><div><small>Check pending</small><strong>${c.verification.pending}</strong></div><div><small>Need a public contact</small><strong>${c.contactsNeeded}</strong></div></div>
+    <div class="cat-chips">${projects}</div></section>`;
+}
+async function catAction(action) {
+  if (action === 'cat-import') {
+    state.cat.busy = true; let created = 0, skipped = 0, verified = 0;
+    try {
+      for (let i = 0; i < 12; i++) {
+        state.cat.progress = `Loading… ${created} added`; renderApp();
+        const r = await API('/api/leads/catalogue/import', { method: 'POST', body: JSON.stringify({ limit: 40, verify: true }) });
+        created += r.created; skipped += r.skippedExisting; verified += r.verification?.verified || 0; state.cat.status = r.status;
+        if (!r.status.remaining || (r.created === 0 && r.skippedExisting === 0)) break;
+      }
+      toast(`${created} discovered funders loaded · ${verified} organisations verified${skipped ? ` · ${skipped} linked to existing records` : ''}.`);
+    } catch (err) { toast(err.message, true); }
+    finally { state.cat.busy = false; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
+    return true;
+  }
+  if (action === 'cat-verify') {
+    state.cat.busy = true; state.cat.progress = 'Verifying…'; renderApp();
+    try { const r = await API('/api/leads/catalogue/verify', { method: 'POST', body: JSON.stringify({ limit: 80 }) }); state.cat.status = r.status; toast(`Checked ${r.checked} organisations: ${r.results.verified || 0} verified, ${r.results.invalid || 0} dead, ${r.results.retry || 0} to retry.`); }
+    catch (err) { toast(err.message, true); } finally { state.cat.busy = false; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
+    return true;
   }
   return false;
 }
