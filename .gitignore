@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Persistent workspace storage & secrets
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*
+!.env.example
+
+# Contact imports & private datasets (POPIA boundary)
+imports/
+private-data/
+/*.csv
+
+# OS & editor files
+.DS_Store
+*.log
+npm-debug.log*

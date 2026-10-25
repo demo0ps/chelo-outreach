@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "arena/**"]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.js
+          for f in lib/*.js public/app.js tests/*.js; do node --check "$f"; done
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run platform & smoke tests (synthetic fixtures only)
+        run: npm test
+
+      - name: Build Docker image & verify disposable intake gate
+        run: |
+          docker build -t chelo-partnerships:ci .
+          docker run -d --rm --name chelo-ci \
+            -p 3100:3000 \
+            -e NODE_ENV=test \
+            -e DATA_DIR=/tmp/chelo-ci-data \
+            -e DEMO_OPEN_ACCESS=true \
+            -e SETTINGS_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            chelo-partnerships:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3100/api/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3100/api/health | grep -q '"ok":true'
+          docker stop chelo-ci

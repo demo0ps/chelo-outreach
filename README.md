@@ -1,1 +1,79 @@
-# chelo-outreach
+# Chelo Partnerships Workspace
+
+A zero-bloat Node 22 + vanilla JS donor-outreach workspace for Chelo: human-reviewed discovery, a **Verified Projects Catalog** with live funding-gap tracking, approval-first email outreach (1-person or strict **4-eyes**), multi-staff roles with a hash-chained audit ledger, SAST-exact video briefings with automatic **.ics** invites (Google Meet / Microsoft Teams / Zoom), inbound bounce/reply sync, a POPIA-scrubbed **Paste-to-Extract** research copilot and a **Grant-Cycle Radar**. Storage is ACID-safe `node:sqlite` (WAL) under `/data`. The interface keeps Chelo's soft-3D navy / purple / white design.
+
+## Run locally
+
+```bash
+npm install
+npm start           # http://localhost:3000
+npm test            # node --test platform suite + legacy smoke tests
+```
+
+Node.js **22.5+** is required (`node:sqlite`). On first run, create the first administrator (name, work email, 12+ character password) in the browser; add Reviewer / Relationship Owner accounts under **Settings → Team & governance**. Legacy `data/db.json` files are migrated into `data/chelo.sqlite` automatically on first start and renamed `db.json.migrated`.
+
+For an open-access demo use a disposable data directory: `DATA_DIR=/tmp/chelo-open-demo DEMO_OPEN_ACCESS=true npm start`. `DEMO_ADMIN_ACCESS=true` shows a one-click full-admin button instead. Both are disabled when `NODE_ENV=production`. The seeded demo prospects are fictional (`example.com`); the six seeded **verified projects** are real Chelo catalog entries. **Settings → Team & governance → Clear demo records** removes the fictional prospects, candidates, partners and briefings in one click while retaining the project catalog.
+
+## Project layout
+
+```
+server.js                 HTTP server, REST API, intake gate, outreach, approvals, briefings, analytics
+lib/sqlite-store.js       node:sqlite (WAL) persistence, legacy db.json migration, sessions, login rate limits
+lib/config-store.js       AES-256-GCM secrets, staff accounts & roles, approval digests, hash-chained audit
+lib/pdf-engine.js         multi-page branded proposal PDF generator (WinAnsi, auto-pagination)
+lib/calendar-ics.js       SAST parsing, RFC 5545 .ics builder, video-platform helpers, confirmation email
+lib/popia-copilot.js      deterministic PII scrubber, Paste-to-Extract, Grant-Cycle Radar classification
+lib/inbound-sync.js       signed webhook + IMAP bounce/reply sync, follow-up digest
+lib/seed-data.js          Chelo verified project seed + fictional demo pipeline
+public/                   index.html, app.js, styles.css, experience.css, sample CSV templates
+tests/                    node --test platform suite + node:vm smoke tests
+```
+
+## What's new in 0.2
+
+- **Verified Projects Catalog** (`/api/projects`): verified recipient, province, sector, target budget, committed funding, grant/delivery window, cited source, up to three verified baseline→latest metrics. Funding gap = target − (committed + won pipeline); active pipeline coverage is shown per project. CSV import via `public/sample-projects.csv`. Prospects, candidates and partners link to a project; proposals and PDFs inherit it.
+- **Team accounts & roles**: Admin (everything), Reviewer (read, approve/countersign/return drafts only), Relationship Owner (manage records; first approvals). Every audit entry is attributed `Display Name <email>`. Sessions and per-account+IP login rate limits persist in SQLite across restarts.
+- **Configurable approval policy**: Settings toggles **1-person** vs **strict 4-eyes**. Each approval stamps an HMAC-SHA256 digest of recipient, subject, body, attachment hash, project and amount; the second signature must come from a different Admin/Reviewer and is rejected if any byte changed. Any edit or regeneration voids approvals.
+- **Hash-chained audit ledger**: each entry carries `prevHash`/`hash`; **Verify chain** (`GET /api/audit/verify`) detects tampering, including across 365-day pruning anchors.
+- **Briefings**: public booking form offers Google Meet / Microsoft Teams / Zoom; times are parsed as Africa/Johannesburg (UTC+02:00) regardless of server timezone. Confirming a request emails an RFC 5545 `.ics` (`METHOD:REQUEST`, VTIMEZONE, folded lines, sequence bumps on reschedule) plus the join link; without SMTP the `.ics` is downloadable. Standing room links per platform live in **Settings → Briefings & inbound**.
+- **Inbound sync**: `POST /api/inbound/webhook` (HMAC-SHA256 `X-Chelo-Signature`; generic / Postmark / Resend / SendGrid shapes) and optional TLS IMAP polling. Hard bounces mark the contact invalid and halt the 5/10-business-day follow-ups; replies move the prospect to *Interested* and cancel follow-ups. Follow-up digest at `/api/followups/digest`.
+- **POPIA Paste-to-Extract copilot**: staff paste public CSI/annual-report text; emails, SA/international phone numbers and 13-digit SA ID numbers are scrubbed server-side *before* any AI call (local heuristic extractor when no provider is configured). Output (sector, priorities, grant window, deadline, suggested project) is applied to the prospect form only after human review. No web scraping is connected.
+- **Grant-Cycle Radar** (Overview): prospects/candidates ranked by recorded grant window or deadline, plus follow-ups due now.
+- **Fixes**: search inputs no longer lose focus per keystroke; SAST booking validation no longer skews by server timezone; synchronous full-DB writes replaced by SQLite transactions (tracking hits coalesced); proposal PDFs paginate and keep accented characters; reverse-proxy-safe login throttling; typography raised to a 10.5–14px minimum scale with the leftover forest-green palette replaced.
+
+## Workflow
+
+1. **Discover and check intake:** review candidates in the local database or choose a CSV. CSV opens in a pre-import review: common headers are auto-mapped, staff can remap columns, inspect mapped values and row-level errors, see exact email/organisation duplicate suggestions, and select which rows to submit. Preview batches are capped at 500 rows; split larger files. The server remains authoritative and checks email syntax and domain MX/address records, duplicate matches and do-not-contact suppression after staff confirms import. Definitively invalid email rows are discarded before storage; rows missing contact name, work email or source can remain in Discover for staff clarification; transient DNS failures can be retried. A passing domain check does not verify an individual mailbox. Candidates cannot be promoted or drafted until the required contact details and source are complete and the domain check passes. Web search/scraping is intentionally not connected; source contacts through CSV/local data only.
+2. **Select the ask:** staff link a verified catalog project (or free-text focus), contribution amount and verified Chelo notes. AI can draft wording only; it cannot decide fit or select/change the ask. Manual prospect entry and existing leads are checked before drafting; draft, approval, email handoff and send endpoints recheck the contact gate server-side.
+3. **Generate and review:** the first-touch action drafts a concise, text-only email for a no-preparation, no-commitment 20-minute introductory video briefing. Its primary HTML CTA is **“Yes — choose a time”** and opens the preferred-time form; Chelo manually confirms the requested time. The opener has no proposal PDF or proposal link. A personalised, branded PDF is prepared separately after the conversation or if requested. It uses Chelo-specific guidance (verified recipients, traceable funding, accountability and impact reporting) and must not invent outcomes, commitments, metrics, beneficiaries, budget lines or credentials. Optional PDF comparisons are entered by staff, one per line as `Metric | baseline | latest | unit | period | verified source`; only sourced values are graphed. The optional comparison page labels baseline/latest directly, scales bars within each metric, and never compares unlike units on a shared scale.
+4. **Approve and send:** a staff member approves the email before handoff. First-touch SMTP sends without an attachment; its `.eml` handoff is a real text/HTML message with no PDF, and `mailto:` needs no manual attachment. If a current proposal has been prepared after the briefing or at the recipient’s request, staff may explicitly select it for a later follow-up; SMTP or `.eml` then carries the actual PDF attachment. Proposal URLs are not included in email copy. SMTP acceptance is not proof of inbox delivery. Confirm manual handoffs in Chelo.
+5. **Track and follow up:** first-party **“Yes — choose…”** CTA clicks and preferred-time requests are recorded separately; replies are recorded manually. A request is not a confirmed appointment. The workspace schedules follow-ups for 5 and 10 business days after the first confirmed send/handoff. Each follow-up requires approval and can be sent through SMTP or handed off manually. Reply, booking request or opt-out cancels the remaining follow-ups.
+6. **Assess and improve:** the email editor scores the subject, introduction, body/fixed ask, priority question, preferred-time video CTA, no-pressure close and opt-out. The first-touch checklist explicitly expects no proposal attachment; a prepared PDF is scored only on a follow-up that will attach it. The transparent 100-point readiness checklist updates as staff edit; it is not a predicted conversion probability, and section checks assess completeness rather than verify truth. The 36–50-character subject band is a starting heuristic, not a universal rule. When AI is configured, future initial and follow-up drafts may receive aggregate historical structure/outcome patterns after at least 10 initial sends and 5 sends per compared pattern. Preferred-time requests are the primary outcome; opens and CTA clicks are not treated as bookings. Signals are observational, not causal, and every email still needs staff approval. AI cannot change the selected project, contribution amount, verified facts or message context. This is prompt-time adaptation, not model training; local guided previews remain non-AI when no provider is configured.
+
+## Contact freshness and relationship context
+
+Prospects, Discover candidates and partner profiles can store a staff-confirmed contact-last-verified date, a source-last-checked date, a warm-introduction/relationship path, and known partner priorities and timing (including funding cycles, employee volunteering or in-kind opportunities). Dates are optional ISO `YYYY-MM-DD` values in CSVs and forms. Contact/source dates are never inferred from DNS/MX results. A staff-contact date older than 180 days is labelled “review due” as a reminder only; it does not block drafting or claim mailbox validity. Changing a contact identity clears the old staff-verification date unless a new date is entered; changing the source similarly clears the source-check date. Relationship and priority notes persist when a prospect becomes a partner. Editing source details, verification dates, relationship context or partner priorities on the partner profile also synchronizes those fields to its linked pipeline prospect. These fields are human-facing by default and are not passed to the AI provider; project/amount choices and sending approval remain staff-controlled.
+
+## Settings and reporting
+
+- **AI drafting:** configure an OpenAI-compatible chat-completions endpoint, model and API key in **Settings → Integrations**. Keys are encrypted on the server and never returned to the browser. Environment variables (`OPENAI_API_KEY`, optional `OPENAI_MODEL` and `OPENAI_BASE_URL`) are also supported. Without a key, the app labels drafts as local guided previews, not model-generated. When enabled, the provider receives the organisation, contact name, sector, staff-selected project and amount, campaign notes, booking/opt-out links, and aggregate outcome bands—not the recipient’s email address or phone number, warm-introduction/relationship notes, partner-priority notes, individual message history or raw performance records. Avoid sensitive personal notes and review the provider’s privacy terms.
+- **SMTP:** configure host, port, TLS mode, optional username/password and sender identity in Settings. **Test SMTP connection** only verifies the connection; it sends no email. Approved first-touch emails send without attachments; a prepared PDF is attached to a follow-up only when staff explicitly selects it. SMTP credentials are encrypted server-side.
+- **Analytics:** filter 7/30/90/365-day or all-time totals for SMTP-accepted sends, staff-confirmed manual handoffs, estimated unique opens, “Yes — choose…” CTA clicks, replies and preferred-time requests. The chart and CSV keep requests separate from clicks. Export a CSV. Opens use a 1×1 tracking pixel in SMTP and `.eml` messages when a public HTTPS URL is configured; pixels can be blocked, cached or fetched by privacy proxies, so open counts are estimates, not proof of a human read. The `mailto:` fallback cannot carry a pixel. The performance-informed drafting panel shows aggregate patterns only, with sample-size and causality caveats.
+- **Audit trail:** the Settings tab includes a searchable application log and CSV export. It records workspace changes, settings/test events, approvals, sends/handoffs, CTA clicks, opens, briefing requests, replies, opt-outs and contact-intake checks. Secret values, contact emails and email bodies are excluded. Opt-out suppression stores a keyed HMAC of the normalized email (not the clear email) so deleting a lead does not make it eligible for re-import; preserve the settings-encryption key when moving/backing up data. Entries are retained for up to 365 days; this application log is access-controlled and append-oriented, but is not tamper-proof or compliance-certified.
+- **Responsive UI:** desktop navigation and layouts adapt to tablets and phones. Mobile bottom navigation is limited to **Overview, Discover, Analytics and More**; More opens a fixed, scrollable sheet for the other workspace sections without reflowing the current page.
+
+## Important boundaries before real outreach
+
+- **Access:** staff accounts use scrypt password hashes, eight-hour server-side sessions (SQLite), CSRF checks and per-account+IP login throttling. There is no MFA, SSO or self-service password reset; admins reset passwords (which revokes that user's sessions). Keep demo flags off in production.
+- **Secrets:** `data/settings.json` holds AES-256-GCM encrypted provider, IMAP and webhook secrets keyed by `SETTINGS_ENCRYPTION_KEY` (or the local `data/.settings-key`). The same key signs approval digests, suppression hashes and the audit chain — back it up with the data volume.
+- **Email & calendar:** SMTP acceptance is not inbox delivery. `.ics` invites follow RFC 5545 but calendar clients vary; the workspace does not read calendar availability. Hard-bounce/reply detection depends on your provider webhook or IMAP mailbox being configured.
+- **AI & POPIA:** the AI provider never receives recipient emails, phone numbers, relationship notes or partner-priority notes; pasted research text is scrubbed first. AI drafts wording only — staff decide fit, project, amount and approval.
+- **Storage:** `data/chelo.sqlite` (+ WAL/SHM), `data/proposals/`, `data/audit.jsonl`, `data/settings.json`, `data/auth.json`. Back up the whole directory. The audit ledger is tamper-evident, not a certified immutable service.
+
+## Environment variables
+
+See `.env.example`. Key values: `PORT`, `DATA_DIR`, `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, optional `OPENAI_*` and `SMTP_*`, and the non-production `DEMO_ADMIN_ACCESS` / `DEMO_OPEN_ACCESS` flags.
+
+## Deployment
+
+`Dockerfile` (Node 22 slim, non-root, healthcheck) and `docker-compose.yml` (named `chelo-data` volume at `/data`). `.github/workflows/ci.yml` runs syntax checks, `npm audit`, the test suite and a disposable container health check using synthetic data only.

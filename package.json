@@ -1,0 +1,17 @@
+{
+  "name": "chelo-partnerships-workspace",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Donor outreach, verified projects catalog, and partnership pipeline workspace for Chelo",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test:smoke": "node tests/client-csv-smoke.js && node tests/email-first-touch-smoke.js",
+    "test": "node --test tests/platform-suite.test.js && npm run test:smoke"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "nodemailer": "^10.2.1"
+  }
+}

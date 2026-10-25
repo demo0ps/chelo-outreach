@@ -1,0 +1,16 @@
+node_modules
+data
+imports
+private-data
+*.csv
+!public/sample-leads.csv
+!public/sample-projects.csv
+.git
+.github
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
