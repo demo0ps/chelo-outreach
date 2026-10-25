@@ -5,6 +5,10 @@ Nothing is built from here without a "go"; nothing is deleted, only re-statused.
 
 **Status legend:** `seed` (raw) · `shaping` (being discussed) · `ready` (specified, awaiting go) · `building` · `shipped` · `parked` (with reason) · `rejected` (with reason)
 
+**How we run it (agreed 2026-10-25):** lives here in the repo; I file ideas as we talk (yours, mine, the market's) and
+update statuses every turn. I present candidates with scores; **you choose** what gets built. Two lanes:
+`Now` = buildable on this stack within ~12 months; `Horizon` = moonshots that shape architecture but aren't scheduled.
+
 **Scoring (1–5 each):** Impact on winning CSI partnerships · Ahead-of-market · Effort (5 = tiny) · POPIA/safety risk (5 = none)
 
 ---
@@ -34,7 +38,7 @@ Nothing is built from here without a "go"; nothing is deleted, only re-statused.
 | C1 | Quarterly catalogue refresh keyed to annual-report / Trialogue season so the 336 don't rot | our market review 2026-10-25 | seed | 4/3/3/5 | |
 | C2 | Integrated/ESG report ingestion: pull CSI spend, focus areas, flagship programmes from public PDFs into the brief | Batch 3 waterfall | shaping | 5/5/2/4 | Organisation data only; no PII. Huge differentiator vs static lists. |
 | C3 | B-BBEE certificate / SED spend as a signal of budget size | Trialogue (CSI ≈ 1% NPAT via SED) | seed | 4/5/3/5 | Public certificates only. |
-| C4 | Partner graph: who funds whom (from public annual reports) → "funders of orgs like us" | Clay waterfall reviews; our Batch 5 graph | seed | 5/5/2/5 | |
+| C4 ⟶Horizon/Now | Partner graph: who funds whom (from public annual reports) → "funders of orgs like us" | Clay waterfall reviews; our Batch 5 graph | seed | 5/5/2/5 | |
 | C5 | Community-contributed corrections to the catalogue (staff mark mailbox dead/alive; shared across workspaces later) | r/nonprofit "duplicate-laden imports kill adoption" | seed | 3/3/3/5 | |
 
 ## D. Signals & timing
@@ -74,8 +78,8 @@ Nothing is built from here without a "go"; nothing is deleted, only re-statused.
 
 | # | Idea | Source | Status | I / A / E / S | Notes |
 |---|------|--------|--------|---------------|-------|
-| H1 | Multi-NGO workspaces sharing the funder catalogue (network effect; each NGO's pipeline private) | our discussion | seed | 5/5/1/3 | Big architectural step; POPIA boundaries per tenant. |
-| H2 | Funder-side view: a corporate CSI team logs in to see verified projects seeking partners (two-sided) | Verified Projects catalogue | seed | 5/5/1/4 | Flips the model from outreach to marketplace. |
+| H1 ⟶Horizon | Multi-NGO workspaces sharing the funder catalogue (network effect; each NGO's pipeline private) | our discussion | seed | 5/5/1/3 | Big architectural step; POPIA boundaries per tenant. |
+| H2 ⟶Horizon | Funder-side view: a corporate CSI team logs in to see verified projects seeking partners (two-sided) | Verified Projects catalogue | seed | 5/5/1/4 | Flips the model from outreach to marketplace. |
 
 ---
 
