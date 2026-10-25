@@ -81,6 +81,21 @@ update statuses every turn. I present candidates with scores; **you choose** wha
 | H1 ⟶Horizon | Multi-NGO workspaces sharing the funder catalogue (network effect; each NGO's pipeline private) | our discussion | seed | 5/5/1/3 | Big architectural step; POPIA boundaries per tenant. |
 | H2 ⟶Horizon | Funder-side view: a corporate CSI team logs in to see verified projects seeking partners (two-sided) | Verified Projects catalogue | seed | 5/5/1/4 | Flips the model from outreach to marketplace. |
 
+## I. Message psychology & conversion (raised by user 2026-10-25: "small email that gets them off guard → clickable CTA → paint the end point")
+
+**Evidence filed:** 304K-email study: interest-based CTAs 12% reply vs 7% for meeting asks; 68% vs 41% positive (growleads 2026). Saleshandy 30M: one soft CTA = +78% positive replies; multiple CTAs worst. Length sweet spot 50–125 words; CTA in last sentence +22%. Gong: offer CTA +28%, meeting ask −44%. Timeline CTA ("worth 15 min this week?") 2.34% meetings vs 0.69% problem-based (Digital Bloom) — i.e. meeting asks work *later* in the ladder. Behavioural science: identifiable victim / **identified intervention effect** — tangible, concrete details of the intervention and one named place/person raise giving (Cryder & Loewenstein; "The donor is in the details"). Vividness = emotionally interesting + concrete imagery + psychologically proximate.
+
+| # | Idea | Source | Status | I / A / E / S | Notes |
+|---|------|--------|--------|---------------|-------|
+| I1 | **CTA ladder per sequence**: step 1 interest ("worth a look?") → step 2 offer (one-page partnership pack) → step 3 timeline ask (15 min, 2 slots) → step 4 graceful close. One CTA per email, last sentence. | user + 304K/30M studies | shaping | 5/3/4/5 | Fits Batch 2 sequences; templates need the ladder baked in. |
+| I2 | **End-state picture slot**: every first touch carries one concrete, place-named outcome from the Verified Project ("by March, 140 Grade-R learners in Seshego start the day with a working solar classroom") — identified-intervention effect, not statistics. | user + Cryder/Loewenstein | shaping | 5/4/3/5 | Data already in Verified Projects catalogue; add a required "picture" field + draft critique check. |
+| I3 | **Hosted one-click partnership page + booking** (our domain): the "button" lives on a tiny page, not in the first email; page shows the picture, the ask, 2 meeting slots, .ics. Keeps first touch plain-text (deliverability), satisfies the clickable-CTA instinct from step 2 onward. | user + plain-text-first (B1) | shaping | 5/4/3/5 | Tracks click as warm signal → fit score (Batch 4 warmth). |
+| I4 | **Message experiments engine**: A/B CTA wording, subject, picture variant per sector; auto-promote winner after N sends with significance guard; results feed draft templates. | our discussion | seed | 4/4/2/5 | Small volumes → use Bayesian/Thompson rather than fixed splits. |
+| I5 | Plain-text vs HTML-button first-touch test on our own domain health (measure placement + reply) | user vs deliverability research | seed | 3/3/4/5 | Decide with data, not opinion. |
+| I6 | **Persuasion guardrail (ethics linter)**: approval blocks false urgency, fake scarcity, guilt framing, invented numbers; allows vividness, specificity, reciprocity (offer first). Reputation is the long-term reply rate. | our discussion | shaping | 4/5/4/5 | "Ahead of market" = trusted sender, not tricked reader. |
+| I7 | **Dual framing for CSI managers**: emotional picture + instrumental line (B-BBEE SED points, reporting pack, visibility) in one email — they buy with the heart but justify to the board. | Trialogue + our discussion | shaping | 5/4/4/5 | |
+| I8 | Forwardable internal-approval pack generated per funder (one page, their language, our numbers) — makes the CSI manager our champion inside. | user hypothesis 4 | seed | 5/5/2/5 | Pairs with I3. |
+
 ---
 
 ## Rejected / parked (with reasons)
