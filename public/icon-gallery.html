@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chelo · Icon system</title>
+<link rel="stylesheet" href="/styles.css?v=chelo-workspace-20261025-v5" />
+<link rel="stylesheet" href="/experience.css?v=chelo-workspace-20261025-v5" />
+<style>
+  body { margin:0; background:#f6f5fb; font-family:Inter, system-ui, -apple-system, Segoe UI, sans-serif; color:#2f2768; }
+  .gal-wrap { max-width:1180px; margin:0 auto; padding:36px 24px 80px; }
+  .gal-wrap h1 { font-size:24px; letter-spacing:-.4px; margin:0 0 6px; }
+  .gal-wrap p.lead { color:#6c6790; font-size:13.5px; margin:0 0 26px; max-width:760px; line-height:1.6; }
+  .gal-section { margin-top:30px; }
+  .gal-section h2 { font-size:13px; letter-spacing:1.4px; text-transform:uppercase; color:#8a84ad; margin:0 0 12px; }
+  .gal-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:10px; }
+  .gal-tile { background:#fff; border:1px solid #e8e5f5; border-radius:16px; padding:16px 10px 12px; display:flex; flex-direction:column; align-items:center; gap:10px; transition:transform .18s ease, box-shadow .18s ease; }
+  .gal-tile:hover { transform:translateY(-2px); box-shadow:0 10px 26px rgba(74,58,173,.10); }
+  .gal-tile .icon-svg { width:30px; height:30px; color:#5a4fc9; }
+  .gal-tile small { font-size:11.5px; color:#6c6790; }
+  .gal-navy { background:linear-gradient(165deg,#211d57 0%,#292169 58%,#201c50 100%); border-radius:20px; padding:18px; }
+  .gal-navy .gal-tile { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.1); }
+  .gal-navy .gal-tile .icon-svg { color:#e9e6ff; }
+  .gal-navy .gal-tile small { color:#cfc9f2; }
+  .gal-states { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  .gal-states .button { pointer-events:auto; }
+  .gal-note { font-size:12.5px; color:#6c6790; background:#fff; border:1px dashed #d9d4f1; border-radius:12px; padding:12px 14px; line-height:1.6; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+  <linearGradient id="chelo-icon-accent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c7b9ff"/><stop offset=".55" stop-color="#8d7bff"/><stop offset="1" stop-color="#5ec8ff"/></linearGradient>
+  <filter id="chelo-icon-glow" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="1.1" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs></svg>
+<div class="gal-wrap">
+  <h1>Chelo icon system — duotone with luminous accents</h1>
+  <p class="lead">Every glyph is built from three layers: a translucent <strong>tint</strong> body, a crisp 1.8px <strong>line</strong>, and a single <strong>luminous accent</strong> (purple→cyan gradient with a soft glow). Accents brighten and scale on hover, halo behind the active sidebar item, and breathe while AI drafting, research or sync is in flight. Motion is disabled under <code>prefers-reduced-motion</code>.</p>
+
+  <div class="gal-section"><h2>Workspace navigation · navy surface</h2><div class="gal-navy"><div class="gal-grid" id="navy-grid"></div></div></div>
+  <div class="gal-section"><h2>Full set · light surface</h2><div class="gal-grid" id="light-grid"></div></div>
+
+  <div class="gal-section"><h2>States in context</h2>
+    <div class="gal-states">
+      <button class="button button-primary" type="button"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="spark"></svg> Generate AI draft</button>
+      <button class="button button-secondary" type="button"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="globe"></svg> Research funder</button>
+      <button class="button button-secondary" type="button" disabled><svg class="icon-svg" viewBox="0 0 24 24" data-icon="globe"></svg> Researching… (busy breathe)</button>
+      <button class="button button-secondary" type="button"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="proposals"></svg> Generate proposal PDF</button>
+      <span class="metric-icon metric-icon-tone-cta"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="send"></svg></span>
+      <span class="metric-icon metric-icon-tone-booking"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="calendar"></svg></span>
+      <span class="metric-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="analytics"></svg></span>
+      <span class="ai-guidance-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="spark"></svg></span>
+    </div>
+    <nav class="nav-list" style="max-width:260px;margin-top:16px;background:linear-gradient(165deg,#211d57,#292169);padding:12px;border-radius:16px">
+      <button class="nav-item active" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="overview"></svg></span><span class="nav-label">Overview</span></button>
+      <button class="nav-item" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="discover"></svg></span><span class="nav-label">Discover</span></button>
+      <button class="nav-item" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="pipeline"></svg></span><span class="nav-label">Pipeline</span></button>
+    </nav>
+  </div>
+  <p class="gal-note" style="margin-top:28px">Design page for review only — the workspace itself lives at <a href="/">/</a>. Icons are defined once in <code>app.js</code> and painted by <code>experience.css</code>; no image assets are shipped.</p>
+</div>
+<script src="/app.js?v=chelo-workspace-20261025-v5" data-gallery="true"></script>
+<script>
+  (function () {
+    var names = Object.keys(icons);
+    var navy = ['overview','discover','grid','prospects','pipeline','briefings','mail','partners','proposals','analytics','settings','globe'];
+    function tile(name) { return '<div class="gal-tile"><svg class="icon-svg" viewBox="0 0 24 24">' + icons[name] + '</svg><small>' + name + '</small></div>'; }
+    document.getElementById('navy-grid').innerHTML = navy.map(tile).join('');
+    document.getElementById('light-grid').innerHTML = names.map(tile).join('');
+    document.querySelectorAll('svg[data-icon]').forEach(function (el) { el.innerHTML = icons[el.getAttribute('data-icon')] || icons.spark; });
+  })();
+</script>
+</body>
+</html>

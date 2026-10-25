@@ -173,47 +173,51 @@ function getCsvPreviewRows(preview = state.csvImportPreview) {
   });
 }
 
+// Chelo duotone icon system — 24px grid. Layers: .icon-tint (translucent body), .icon-line (crisp stroke),
+// .icon-accent (small luminous dot: gradient + glow). Classless paths inherit the stroke defaults of .icon-svg.
+const A = (cx, cy, r = 1.6) => `<circle class="icon-accent" cx="${cx}" cy="${cy}" r="${r}"/>`;
 const icons = {
-  upload: '<path d="M12 15V3m-5 5 5-5 5 5M5 20h14"/>',
-  overview: '<rect class="icon-fill-low" x="3" y="3" width="8.2" height="8.2" rx="2.5"/><rect class="icon-fill" x="13" y="3" width="8" height="5.2" rx="2.1"/><rect class="icon-fill-mid" x="13" y="10.2" width="8" height="10.8" rx="2.5"/><rect class="icon-fill-low" x="3" y="13" width="8.2" height="8" rx="2.5"/>',
-  analytics: '<path class="icon-line" d="M4 20h16"/><rect class="icon-fill-low" x="5" y="12" width="3.2" height="7" rx="1.4"/><rect class="icon-fill-mid" x="10.4" y="8.5" width="3.2" height="10.5" rx="1.4"/><rect class="icon-fill" x="15.8" y="4" width="3.2" height="15" rx="1.4"/><path class="icon-line" d="m5.7 10 4.1-3 3.1 1.1 5.4-4"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.8 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.8-1l-1.7.7-1.4-2.4 1.4-1.1a8 8 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.8-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.8 1l1.7-.7 1.4 2.4-1.4 1.1a8 8 0 0 1 0 2Z" transform="translate(-1 -1)"/>',
-  prospects: '<circle class="icon-fill-low" cx="9" cy="8.2" r="3.5"/><path class="icon-line" d="M3.2 19.7c.5-3.5 2.5-5.4 5.8-5.4 1.9 0 3.4.6 4.4 1.8"/><circle class="icon-fill" cx="17.5" cy="9" r="2.3"/><path class="icon-line" d="M17.5 13.8v5.5m-2.75-2.75h5.5"/>',
-  pipeline: '<rect class="icon-fill-low" x="3" y="4" width="5.2" height="16" rx="1.8"/><rect class="icon-fill-mid" x="9.4" y="4" width="5.2" height="16" rx="1.8"/><rect class="icon-fill" x="15.8" y="4" width="5.2" height="16" rx="1.8"/><path class="icon-line" d="M4.5 8h2m4.1 0h2m4.1 0h2M4.5 12h2m4.1 0h2m4.1 0h2"/>',
-  briefings: '<rect class="icon-fill-low" x="3.5" y="5" width="17" height="16" rx="3.5"/><path class="icon-fill-mid" d="M4 9h16v2H4z"/><path class="icon-line" d="M8 3.5v4M16 3.5v4M4 9.5h16"/><rect class="icon-fill" x="7" y="13" width="3" height="3" rx="1"/><rect class="icon-fill-low" x="12" y="13" width="3" height="3" rx="1"/><rect class="icon-fill-mid" x="7" y="17" width="3" height="2" rx="1"/>',
-  partners: '<circle class="icon-fill" cx="9" cy="8" r="3.2"/><circle class="icon-fill-low" cx="17" cy="9.5" r="2.6"/><path class="icon-line" d="M3 20c.3-3.5 2.3-5.4 6-5.4s5.7 1.9 6 5.4M14.4 15.4c2.9-.1 4.8 1.5 5.4 4.6"/>',
-  proposals: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h8"/>',
-  search: '<circle class="icon-fill-low" cx="10.5" cy="10.5" r="6.4"/><circle class="icon-line" cx="10.5" cy="10.5" r="6.4"/><path class="icon-line" d="m15.2 15.2 5 5"/><circle class="icon-fill" cx="10.5" cy="10.5" r="1.35"/>',
-  plus: '<circle class="icon-fill-low" cx="12" cy="12" r="8.5"/><circle class="icon-line" cx="12" cy="12" r="8.5"/><path class="icon-line" d="M12 8v8M8 12h8"/>',
-  arrow: '<path d="M5 12h14m-7-7 7 7-7 7"/>',
-  download: '<path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/>',
-  link: '<path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2"/>',
-  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
-  send: '<path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/>',
-  lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/>',
-  activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
-  logout: '<path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
-  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  building: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h2m3 0h2M9 11h2m3 0h2M9 15h2m3 0h2M10 21v-3h4v3"/>',
-  trend: '<path class="icon-line" d="M4 18h3l3-5 3.2 2.4L19.5 7"/><path class="icon-line" d="M15.5 7h4v4"/><circle class="icon-fill-low" cx="10" cy="13" r="1.8"/><circle class="icon-fill" cx="19.5" cy="7" r="2.1"/>',
-  shield: '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
-  bell: '<path class="icon-fill-low" d="M18 9a6 6 0 0 0-12 0c0 6.2-2.6 7.1-2.6 8.5h17.2C20.6 16.1 18 15.2 18 9Z"/><path class="icon-line" d="M18 9a6 6 0 0 0-12 0c0 6.2-2.6 7.1-2.6 8.5h17.2C20.6 16.1 18 15.2 18 9ZM9.5 20h5"/><circle class="icon-fill" cx="12" cy="3.5" r="1.3"/>',
-  edit: '<path d="m16 4 4 4M4 20l4-.8L19 8.2a2.1 2.1 0 0 0-3-3L5 16.2 4 20Z"/>',
-  check: '<path d="m5 12 4 4L19 6"/>',
-  external: '<path d="M14 3h7v7m0-7-9 9"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
-  paperclip: '<path d="m21.4 11.1-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5"/>',
-  spark: '<path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3ZM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/>',
-  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
-  close: '<path d="m6 6 12 12M18 6 6 18"/>',
-  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
-  checkCircle: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
-  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.2-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.8 2.1Z"/>',
-  globe: '<circle class="icon-fill-low" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M3.5 12h17M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/><circle class="icon-fill" cx="17.2" cy="7" r="1.45"/>',
-  eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/>',
-  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.4" style="fill:currentColor;stroke:none"/>',
-  dots: '<circle class="icon-fill-low" cx="5" cy="12" r="2.2"/><rect class="icon-fill" x="9.4" y="8.8" width="5.2" height="6.4" rx="3"/><circle class="icon-fill-low" cx="19" cy="12" r="2.2"/>',
-  grid: '<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>'
+  overview: `<rect class="icon-tint" x="3" y="3" width="8.4" height="8.4" rx="2.6"/><rect class="icon-tint" x="3" y="13.6" width="8.4" height="7.4" rx="2.4"/><rect class="icon-tint" x="13.6" y="10.6" width="7.4" height="10.4" rx="2.6"/><rect class="icon-line" x="3" y="3" width="8.4" height="8.4" rx="2.6"/><rect class="icon-line" x="13.6" y="3" width="7.4" height="5.4" rx="2.2"/><rect class="icon-line" x="13.6" y="10.6" width="7.4" height="10.4" rx="2.6"/><rect class="icon-line" x="3" y="13.6" width="8.4" height="7.4" rx="2.4"/>${A(17.3, 5.7, 1.3)}`,
+  discover: `<circle class="icon-tint" cx="11" cy="11" r="7"/><circle class="icon-line" cx="11" cy="11" r="7"/><path class="icon-line" d="m16.2 16.2 4.3 4.3"/><path class="icon-line" d="M7.6 10.4a3.6 3.6 0 0 1 2.9-2.9"/>${A(13.4, 8.6, 1.4)}`,
+  globe: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M3.4 12h17.2M12 3a13.6 13.6 0 0 1 0 18M12 3a13.6 13.6 0 0 0 0 18"/>${A(17.4, 6.6, 1.4)}`,
+  grid: `<rect class="icon-tint" x="3" y="3" width="8" height="8" rx="2.2"/><rect class="icon-tint" x="13" y="13" width="8" height="8" rx="2.2"/><rect class="icon-line" x="3" y="3" width="8" height="8" rx="2.2"/><rect class="icon-line" x="13" y="3" width="8" height="8" rx="2.2"/><rect class="icon-line" x="3" y="13" width="8" height="8" rx="2.2"/><rect class="icon-line" x="13" y="13" width="8" height="8" rx="2.2"/>${A(17, 7, 1.3)}`,
+  prospects: `<circle class="icon-tint" cx="9.2" cy="8.2" r="3.6"/><path class="icon-tint" d="M2.8 20c.4-3.9 2.9-6 6.4-6s6 2.1 6.4 6Z"/><circle class="icon-line" cx="9.2" cy="8.2" r="3.6"/><path class="icon-line" d="M2.8 20c.4-3.9 2.9-6 6.4-6s6 2.1 6.4 6"/><path class="icon-line" d="M16.2 4.9a3.3 3.3 0 0 1 0 6.3M18.6 14.6c1.7.8 2.5 2.4 2.7 5"/>${A(17.4, 8.1, 1.3)}`,
+  pipeline: `<rect class="icon-tint" x="3" y="4" width="5.2" height="16" rx="1.9"/><rect class="icon-tint" x="9.4" y="4" width="5.2" height="11" rx="1.9"/><rect class="icon-tint" x="15.8" y="4" width="5.2" height="7" rx="1.9"/><rect class="icon-line" x="3" y="4" width="5.2" height="16" rx="1.9"/><rect class="icon-line" x="9.4" y="4" width="5.2" height="11" rx="1.9"/><rect class="icon-line" x="15.8" y="4" width="5.2" height="7" rx="1.9"/>${A(18.4, 15.6, 1.5)}`,
+  briefings: `<rect class="icon-tint" x="3.5" y="5" width="17" height="16" rx="3.4"/><rect class="icon-line" x="3.5" y="5" width="17" height="16" rx="3.4"/><path class="icon-line" d="M3.5 10h17M8 3v3.5M16 3v3.5"/><path class="icon-line" d="M7.5 14.5h3M7.5 17.5h6"/>${A(16.4, 15.8, 1.5)}`,
+  calendar: `<rect class="icon-tint" x="3.5" y="5" width="17" height="16" rx="3"/><rect class="icon-line" x="3.5" y="5" width="17" height="16" rx="3"/><path class="icon-line" d="M3.5 10h17M8 3v3.5M16 3v3.5"/>${A(16, 16, 1.5)}`,
+  mail: `<rect class="icon-tint" x="3" y="5" width="18" height="14" rx="3"/><rect class="icon-line" x="3" y="5" width="18" height="14" rx="3"/><path class="icon-line" d="m4.2 7.6 7.8 5.6 7.8-5.6"/>${A(18, 8, 1.3)}`,
+  send: `<path class="icon-tint" d="m21 3-9.5 9.5L4 9.6 21 3Z"/><path class="icon-line" d="M21 3 3.8 9.4l7.7 3.1 3.1 7.7L21 3Z"/><path class="icon-line" d="M21 3 11.5 12.5"/>${A(6.2, 17.8, 1.4)}`,
+  partners: `<circle class="icon-tint" cx="8.6" cy="8.4" r="3.4"/><circle class="icon-tint" cx="16.4" cy="9.6" r="2.7"/><circle class="icon-line" cx="8.6" cy="8.4" r="3.4"/><circle class="icon-line" cx="16.4" cy="9.6" r="2.7"/><path class="icon-line" d="M2.6 20c.3-3.6 2.7-5.8 6-5.8 2 0 3.6.8 4.6 2.1M13.4 19.6c.4-2.3 1.7-3.6 3.6-3.6 2 0 3.4 1.3 3.8 3.6"/>${A(12.6, 5.2, 1.3)}`,
+  proposals: `<path class="icon-tint" d="M14 2H6.5A2.5 2.5 0 0 0 4 4.5v15A2.5 2.5 0 0 0 6.5 22h11a2.5 2.5 0 0 0 2.5-2.5V8Z"/><path class="icon-line" d="M14 2H6.5A2.5 2.5 0 0 0 4 4.5v15A2.5 2.5 0 0 0 6.5 22h11a2.5 2.5 0 0 0 2.5-2.5V8Z"/><path class="icon-line" d="M14 2v6h6M8 13h8M8 17h5"/>${A(16.2, 17.2, 1.4)}`,
+  analytics: `<rect class="icon-tint" x="4.5" y="12" width="3.4" height="8" rx="1.5"/><rect class="icon-tint" x="10.3" y="7" width="3.4" height="13" rx="1.5"/><rect class="icon-tint" x="16.1" y="3.5" width="3.4" height="16.5" rx="1.5"/><rect class="icon-line" x="4.5" y="12" width="3.4" height="8" rx="1.5"/><rect class="icon-line" x="10.3" y="7" width="3.4" height="13" rx="1.5"/><rect class="icon-line" x="16.1" y="3.5" width="3.4" height="16.5" rx="1.5"/><path class="icon-line" d="M3 21h18"/>${A(17.8, 1.9, 1.3)}`,
+  trend: `<path class="icon-tint" d="M4 18.5h16V9.4l-4.5 4.8-3.3-2.5L8 16.2Z"/><path class="icon-line" d="M4 18.5h3l3.3-5.2 3.2 2.4 5.5-7.8"/><path class="icon-line" d="M15.4 7.9H19v3.6"/>${A(19, 7.9, 1.5)}`,
+  activity: `<path class="icon-tint" d="M3 12.5h4.2l2.6-6.5 4.4 12 2.8-5.5H21v4H3Z"/><path class="icon-line" d="M3 12h4.2l2.6-7 4.4 14 2.8-7H21"/>${A(14.2, 19, 1.4)}`,
+  settings: `<circle class="icon-tint" cx="12" cy="12" r="7.6"/><path class="icon-line" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path class="icon-line" d="M19.3 14.9a7.7 7.7 0 0 0 0-5.8l1.6-1.3-1.9-3.3-2 .7a7.7 7.7 0 0 0-5-2.9L11.7 1h-3.8l-.3 2.1a7.7 7.7 0 0 0-5 2.9l-2-.7-1.9 3.3 1.6 1.3a7.7 7.7 0 0 0 0 5.8L.7 16.2l1.9 3.3 2-.7a7.7 7.7 0 0 0 5 2.9l.3 2.1h3.8l.3-2.1a7.7 7.7 0 0 0 5-2.9l2 .7 1.9-3.3-1.6-1.3Z" transform="translate(2.1 .9) scale(.9)"/>${A(12, 12, 1.2)}`,
+  search: `<circle class="icon-tint" cx="10.5" cy="10.5" r="6.4"/><circle class="icon-line" cx="10.5" cy="10.5" r="6.4"/><path class="icon-line" d="m15.3 15.3 5.2 5.2"/>${A(12.8, 8.2, 1.3)}`,
+  plus: `<circle class="icon-tint" cx="12" cy="12" r="8.6"/><circle class="icon-line" cx="12" cy="12" r="8.6"/><path class="icon-line" d="M12 8v8M8 12h8"/>`,
+  arrow: `<path class="icon-line" d="M5 12h14m-6.5-6.5L19 12l-6.5 6.5"/>${A(19, 12, 1.3)}`,
+  download: `<path class="icon-tint" d="M7.5 10 12 14.5 16.5 10Z"/><path class="icon-line" d="M12 3.5v11m-4.5-4.5 4.5 4.5 4.5-4.5M4.5 20.5h15"/>${A(19.5, 20.5, 1.3)}`,
+  upload: `<path class="icon-tint" d="M7.5 8 12 3.5 16.5 8Z"/><path class="icon-line" d="M12 14.5v-11m-4.5 4.5L12 3.5 16.5 8M4.5 20.5h15"/>${A(19.5, 20.5, 1.3)}`,
+  link: `<path class="icon-tint" d="M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2Z"/><path class="icon-line" d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2"/>${A(12, 12, 1.2)}`,
+  lock: `<rect class="icon-tint" x="4.5" y="10" width="15" height="11" rx="3"/><rect class="icon-line" x="4.5" y="10" width="15" height="11" rx="3"/><path class="icon-line" d="M8 10V7.2a4 4 0 0 1 8 0V10"/>${A(12, 15.6, 1.5)}`,
+  shield: `<path class="icon-tint" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="m9 12 2 2 4-4"/>${A(16.5, 6.4, 1.2)}`,
+  logout: `<path class="icon-tint" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6Z"/><path class="icon-line" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6"/><path class="icon-line" d="m9.5 16.5 4.5-4.5-4.5-4.5M14 12H3"/>${A(14, 12, 1.3)}`,
+  clock: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M12 7v5l3.2 2"/>${A(12, 12, 1.2)}`,
+  building: `<rect class="icon-tint" x="4" y="3" width="16" height="18" rx="2.6"/><rect class="icon-line" x="4" y="3" width="16" height="18" rx="2.6"/><path class="icon-line" d="M9 7.5h2m3 0h2M9 11.5h2m3 0h2M9 15.5h2m3 0h2M10 21v-2.5h4V21"/>${A(16, 7.5, 1.1)}`,
+  bell: `<path class="icon-tint" d="M18 9.2a6 6 0 0 0-12 0c0 6-2.4 7-2.4 8.3h16.8C20.4 16.2 18 15.2 18 9.2Z"/><path class="icon-line" d="M18 9.2a6 6 0 0 0-12 0c0 6-2.4 7-2.4 8.3h16.8C20.4 16.2 18 15.2 18 9.2Z"/><path class="icon-line" d="M10 20.5a2.2 2.2 0 0 0 4 0"/>${A(17.6, 5.2, 1.5)}`,
+  edit: `<path class="icon-tint" d="M5 16.2 16 5.2l3 3L8 19.2l-4 .8Z"/><path class="icon-line" d="m16 4 4 4M4 20l4-.8L19 8.2a2.1 2.1 0 0 0-3-3L5 16.2 4 20Z"/>${A(18, 6, 1.2)}`,
+  check: `<path class="icon-line" d="m5 12.5 4.2 4.2L19 6.5"/>${A(19, 6.5, 1.3)}`,
+  checkCircle: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="m8 12.2 2.6 2.6L16 9.4"/>${A(16, 9.4, 1.2)}`,
+  external: `<path class="icon-tint" d="M3 8a2.5 2.5 0 0 1 2.5-2.5H11v2.3H5.5V18.5h10.3V13H18v5.5A2.5 2.5 0 0 1 15.5 21h-10A2.5 2.5 0 0 1 3 18.5Z"/><path class="icon-line" d="M14 3h7v7m0-7-9.5 9.5"/><path class="icon-line" d="M18 13.5v5A2.5 2.5 0 0 1 15.5 21h-10A2.5 2.5 0 0 1 3 18.5v-10A2.5 2.5 0 0 1 5.5 6H11"/>${A(21, 3, 1.3)}`,
+  paperclip: `<path class="icon-line" d="m21.4 11.1-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5"/>${A(21.4, 11.1, 1.2)}`,
+  spark: `<path class="icon-tint" d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path class="icon-line" d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path class="icon-line" d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/>${A(12, 10, 1.4)}`,
+  menu: `<path class="icon-line" d="M4 6.5h16M4 12h16M4 17.5h16"/>${A(20, 12, 1.3)}`,
+  close: `<path class="icon-line" d="m6.5 6.5 11 11M17.5 6.5l-11 11"/>`,
+  info: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M12 11v5.2"/>${A(12, 7.8, 1.3)}`,
+  phone: `<path class="icon-tint" d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 2Z"/><path class="icon-line" d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 2Z"/>${A(17.2, 6.8, 1.3)}`,
+  eye: `<path class="icon-tint" d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><path class="icon-line" d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><circle class="icon-line" cx="12" cy="12" r="2.8"/>${A(13.2, 10.8, 1.1)}`,
+  target: `<circle class="icon-tint" cx="12" cy="12" r="8.5"/><circle class="icon-line" cx="12" cy="12" r="8.5"/><circle class="icon-line" cx="12" cy="12" r="4.2"/>${A(12, 12, 1.5)}`,
+  dots: `<circle class="icon-tint" cx="5" cy="12" r="2.2"/><circle class="icon-tint" cx="19" cy="12" r="2.2"/><circle class="icon-line" cx="5" cy="12" r="2.2"/><circle class="icon-line" cx="12" cy="12" r="2.2"/><circle class="icon-line" cx="19" cy="12" r="2.2"/>${A(12, 12, 1.1)}`
 };
 function svgIcon(name, className = '') { const classes = ['icon-svg', className].filter(Boolean).join(' '); return `<svg class="${classes}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons[name] || icons.spark}</svg>`; }
 
@@ -1724,6 +1728,7 @@ document.addEventListener('keydown', event => {
 });
 
 async function init() {
+  if (!document.getElementById('app')) return; // design/gallery pages load app.js only for the icon definitions
   if (location.pathname.startsWith('/book/')) return initPublicBooking();
   if (location.pathname.startsWith('/opt-out/')) return initPublicOptOut();
   try {

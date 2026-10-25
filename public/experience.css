@@ -475,3 +475,52 @@ h1 { font-size:29px; line-height:1.16; font-weight:690; letter-spacing:-.024em; 
 .nav-icon .icon-svg .icon-fill-low { opacity:.38; }
 .nav-item.active .nav-icon .icon-svg .icon-fill-low { opacity:.30; }
 .metric-icon-tone-cta .icon-svg .icon-fill-low,.metric-icon-tone-booking .icon-svg .icon-fill-low,.metric-icon-tone-action .icon-svg .icon-fill-low,.metric-icon-tone-pipeline .icon-svg .icon-fill-low { opacity:.36; }
+
+/* =====================================================================
+   Duotone icon system with luminous accents (replaces legacy fill tiers)
+   ===================================================================== */
+.icon-svg { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; shape-rendering:geometricPrecision; overflow:visible; transition:transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease; }
+.icon-svg .icon-line { fill:none; stroke:currentColor; stroke-width:1.8; vector-effect:non-scaling-stroke; }
+.icon-svg .icon-tint { fill:currentColor; stroke:none; opacity:.14; transition:opacity .22s ease; }
+.icon-svg .icon-accent { fill:url(#chelo-icon-accent); stroke:none; filter:url(#chelo-icon-glow); opacity:.95; transform-box:fill-box; transform-origin:center; transition:transform .25s cubic-bezier(.2,.8,.2,1), opacity .2s ease; }
+/* legacy class names still used by a few inline fragments */
+.icon-svg .icon-fill { fill:currentColor; stroke:none; }
+.icon-svg .icon-fill-mid { fill:currentColor; stroke:none; opacity:.5; }
+.icon-svg .icon-fill-low { fill:currentColor; stroke:none; opacity:.16; }
+
+/* Hover / active micro-interactions — containers only lift the glyph, never the layout */
+.button:hover .icon-svg, .table-action:hover .icon-svg, .nav-item:hover .icon-svg, .metric-card:hover .icon-svg, .shortcut-row:hover .icon-svg, .copilot-tab:hover .icon-svg { transform:translateY(-1px); }
+.button:hover .icon-svg .icon-tint, .nav-item:hover .icon-svg .icon-tint, .metric-card:hover .icon-svg .icon-tint { opacity:.24; }
+.button:hover .icon-svg .icon-accent, .nav-item:hover .icon-svg .icon-accent, .metric-card:hover .icon-svg .icon-accent, .copilot-tab.is-active .icon-svg .icon-accent { transform:scale(1.35); opacity:1; }
+.button:active .icon-svg { transform:translateY(0) scale(.96); }
+
+/* Sidebar: on navy the tint reads brighter; active item gets a soft halo behind the glyph */
+.nav-icon { position:relative; overflow:visible; }
+.nav-icon .icon-svg .icon-tint { opacity:.22; }
+.nav-item.active .nav-icon::after { content:""; position:absolute; inset:-6px; border-radius:50%; background:url(#chelo-icon-halo); background:radial-gradient(circle, rgba(184,170,255,.42), rgba(184,170,255,0) 70%); pointer-events:none; z-index:0; }
+.nav-item.active .nav-icon .icon-svg { position:relative; z-index:1; }
+.nav-item.active .nav-icon .icon-svg .icon-tint { opacity:.3; }
+.nav-item.active .nav-icon .icon-svg .icon-accent { transform:scale(1.25); }
+
+/* Primary / gradient buttons: white glyph, accent stays luminous */
+.button-primary .icon-svg .icon-tint, .metric-icon-tone-cta .icon-svg .icon-tint, .metric-icon-tone-booking .icon-svg .icon-tint, .metric-icon-tone-action .icon-svg .icon-tint { opacity:.26; }
+.button-primary .icon-svg .icon-accent { fill:#fff; opacity:.92; }
+
+/* Working states: breathing accent while AI drafting / research / sync is in flight */
+@keyframes chelo-icon-breathe { 0%,100% { transform:scale(1); opacity:.75; } 50% { transform:scale(1.55); opacity:1; } }
+@keyframes chelo-icon-orbit { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+.button:disabled .icon-svg .icon-accent, .is-busy .icon-svg .icon-accent, .loading-line ~ * .icon-svg .icon-accent { animation:chelo-icon-breathe 1.4s ease-in-out infinite; }
+.button:disabled .icon-svg .icon-tint { opacity:.22; }
+
+/* Ambient callouts & section heads: slightly stronger tint so the duotone reads at 15–18px */
+.note-callout-icon .icon-svg .icon-tint, .settings-section-icon .icon-svg .icon-tint, .ai-guidance-icon .icon-svg .icon-tint, .empty-state-icon .icon-svg .icon-tint { opacity:.2; }
+.ai-guidance-icon .icon-svg .icon-accent, .research-card-head .ai-guidance-icon .icon-svg .icon-accent { transform:scale(1.2); }
+
+/* Tiny inline usages (links, pills): drop the glow so it doesn't bloom */
+.source-link .icon-svg .icon-accent, .stage-pill .icon-svg .icon-accent, .status-pill .icon-svg .icon-accent { filter:none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-svg, .icon-svg .icon-tint, .icon-svg .icon-accent { transition:none; }
+  .button:disabled .icon-svg .icon-accent, .is-busy .icon-svg .icon-accent { animation:none; }
+  .button:hover .icon-svg, .nav-item:hover .icon-svg, .metric-card:hover .icon-svg { transform:none; }
+}
