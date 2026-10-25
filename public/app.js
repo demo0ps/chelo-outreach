@@ -11,6 +11,7 @@ const API = async (url, options = {}) => {
 
 const state = {
   palette: null,
+  dlv: { data: null, loading: false, error: '', editing: null },
   wb: { selectedId: null, filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
@@ -221,6 +222,8 @@ const icons = {
   lock: `<rect class="icon-tint" x="4.5" y="10" width="15" height="11" rx="3"/><rect class="icon-line" x="4.5" y="10" width="15" height="11" rx="3"/><path class="icon-line" d="M8 10V7.2a4 4 0 0 1 8 0V10"/>${A(12, 15.6, 1.5)}`,
   shield: `<path class="icon-tint" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="m9 12 2 2 4-4"/>${A(16.5, 6.4, 1.2)}`,
   logout: `<path class="icon-tint" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6Z"/><path class="icon-line" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6"/><path class="icon-line" d="m9.5 16.5 4.5-4.5-4.5-4.5M14 12H3"/>${A(14, 12, 1.3)}`,
+  play: `<path class="icon-tint" d="M8.5 5.8v12.4L18.2 12z"/><path class="icon-line" d="M8.5 5.8v12.4L18.2 12z"/>${A(10.5, 9, 1.1)}`,
+  trendingUp: `<path class="icon-tint" d="M3.5 17.5l6-6 4 4 7-7v9z"/><path class="icon-line" d="M3.5 17.5l6-6 4 4 7-7"/><path class="icon-line" d="M15.5 8.5h5v5"/>${A(9.5, 11.5, 1.1)}`,
   clock: `<circle class="icon-tint" cx="12" cy="12" r="9"/><circle class="icon-line" cx="12" cy="12" r="9"/><path class="icon-line" d="M12 7v5l3.2 2"/>${A(12, 12, 1.2)}`,
   building: `<rect class="icon-tint" x="4" y="3" width="16" height="18" rx="2.6"/><rect class="icon-line" x="4" y="3" width="16" height="18" rx="2.6"/><path class="icon-line" d="M9 7.5h2m3 0h2M9 11.5h2m3 0h2M9 15.5h2m3 0h2M10 21v-2.5h4V21"/>${A(16, 7.5, 1.1)}`,
   bell: `<path class="icon-tint" d="M18 9.2a6 6 0 0 0-12 0c0 6-2.4 7-2.4 8.3h16.8C20.4 16.2 18 15.2 18 9.2Z"/><path class="icon-line" d="M18 9.2a6 6 0 0 0-12 0c0 6-2.4 7-2.4 8.3h16.8C20.4 16.2 18 15.2 18 9.2Z"/><path class="icon-line" d="M10 20.5a2.2 2.2 0 0 0 4 0"/>${A(17.6, 5.2, 1.5)}`,
@@ -279,7 +282,7 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['workbench', 'Outreach workbench', 'wand'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['workbench', 'Outreach workbench', 'wand'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
   ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Partners', 'partners'],
   ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
 ];
@@ -367,7 +370,7 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ workbench: 'Workbench', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
+  const label = ({ workbench: 'Workbench', deliverability: 'Deliverability', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
@@ -397,6 +400,7 @@ function shellSidebar() {
       ${navItem('partners', 'Partners', 'partners')}
       ${navItem('proposals', 'Proposals', 'proposals')}
       ${navItem('analytics', 'Analytics', 'analytics')}
+      ${navItem('deliverability', 'Deliverability', 'shield', (state.data.mailboxes || []).filter(m => m.status === 'paused').length || null)}
       ${navItem('settings', 'Settings', 'settings')}
       <button type="button" class="nav-item mobile-more-button ${['projects','prospects','pipeline','briefings','sent','partners','proposals','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
     </nav>
@@ -674,7 +678,7 @@ function settingsView() {
   const content = state.settingsSection === 'audit' ? auditView() : `<div class="settings-status-grid"><div class="settings-status-card"><span class="metric-icon">${svgIcon('spark')}</span><div><strong>AI drafting</strong><small>${esc(aiState)}</small></div><span class="status-dot ${settings.aiConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('mail')}</span><div><strong>SMTP sending</strong><small>${esc(smtpState)}</small></div><span class="status-dot ${settings.smtpConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('eye')}</span><div><strong>Open measurement</strong><small>${settings.openTrackingReady ? 'Pixel ready · public HTTPS URL set' : settings.openTrackingEnabled ? 'Enabled · needs public HTTPS URL' : 'Disabled'}</small></div><span class="status-dot ${settings.openTrackingReady ? 'is-on' : ''}"></span></div></div>
     <form id="settings-form" data-form="settings" class="settings-form"><section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('spark')}</span><div><h2>AI provider</h2><p>Optional OpenAI-compatible endpoint for proposal and email copy. Use HTTPS except for loopback testing. Secrets stay on the server and are never returned to the browser.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-ai-endpoint">Chat completions endpoint</label><input class="form-control" id="setting-ai-endpoint" name="aiEndpoint" type="url" value="${esc(settings.aiEndpoint || 'https://api.openai.com/v1/chat/completions')}" placeholder="https://api.openai.com/v1/chat/completions" /></div><div class="form-group"><label for="setting-ai-model">Model</label><input class="form-control" id="setting-ai-model" name="aiModel" value="${esc(settings.aiModel || 'gpt-4o-mini')}" /></div><div class="form-group full"><label for="setting-ai-key">API key <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-ai-key" name="aiApiKey" type="password" autocomplete="new-password" placeholder="${settings.aiConfigured ? 'Key is stored; value is hidden' : 'Paste API key'}" /></div><label class="check-row"><input type="checkbox" name="clearAiKey" /> Remove saved AI key <small>Environment keys, if set, remain active.</small></label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-ai">${svgIcon('spark')} Test AI connection</button></div></section>
     <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('globe')}</span><div><h2>Web research provider</h2><p>Powers the Research copilot's funder briefs. Only staff-initiated, organisation-level lookups run; fetched pages are PII-scrubbed before any AI call and every finding is cited for human review. Without a provider, research reads the funder's official website (Source URL) only.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-search-provider">Provider</label><select class="form-control" id="setting-search-provider" name="searchProvider">${['none','tavily','serper','bing'].map(v => `<option value="${v}" ${(settings.searchProvider || 'none') === v ? 'selected' : ''}>${{ none: 'None (official website only)', tavily: 'Tavily', serper: 'Serper (Google)', bing: 'Bing Web Search' }[v]}</option>`).join('')}</select></div><div class="form-group"><label for="setting-search-key">Search API key <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-search-key" name="searchApiKey" type="password" autocomplete="new-password" placeholder="${settings.searchConfigured ? 'Key is stored; value is hidden' : 'Paste search API key'}" /></div><label class="check-row"><input type="checkbox" name="clearSearchKey" /> Remove saved search key <small>SEARCH_PROVIDER / SEARCH_API_KEY environment values, if set, remain active.</small></label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-search">${svgIcon('globe')} Test search provider</button><span class="subtle">${settings.searchConfigured ? `Configured · ${esc(settings.searchProvider)} · ${settings.searchKeySource === 'environment' ? 'server environment' : 'encrypted Settings'}` : 'Not configured'}</span></div></section>
-      <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>SMTP email sending</h2><p>After a staff member approves an email, the app can submit it to your SMTP server. First-touch invitations are sent without a PDF; a prepared proposal is attached only to an appropriate follow-up. Test connection verifies access but sends no email.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-smtp-host">SMTP host</label><input class="form-control" id="setting-smtp-host" name="smtpHost" value="${esc(settings.smtpHost || '')}" placeholder="smtp.example.com" /></div><div class="form-group"><label for="setting-smtp-port">Port</label><input class="form-control" id="setting-smtp-port" name="smtpPort" type="number" min="1" max="65535" value="${Number(settings.smtpPort || 587)}" /></div><div class="form-group"><label for="setting-smtp-user">Username <span class="optional">(optional)</span></label><input class="form-control" id="setting-smtp-user" name="smtpUsername" autocomplete="username" value="${esc(settings.smtpUsername || '')}" /></div><div class="form-group"><label for="setting-smtp-password">Password <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-smtp-password" name="smtpPassword" type="password" autocomplete="new-password" placeholder="${settings.smtpPasswordConfigured ? 'Password is stored; value is hidden' : 'SMTP password or app password'}" /></div><div class="form-group"><label for="setting-from-name">From name</label><input class="form-control" id="setting-from-name" name="smtpFromName" value="${esc(settings.smtpFromName || 'Chelo Partnerships Team')}" /></div><div class="form-group"><label for="setting-from-email">From email</label><input class="form-control" id="setting-from-email" name="smtpFromEmail" type="email" value="${esc(settings.smtpFromEmail || '')}" placeholder="partnerships@cheloapp.com" /></div><label class="check-row"><input type="checkbox" name="smtpSecure" ${settings.smtpSecure ? 'checked' : ''} /> Implicit TLS <small>Usually port 465; leave unchecked for STARTTLS, often port 587.</small></label><label class="check-row"><input type="checkbox" name="clearSmtpPassword" /> Remove saved SMTP password</label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-smtp">${svgIcon('activity')} Test SMTP connection</button><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section>
+      <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>Email sending</h2><p>Sending mailboxes, domain authentication (SPF/DKIM/DMARC), daily caps, ramps and the send queue now live under <strong>Deliverability</strong>. ${settings.smtpConfigured ? 'Your previous SMTP settings were migrated into the first mailbox.' : ''}</p></div></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-view="deliverability">${svgIcon('shield')} Open Deliverability</button></div></section>
       <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('eye')}</span><div><h2>Analytics & tracking</h2><p>First-party CTA hits are counted by Chelo. Open measurement uses a 1×1 tracking pixel and is approximate; image proxies, privacy features and blockers may distort it.</p></div></div><div class="settings-fields"><label class="check-row"><input type="checkbox" name="openTrackingEnabled" ${settings.openTrackingEnabled ? 'checked' : ''} /> Add open-tracking pixel to SMTP and .eml emails</label><div class="form-group full"><label for="setting-public-url">Public HTTPS app URL</label><input class="form-control" id="setting-public-url" name="publicBaseUrl" type="url" value="${esc(settings.publicBaseUrl || (location.protocol === 'https:' ? location.origin : ''))}" placeholder="https://partnerships.example.org" /><span class="form-hint">The recipient’s mail client must be able to reach this HTTPS address to load the pixel and CTA. Localhost and private preview URLs will not track opens for external recipients.</span></div></div><div class="settings-card-actions"><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section></form>`;
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
   const sectionContent = state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
@@ -692,6 +696,7 @@ function authGateView() {
 function renderView() {
   switch (state.view) {
     case 'workbench': return workbenchView();
+    case 'deliverability': return deliverabilityView();
     case 'discover': return discoverView();
     case 'projects': return projectsView();
     case 'prospects': return prospectsView();
@@ -1181,6 +1186,7 @@ function fillProposalDraft(result) {
 async function dispatchAction(button) {
   const action = button.dataset.action;
   if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
+  if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
   const id = button.dataset.id;
   try {
     if (action === 'close-modal') return closeModal();
@@ -1227,8 +1233,8 @@ async function dispatchAction(button) {
       button.disabled = true;
       try {
         const result = await API(`/api/leads/${encodeURIComponent(id)}/send-email`, { method: 'POST', body: JSON.stringify({ kind: followUp ? 'follow-up' : 'initial' }) });
-        state.modal = null; state.view = 'sent'; await refresh();
-        toast(result.message || 'SMTP accepted the message.');
+        state.modal = null; if (state.view !== 'workbench') state.view = 'sent'; await refresh();
+        toast(result.message || 'Queued for sending.');
       } finally { button.disabled = false; }
       return;
     }
@@ -1505,6 +1511,8 @@ async function handleSubmit(event) {
   if (!type) return;
   event.preventDefault();
   if (type === 'wb-add') return wbAddSubmit(form);
+  if (type === 'dlv-mailbox') return dlvMailboxSubmit(form);
+  if (type === 'dlv-policy') return dlvPolicySubmit(form);
   try {
     if (type === 'auth-setup' || type === 'auth-login') {
       const data = formDataObject(form);
@@ -2103,18 +2111,20 @@ function researchModal(lead) {
 // =====================================================================
 // Outreach Workbench — one screen: add/discover → verify → research → match → draft → review & send → track
 // =====================================================================
-const WB_FILTERS = [['all', 'All'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
+const WB_FILTERS = [['all', 'All'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['queued', 'Queued'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
 function wbStatusOf(lead) {
   if (lead.flowStatus) return lead.flowStatus;
   const f = lead.flow; if (!f) return 'new';
   if (['running', 'dead', 'error', 'blocked'].includes(f.status)) return f.status;
   if (lead.emailStatus === 'Sent') return 'sent';
+  if (lead.emailStatus === 'Queued') return 'queued';
+  if (String(lead.emailStatus || '').startsWith('Failed')) return 'blocked';
   if (lead.emailStatus === 'Approved') return 'approved';
   if (lead.research && lead.research.status === 'pending-review') return 'needs-review';
   if (lead.emailDraft) return 'ready';
   return f.status || 'new';
 }
-const WB_STATUS_META = { new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+const WB_STATUS_META = { queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
 function wbPill(status) { const [label, cls] = WB_STATUS_META[status] || [status, 'pill-new']; return `<span class="stage-pill ${cls}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
@@ -2233,9 +2243,11 @@ function wbStepper(lead) {
       <div class="wb-step-actions">
         ${emailStatus === 'Draft' || emailStatus === 'None' ? `<button type="button" class="button button-primary button-small" data-action="email-approve" data-id="${esc(lead.id)}">${svgIcon('checkCircle')}Approve</button>` : ''}
         ${approvalPending ? `<button type="button" class="button button-primary button-small" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>` : ''}
-        ${emailStatus === 'Approved' ? `<button type="button" class="button button-primary button-small" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button><button type="button" class="button button-secondary button-small" data-action="email-open" data-id="${esc(lead.id)}">${svgIcon('mail')}Open in email client</button><button type="button" class="button button-ghost button-small" data-action="mark-sent" data-id="${esc(lead.id)}">${svgIcon('check')}Mark as sent</button>` : ''}
+        ${emailStatus === 'Approved' ? `<button type="button" class="button button-primary button-small" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Queue & send</button><button type="button" class="button button-secondary button-small" data-action="email-open" data-id="${esc(lead.id)}">${svgIcon('mail')}Open in email client</button><button type="button" class="button button-ghost button-small" data-action="mark-sent" data-id="${esc(lead.id)}">${svgIcon('check')}Mark as sent</button>` : ''}
         ${['Approved', 'Pending second approval'].includes(emailStatus) ? `<button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
         ${emailStatus === 'Sent' ? `<span class="stage-pill pill-won">${svgIcon('check')}Sent ${isoDate(lead.sentAt || lead.updatedAt)}</span>` : ''}
+        ${emailStatus === 'Queued' ? `<span class="stage-pill pill-researched"><span class="wb-spinner"></span>Queued — sends in the next free slot</span><button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(lead.sendJobId || '')}" data-return-view="workbench">${svgIcon('xCircle')}Cancel send</button>` : ''}
+        ${String(emailStatus).startsWith('Failed') ? `<span class="stage-pill pill-not-proceeding">${svgIcon('xCircle')}${esc(emailStatus)}</span><button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
       </div>` : '<p class="subtle">Nothing to review yet.</p>';
   // 6 · Track
   const events = (lead.emailEvents || []).slice(-6).reverse();
@@ -2258,7 +2270,7 @@ function wbStepper(lead) {
     ${wbStep(2, 'Research CSI focus', researchStep?.status, researchStep?.detail, researchBody, { open: openStep === 'research' })}
     ${wbStep(3, 'Match a Chelo project', match?.status, match?.detail, matchBody, { open: openStep === 'match' })}
     ${wbStep(4, 'Draft email', draft?.status, draft?.detail, draftBody, { open: openStep === 'draft' })}
-    ${wbStep(5, 'Review, approve & send', emailStatus === 'Sent' ? 'sent' : emailStatus === 'Approved' ? 'approved' : d ? 'review' : null, emailStatus === 'None' ? '' : emailStatus, reviewBody, { open: openStep === 'review' })}
+    ${wbStep(5, 'Review, approve & send', emailStatus === 'Sent' ? 'sent' : emailStatus === 'Queued' ? 'running' : String(emailStatus).startsWith('Failed') ? 'error' : emailStatus === 'Approved' ? 'approved' : d ? 'review' : null, emailStatus === 'None' ? '' : emailStatus, reviewBody, { open: openStep === 'review' })}
     ${wbStep(6, 'Track & relationship', emailStatus === 'Sent' ? 'sent' : null, lead.stage === 'Won' ? 'Partner' : '', trackBody, { open: openStep === 'track' })}
   </div>`;
 }
@@ -2318,3 +2330,146 @@ document.addEventListener('change', async event => {
   try { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ projectId: sel.value }) }); toast('Project linked — redrafting the email…'); await wbRunFlow(id, { redraft: true }); }
   catch (err) { toast(err.message, true); }
 });
+
+// =====================================================================
+// Deliverability — mailboxes, domain authentication, sending policy, queue, circuit breaker
+// =====================================================================
+const DLV_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+async function loadDeliverability(force = false) {
+  if (state.dlv.loading) return;
+  if (state.dlv.data && !force) return;
+  state.dlv.loading = true; renderApp();
+  try { state.dlv.data = await API('/api/deliverability'); state.dlv.error = ''; }
+  catch (err) { state.dlv.error = err.message; }
+  finally { state.dlv.loading = false; renderApp(); }
+}
+function dlvHealthPill(health) {
+  const s = health?.status || 'unknown';
+  const map = { pass: ['Authenticated', 'pill-won'], 'needs-work': ['Needs work', 'pill-pending'], fail: ['Failing', 'pill-not-proceeding'], unknown: ['Not checked', 'pill-new'] };
+  const [label, cls] = map[s] || map.unknown; return `<span class="stage-pill ${cls}">${esc(label)}</span>`;
+}
+function dlvJobPill(status) {
+  const map = { queued: 'pill-researched', sending: 'pill-interested', sent: 'pill-won', held: 'pill-pending', failed: 'pill-pending', dead: 'pill-not-proceeding', cancelled: 'pill-new' };
+  return `<span class="stage-pill ${map[status] || 'pill-new'}">${esc(status)}</span>`;
+}
+function dlvWhen(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' }); }
+function deliverabilityView() {
+  const data = state.dlv.data;
+  const head = pageHead('Deliverability', 'Sending engine', 'Your own mailboxes, authenticated domains, slow ramps, business-hours windows and a circuit breaker — the plumbing that decides whether emails land.', `<button type="button" class="button button-secondary" data-action="dlv-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-secondary" data-action="dlv-tick">${svgIcon('send')}Process queue now</button><button type="button" class="button button-primary" data-action="dlv-new-mailbox">${svgIcon('plus')}Add mailbox</button>`);
+  if (!data) { loadDeliverability(); return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('activity')}</div><p>${state.dlv.error ? esc(state.dlv.error) : 'Loading sending engine…'}</p></div>`; }
+  const boxes = data.mailboxes || [];
+  const queue = data.queue || {};
+  const paused = boxes.filter(m => m.status === 'paused').length;
+  const tiles = metricCard('Active mailboxes', String(boxes.filter(m => m.status === 'active').length), `${boxes.length} registered`, 'mail', paused ? `${paused} paused` : '', paused > 0)
+    + metricCard('Capacity left today', String(boxes.filter(m => m.status === 'active').reduce((a, m) => a + m.today.remaining, 0)), `of ${boxes.reduce((a, m) => a + m.today.cap, 0)} across caps`, 'trendingUp')
+    + metricCard('In queue', String((queue.queued || 0) + (queue.sending || 0)), `${queue.held || 0} held · ${queue.dead || 0} rejected`, 'send', queue.held ? 'needs attention' : '', Boolean(queue.held))
+    + metricCard('Sent · 14 days', String(data.series.reduce((a, d) => a + (d.sent || 0), 0)), `${data.series.reduce((a, d) => a + (d.dead || 0), 0)} rejected by receivers`, 'checkCircle');
+  return `${head}
+  ${data.serverless ? `<div class="notice notice-warn">${svgIcon('info')}<div><strong>On-demand worker.</strong> This host cannot run a background sender, so queued emails are attempted when they become due on the next request, on “Process queue now”, or via the <code>/api/cron/send-tick</code> cron. For reliable scheduled sending run the Docker deployment.</div></div>` : `<p class="subtle">Background worker checks the queue every ${data.workerIntervalSeconds}s. Domain authentication is re-checked every 12 hours.</p>`}
+  <section class="metric-grid dlv-tiles">${tiles}</section>
+  <section class="dlv-mailboxes">${boxes.length ? boxes.map(dlvMailboxCard).join('') : `<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('mail')}</div><p>No sending mailbox yet. Add the Google Workspace / Microsoft 365 / Zoho mailbox your team sends from — Chelo sends through it over SMTP, never through a shared relay.</p><button type="button" class="button button-primary" data-action="dlv-new-mailbox">${svgIcon('plus')}Add mailbox</button></div>`}</section>
+  ${state.dlv.editing ? dlvMailboxForm(state.dlv.editing) : ''}
+  <div class="dlv-grid">
+    ${dlvPolicyPanel(data.policy)}
+    ${dlvQueuePanel(data.jobs || [])}
+  </div>`;
+}
+function dlvMailboxCard(m) {
+  const h = m.health || {}; const b = m.breaker || {};
+  const pct = m.today.cap ? Math.min(100, Math.round(m.today.used / m.today.cap * 100)) : 0;
+  const checks = h.checks || {};
+  return `<article class="panel dlv-mailbox ${m.status === 'paused' ? 'is-paused' : ''}">
+    <header class="dlv-mailbox-head">
+      <div><strong>${esc(m.label)}</strong><small>${esc(m.fromName)} &lt;${esc(m.fromEmail)}&gt; · ${esc(m.host)}:${m.port}${m.secure ? ' TLS' : ' STARTTLS'}</small></div>
+      <div class="dlv-mailbox-status">${m.status === 'paused' ? `<span class="stage-pill pill-not-proceeding">${svgIcon('ban')}Paused</span>` : `<span class="stage-pill pill-won">${svgIcon('check')}Active</span>`}${dlvHealthPill(h)}</div>
+    </header>
+    ${m.status === 'paused' ? `<p class="form-error">${esc(m.pausedReason || 'Paused')}${m.pausedAt ? ` · ${dlvWhen(m.pausedAt)}` : ''}</p>` : ''}
+    <div class="dlv-cap"><div class="dlv-cap-bar"><span style="width:${pct}%"></span></div><small>${m.today.used}/${m.today.cap} today${m.rampWeek && m.rampEnabled ? ` · ramp week ${m.rampWeek} (full cap ${m.dailyCap})` : ` · cap ${m.dailyCap}`}</small></div>
+    <div class="dlv-auth">${['spf', 'dkim', 'dmarc', 'mx'].map(k => { const c = checks[k]; return `<span class="dlv-auth-chip ${c ? c.ok ? 'ok' : 'bad' : ''}" title="${esc(c?.note || 'not checked')}">${svgIcon(c ? c.ok ? 'check' : 'xCircle' : 'info')}${k.toUpperCase()}</span>`; }).join('')}<small class="subtle">${h.checkedAt ? `checked ${dlvWhen(h.checkedAt)}` : 'not checked yet'}</small></div>
+    ${(h.issues || []).length ? `<ul class="dlv-issues">${h.issues.map(i => `<li class="sev-${i.severity}"><strong>${esc(i.title)}</strong> ${esc(i.detail)}<br><span class="subtle">Fix: ${esc(i.fix)}</span></li>`).join('')}</ul>` : ''}
+    <div class="dlv-breaker ${b.level || 'ok'}"><span>${svgIcon(b.level === 'tripped' ? 'xCircle' : b.level === 'warning' ? 'info' : 'shield')}</span><div><strong>Circuit breaker · ${esc(b.level || 'ok')}</strong><small>${b.windowDays}d: ${b.sent || 0} sent · ${b.hardBounces || 0} hard bounces (${((b.rates?.hardBounce || 0) * 100).toFixed(1)}%) · ${b.complaints || 0} complaints/unsubscribes${b.reason ? ` — ${esc(b.reason)}` : ''}</small></div></div>
+    <div class="wb-step-actions">
+      <button type="button" class="button button-secondary button-small" data-action="dlv-check" data-id="${esc(m.id)}">${svgIcon('refresh')}Re-check domain</button>
+      <button type="button" class="button button-secondary button-small" data-action="dlv-test" data-id="${esc(m.id)}">${svgIcon('activity')}Test login</button>
+      ${m.status === 'paused' ? `<button type="button" class="button button-primary button-small" data-action="dlv-resume" data-id="${esc(m.id)}">${svgIcon('play')}Resume</button>` : `<button type="button" class="button button-ghost button-small" data-action="dlv-pause" data-id="${esc(m.id)}">${svgIcon('ban')}Pause</button>`}
+      <button type="button" class="button button-ghost button-small" data-action="dlv-edit" data-id="${esc(m.id)}">${svgIcon('edit')}Edit</button>
+      <button type="button" class="button button-ghost button-small" data-action="dlv-restart-ramp" data-id="${esc(m.id)}">${svgIcon('trendingUp')}Restart ramp</button>
+      <button type="button" class="button button-ghost button-small" data-action="dlv-delete" data-id="${esc(m.id)}">${svgIcon('trash')}Remove</button>
+    </div>
+  </article>`;
+}
+function dlvMailboxForm(m) {
+  const edit = Boolean(m.id);
+  return `<section class="panel dlv-form"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>${edit ? 'Edit mailbox' : 'Add sending mailbox'}</h2><p>Use an app password where your provider requires it (Google Workspace: Security → App passwords; Microsoft 365: SMTP AUTH must be enabled). Secrets are encrypted at rest and never returned to the browser.</p></div></div>
+    <form data-form="dlv-mailbox" class="settings-form">${edit ? `<input type="hidden" name="id" value="${esc(m.id)}" />` : ''}
+      <div class="settings-fields">
+        <div class="form-group"><label>Label</label><input class="form-control" name="label" value="${esc(m.label || '')}" placeholder="Partnerships inbox" /></div>
+        <div class="form-group"><label>From name</label><input class="form-control" name="fromName" value="${esc(m.fromName || 'Chelo Partnerships Team')}" /></div>
+        <div class="form-group"><label>From email</label><input class="form-control" name="fromEmail" type="email" required value="${esc(m.fromEmail || '')}" placeholder="partnerships@yourdomain.org" /></div>
+        <div class="form-group"><label>SMTP host</label><input class="form-control" name="host" required value="${esc(m.host || '')}" placeholder="smtp.gmail.com / smtp.office365.com" /></div>
+        <div class="form-group"><label>Port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="${m.port || 587}" /></div>
+        <div class="form-group"><label>Username</label><input class="form-control" name="username" autocomplete="username" value="${esc(m.username || '')}" /></div>
+        <div class="form-group"><label>Password / app password</label><input class="form-control" name="password" type="password" autocomplete="new-password" placeholder="${m.hasPassword ? 'Stored — leave blank to keep' : ''}" /></div>
+        <div class="form-group"><label>Daily cap (full, after ramp)</label><input class="form-control" name="dailyCap" type="number" min="1" max="500" value="${m.dailyCap || (state.dlv.data?.policy?.defaultDailyCap || 25)}" /><span class="form-hint">Practitioners keep Workspace/365 mailboxes at 20–40 cold sends a day. Add mailboxes rather than raising this.</span></div>
+        <div class="form-group"><label>DKIM selector <span class="optional">(optional)</span></label><input class="form-control" name="dkimSelector" value="${esc(m.dkimSelector || '')}" placeholder="google / selector1" /></div>
+        <label class="check-row"><input type="checkbox" name="secure" ${m.secure ? 'checked' : ''} /> Implicit TLS (port 465)</label>
+        <label class="check-row"><input type="checkbox" name="rampEnabled" ${m.rampEnabled === false ? '' : 'checked'} /> Ramp a new mailbox slowly (${(state.dlv.data?.policy?.ramp || []).join(' → ')} per day, week by week)</label>
+      </div>
+      <div class="settings-card-actions"><button type="button" class="button button-ghost" data-action="dlv-cancel-edit">${svgIcon('xCircle')}Cancel</button><button type="submit" class="button button-primary">${svgIcon('check')}${edit ? 'Save mailbox' : 'Add & check domain'}</button></div>
+    </form></section>`;
+}
+function dlvPolicyPanel(p) {
+  return `<section class="panel"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('clock')}</span><div><h2>Sending policy</h2><p>Applies to every mailbox. Emails are spaced with a minimum gap plus random jitter inside the window; nothing goes out on excluded days.</p></div></div>
+    <form data-form="dlv-policy" class="settings-form"><div class="settings-fields">
+      <div class="form-group"><label>Window start</label><input class="form-control" name="windowStart" type="time" value="${esc(p.windowStart)}" /></div>
+      <div class="form-group"><label>Window end</label><input class="form-control" name="windowEnd" type="time" value="${esc(p.windowEnd)}" /></div>
+      <div class="form-group"><label>Timezone</label><input class="form-control" name="timezone" value="${esc(p.timezone)}" /></div>
+      <div class="form-group"><label>Default daily cap</label><input class="form-control" name="defaultDailyCap" type="number" min="1" max="500" value="${p.defaultDailyCap}" /></div>
+      <div class="form-group"><label>Minimum gap (s)</label><input class="form-control" name="minGapSeconds" type="number" min="20" max="900" value="${p.minGapSeconds}" /></div>
+      <div class="form-group"><label>Jitter (s)</label><input class="form-control" name="jitterSeconds" type="number" min="0" max="1800" value="${p.jitterSeconds}" /></div>
+      <div class="form-group full"><label>Ramp (per-day caps for week 1, 2, 3…)</label><input class="form-control" name="ramp" value="${esc(p.ramp.join(', '))}" /></div>
+      <div class="form-group full"><label>Send days</label><div class="chip-row">${DLV_DAY_NAMES.map((d, i) => `<label class="dlv-day"><input type="checkbox" name="sendDays" value="${i}" ${p.sendDays.includes(i) ? 'checked' : ''} /> ${d}</label>`).join('')}</div></div>
+      <div class="form-group"><label>Hard-bounce trip (%)</label><input class="form-control" name="hardBounceRate" type="number" step="0.1" min="0.1" max="20" value="${(p.breaker.hardBounceRate * 100).toFixed(1)}" /></div>
+      <div class="form-group"><label>Complaint trip (%)</label><input class="form-control" name="complaintRate" type="number" step="0.01" min="0.01" max="5" value="${(p.breaker.complaintRate * 100).toFixed(2)}" /></div>
+    </div><div class="settings-card-actions"><button type="submit" class="button button-primary">${svgIcon('check')}Save policy</button></div></form></section>`;
+}
+function dlvQueuePanel(jobs) {
+  const rows = jobs.slice(0, 60);
+  return `<section class="panel"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('send')}</span><div><h2>Send queue</h2><p>Every approved email passes through here: suppression gate → mailbox cap → window → SMTP. Rejected addresses are quarantined automatically.</p></div></div>
+    ${rows.length ? `<div class="table-wrap"><table class="data-table dlv-queue"><thead><tr><th>When</th><th>To</th><th>Subject</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(j => `<tr><td>${dlvWhen(j.status === 'sent' ? j.sentAt : j.scheduledAt)}</td><td><strong>${esc(j.meta?.company || '')}</strong><br><small>${esc(j.to)}</small></td><td>${esc(j.subject)}${j.lastError ? `<br><small class="form-error">${esc(j.lastError.slice(0, 120))}</small>` : ''}</td><td>${dlvJobPill(j.status)}${j.attempts > 1 ? `<small class="subtle"> ×${j.attempts}</small>` : ''}</td><td class="dlv-queue-actions">${['queued', 'held', 'failed'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(j.id)}">${svgIcon('xCircle')}Cancel</button>` : ''}${['held', 'failed', 'dead'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-retry-job" data-id="${esc(j.id)}">${svgIcon('refresh')}Retry</button>` : ''}${j.leadId ? `<button type="button" class="button button-ghost button-small" data-action="wb-open" data-id="${esc(j.leadId)}">${svgIcon('external')}Lead</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="subtle">Queue is empty.</p>`}</section>`;
+}
+async function dlvAction(action, button) {
+  const id = button.dataset.id;
+  const call = async (url, body = {}, method = 'POST') => API(url, { method, body: method === 'DELETE' ? undefined : JSON.stringify(body) });
+  try {
+    if (action === 'dlv-refresh') { await loadDeliverability(true); return true; }
+    if (action === 'dlv-new-mailbox') { state.dlv.editing = {}; renderApp(); document.querySelector('.dlv-form')?.scrollIntoView({ behavior: 'smooth' }); return true; }
+    if (action === 'dlv-cancel-edit') { state.dlv.editing = null; renderApp(); return true; }
+    if (action === 'dlv-edit') { state.dlv.editing = (state.dlv.data.mailboxes || []).find(m => m.id === id) || {}; renderApp(); return true; }
+    if (action === 'dlv-tick') { const r = await call('/api/deliverability/tick'); toast(r.ran ? `Processed ${r.ran} queued email(s).` : 'Nothing is due right now.'); await loadDeliverability(true); await refresh(); return true; }
+    if (action === 'dlv-check') { const r = await call(`/api/deliverability/mailboxes/${id}/check`); toast(`Domain ${r.health.domain}: ${r.health.status}${r.health.issues.length ? ` — ${r.health.issues.map(i => i.title).join(', ')} need attention` : ''}`, r.health.status === 'fail'); await loadDeliverability(true); return true; }
+    if (action === 'dlv-test') { const r = await call(`/api/deliverability/mailboxes/${id}/test`); toast(r.message); return true; }
+    if (action === 'dlv-pause') { await call(`/api/deliverability/mailboxes/${id}/pause`, { reason: 'paused by staff' }); await loadDeliverability(true); return true; }
+    if (action === 'dlv-resume') { const r = await call(`/api/deliverability/mailboxes/${id}/resume`); toast(r.warning || 'Mailbox resumed.', Boolean(r.warning)); await loadDeliverability(true); return true; }
+    if (action === 'dlv-restart-ramp') { await call(`/api/deliverability/mailboxes/${id}/restart-ramp`); toast('Ramp restarted from week 1.'); await loadDeliverability(true); return true; }
+    if (action === 'dlv-delete') { if (!confirm('Remove this mailbox? Queued emails on it will be held.')) return true; await call(`/api/deliverability/mailboxes/${id}`, {}, 'DELETE'); await loadDeliverability(true); return true; }
+    if (action === 'dlv-cancel-job') { await call(`/api/deliverability/jobs/${id}/cancel`); await loadDeliverability(true); await refresh(); return true; }
+    if (action === 'dlv-retry-job') { await call(`/api/deliverability/jobs/${id}/retry`); toast('Re-queued in the next free slot.'); await loadDeliverability(true); await refresh(); return true; }
+    if (action === 'wb-open') { state.wb.selectedId = id; state.wb.filter = 'all'; setView('workbench'); return true; }
+  } catch (err) { toast(err.message, true); return true; }
+  return false;
+}
+async function dlvMailboxSubmit(form) {
+  const data = formDataObject(form);
+  data.secure = form.querySelector('[name="secure"]').checked; data.rampEnabled = form.querySelector('[name="rampEnabled"]').checked;
+  data.port = Number(data.port); data.dailyCap = Number(data.dailyCap);
+  if (!data.password) delete data.password;
+  try { const r = await API('/api/deliverability/mailboxes', { method: 'POST', body: JSON.stringify(data) }); state.dlv.editing = null; toast(`Mailbox saved. Domain ${r.mailbox.domain}: ${r.mailbox.health?.status || 'checked'}.`, r.mailbox.health?.status === 'fail'); await loadDeliverability(true); await refresh(); }
+  catch (err) { toast(err.message, true); }
+}
+async function dlvPolicySubmit(form) {
+  const data = formDataObject(form);
+  const body = { windowStart: data.windowStart, windowEnd: data.windowEnd, timezone: data.timezone, defaultDailyCap: Number(data.defaultDailyCap), minGapSeconds: Number(data.minGapSeconds), jitterSeconds: Number(data.jitterSeconds), ramp: String(data.ramp || '').split(/[,\s]+/).map(Number).filter(n => n > 0), sendDays: [...form.querySelectorAll('[name="sendDays"]:checked')].map(i => Number(i.value)), breaker: { hardBounceRate: Number(data.hardBounceRate) / 100, complaintRate: Number(data.complaintRate) / 100 } };
+  try { await API('/api/deliverability/policy', { method: 'POST', body: JSON.stringify(body) }); toast('Sending policy saved.'); await loadDeliverability(true); }
+  catch (err) { toast(err.message, true); }
+}

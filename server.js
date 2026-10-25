@@ -13,6 +13,8 @@ const popia = require('./lib/popia-copilot');
 const inbound = require('./lib/inbound-sync');
 const createFunderResearch = require('./lib/funder-research');
 const createEmailVerifier = require('./lib/email-verify');
+const createSendEngine = require('./lib/send-engine');
+const createDomainHealth = require('./lib/domain-health');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -25,6 +27,18 @@ const sendingLocks = new Set();
 const mailboxVerifier = createEmailVerifier({ heloHost: process.env.SMTP_PROBE_HELO || 'verify.chelo.local', fromAddress: process.env.SMTP_PROBE_FROM || 'verify@chelo.local' });
 const SMTP_PROBE_DISABLED = process.env.SMTP_PROBE_DISABLED === 'true';
 const flowRuns = new Map(); // leadId -> Promise (dedupes concurrent runs)
+const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SEND_WORKER === 'off');
+const domainHealth = createDomainHealth();
+function mailboxTransport(mailbox) {
+  return nodemailer.createTransport({
+    host: mailbox.host, port: mailbox.port, secure: mailbox.secure,
+    ...(mailbox.username ? { auth: { user: mailbox.username, pass: mailbox.password } } : {}),
+    requireTLS: !mailbox.secure && (mailbox.port === 587 || Boolean(mailbox.username)),
+    connectionTimeout: 12000, greetingTimeout: 12000, socketTimeout: 25000, tls: { minVersion: 'TLSv1.2' }
+  });
+}
+const sendEngine = createSendEngine({ conn: store.conn, encryptSecret: configStore.encryptSecret, decryptSecret: configStore.decryptSecret, transportFactory: mailboxTransport, isSuppressed: value => isSuppressedEmail(value), log: message => console.log(`[send-engine] ${message}`) });
+sendEngine.setPolicy(configStore.getSendPolicy());
 const emailDomainCheckCache = new Map();
 const PORT = Number(process.env.PORT || 3000);
 const DEMO_ADMIN_ACCESS = process.env.DEMO_ADMIN_ACCESS === 'true' && process.env.NODE_ENV !== 'production' && Boolean(process.env.DATA_DIR);
@@ -43,6 +57,47 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
+// One-time migration: the legacy single SMTP block in Settings becomes the first registered mailbox.
+try {
+  const legacy = configStore.getSmtpConfig();
+  if (legacy.host && legacy.fromEmail && !sendEngine.listMailboxes().length) {
+    sendEngine.saveMailbox({ label: 'Primary (migrated from Settings)', fromEmail: legacy.fromEmail, fromName: legacy.fromName, host: legacy.host, port: legacy.port, secure: legacy.secure, username: legacy.username, password: legacy.password || '', rampEnabled: false }, { actor: 'migration' });
+    console.log('[send-engine] migrated legacy SMTP settings into the mailbox registry');
+  }
+} catch (err) { console.warn(`[send-engine] legacy SMTP migration skipped: ${err.message}`); }
+sendEngine.hooks({
+  onSent(job, { mailbox }) {
+    const lead = db.leads.find(l => l.id === job.leadId); if (!lead) return;
+    const followUp = Boolean(job.meta.followUp);
+    const message = recordSentMessage(lead, followUp, 'SMTP', job.meta.openToken || null, job.providerMessageId || '', job.meta.actor || 'send-engine');
+    message.mailboxId = job.mailboxId; message.jobId = job.id;
+    lead.sendJobId = null;
+    configStore.recordAudit({ actor: job.meta.actor || 'send-engine', action: 'email.smtp_sent', entityType: 'lead', entityId: lead.id, summary: `${followUp ? 'Follow-up' : 'Initial'} email accepted by ${mailbox?.fromEmail || 'mailbox'}${job.meta.attachProposal ? ' with proposal PDF attachment' : ''}` });
+    saveDb();
+  },
+  onDead(job, { error, cls }) {
+    const lead = db.leads.find(l => l.id === job.leadId); if (!lead) return;
+    const followUp = Boolean(job.meta.followUp);
+    if (cls === 'permanent') {
+      lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Failed (rejected by server)';
+      lead.mailboxCheck = { ...(lead.mailboxCheck || {}), status: 'undeliverable', reason: `Rejected at send time: ${String(error).slice(0, 160)}`, checkedAt: new Date().toISOString() };
+      lead.contactCheck = { ...(lead.contactCheck || {}), status: 'invalid', issues: [...new Set([...(lead.contactCheck?.issues || []), 'Mailbox rejected delivery'])] };
+      addEmailEvent(lead.id, 'bounce', null, 'send-engine');
+      addActivity(`${lead.company}: email rejected by the receiving server – address quarantined`, 'warning', 'send-engine');
+    } else {
+      lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Failed (delivery error)';
+      addActivity(`${lead.company}: email could not be delivered after retries (${String(error).slice(0, 80)})`, 'warning', 'send-engine');
+    }
+    lead.sendJobId = null; lead.updatedAt = new Date().toISOString();
+    configStore.recordAudit({ actor: 'send-engine', action: 'email.send_failed', entityType: 'lead', entityId: lead.id, summary: `Send failed permanently (${cls}): ${String(error).slice(0, 160)}` });
+    saveDb();
+  },
+  onPaused(mailbox, reason) {
+    addActivity(`Mailbox ${mailbox.fromEmail} paused — ${reason}`, 'warning', 'send-engine');
+    configStore.recordAudit({ actor: 'send-engine', action: 'mailbox.paused', entityType: 'mailbox', entityId: mailbox.id, summary: `Mailbox ${mailbox.fromEmail} paused: ${reason}` });
+    saveDb();
+  }
+});
 let savePending = false;
 let saveTimer = null;
 function flushDb() {
@@ -74,6 +129,12 @@ function addEmailEvent(leadId, type, messageId = null, source = 'first-party') {
   const event = { id: id('event'), leadId, messageId, type, occurredAt: new Date().toISOString(), source };
   db.emailEvents.unshift(event);
   db.emailEvents = db.emailEvents.slice(0, 10000);
+  if (['bounce', 'soft_bounce', 'unsubscribe', 'complaint'].includes(type) && source !== 'send-engine') {
+    try {
+      const job = sendEngine.jobsForLead(leadId).find(j => j.status === 'sent');
+      if (job) sendEngine.recordSignal({ mailboxId: job.mailboxId, jobId: job.id, leadId, type: type === 'bounce' ? 'hard_bounce' : type, detail: `${source} ${type}` });
+    } catch (err) { console.warn(`[send-engine] signal not recorded: ${err.message}`); }
+  }
   return event;
 }
 function addBusinessDays(date, count) {
@@ -953,8 +1014,13 @@ function authStatus(req) {
   return { authenticated: true, setupRequired: false, username: session.username, displayName: session.displayName, role: session.role, userId: session.userId, csrfToken: session.csrfToken, demoAccess: Boolean(session.demoAccess), demoAccessAvailable: DEMO_ADMIN_ACCESS, approvalPolicy };
 }
 function smtpTransporter() {
-  const smtp = configStore.getSmtpConfig();
-  if (!smtp.host || !smtp.fromEmail) throw new Error('Configure the SMTP host and sender email in Settings first.');
+  let smtp = configStore.getSmtpConfig();
+  if (!smtp.host || !smtp.fromEmail) {
+    const mailbox = sendEngine.pickMailbox();
+    if (!mailbox) throw new Error('Add a sending mailbox under Deliverability first.');
+    const withSecret = sendEngine.getMailbox(mailbox.id, { secrets: true });
+    smtp = { host: withSecret.host, port: withSecret.port, secure: withSecret.secure, username: withSecret.username, password: withSecret.password, fromName: withSecret.fromName, fromEmail: withSecret.fromEmail };
+  }
   const transport = nodemailer.createTransport({
     host: smtp.host, port: smtp.port, secure: smtp.secure,
     ...(smtp.username ? { auth: { user: smtp.username, pass: smtp.password } } : {}),
@@ -1213,7 +1279,15 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const pathname = url.pathname;
   try {
-    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Partnerships Workspace', version: '0.2.0', storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
+    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Partnerships Workspace', version: '0.2.0', storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
+    if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/send-tick') {
+      const secret = process.env.CRON_SECRET || '';
+      const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
+      const result = await sendEngine.tick({ limit: 25 });
+      await refreshMailboxHealth().catch(() => {});
+      return sendJson(res, 200, { ok: true, ran: result.ran });
+    }
     if (method === 'GET' && pathname === '/api/auth/status') return sendJson(res, 200, authStatus(req));
     if (method === 'POST' && pathname === '/api/auth/demo') {
       if (!DEMO_ADMIN_ACCESS) return sendJson(res, 404, { error: 'Demo admin access is disabled.' });
@@ -1397,7 +1471,7 @@ async function handleApi(req, res, url) {
       const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
       const leads = db.leads.map(clientLead);
       const settings = configStore.publicSettings();
-      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured, settings });
+      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
     if (method === 'GET' && pathname === '/api/discovery/search') {
@@ -1426,6 +1500,74 @@ async function handleApi(req, res, url) {
       addActivity(`${name} added from web discovery`, 'lead', actorName());
       saveDb();
       return sendJson(res, 201, { ok: true, lead: workbenchLead(lead) });
+    }
+    // ---------------- Deliverability: mailboxes, policy, queue ----------------
+    if (pathname.startsWith('/api/deliverability') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !roleAllows(req.authSession, ['admin']) && !/\/jobs\//.test(pathname)) return sendJson(res, 403, { error: 'Administrator role required to change sending infrastructure.' });
+    if (method === 'GET' && pathname === '/api/deliverability') {
+      const metrics = sendEngine.metrics({ days: 14 });
+      return sendJson(res, 200, { ...metrics, jobs: sendEngine.recentJobs(150), serverless: SERVERLESS, workerIntervalSeconds: SERVERLESS ? null : SEND_TICK_SECONDS, openTrackingEnabled: configStore.publicSettings().openTrackingEnabled });
+    }
+    if (method === 'POST' && pathname === '/api/deliverability/mailboxes') {
+      const body = await readBody(req);
+      try {
+        const mailbox = sendEngine.saveMailbox(body, { actor: actorName() });
+        configStore.recordAudit({ actor: actorName(), action: body.id ? 'mailbox.updated' : 'mailbox.created', entityType: 'mailbox', entityId: mailbox.id, summary: `Mailbox ${mailbox.fromEmail} ${body.id ? 'updated' : 'added'} (cap ${mailbox.dailyCap}/day${mailbox.rampEnabled ? ', ramping' : ''}); secrets omitted` });
+        const health = await domainHealth.check(mailbox.fromEmail, { selectors: [mailbox.dkimSelector], force: true }).catch(err => ({ status: 'needs-work', issues: [{ code: 'dns', severity: 'warn', title: 'DNS', detail: err.message, fix: 'Retry the check.' }], checks: {}, checkedAt: new Date().toISOString() }));
+        return sendJson(res, body.id ? 200 : 201, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health) });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+    const mailboxRoute = pathname.match(/^\/api\/deliverability\/mailboxes\/([^/]+)(?:\/(pause|resume|check|test|restart-ramp))?$/);
+    if (mailboxRoute) {
+      const mailbox = sendEngine.getMailbox(mailboxRoute[1]);
+      if (!mailbox) return sendJson(res, 404, { error: 'Mailbox not found.' });
+      const sub = mailboxRoute[2];
+      if (method === 'DELETE' && !sub) {
+        sendEngine.deleteMailbox(mailbox.id);
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.deleted', entityType: 'mailbox', entityId: mailbox.id, summary: `Mailbox ${mailbox.fromEmail} removed` });
+        return sendJson(res, 200, { ok: true });
+      }
+      if (method === 'POST' && sub === 'pause') { const body = await readBody(req); return sendJson(res, 200, { mailbox: sendEngine.setMailboxStatus(mailbox.id, 'paused', `manual: ${String(body.reason || 'paused by ' + actorName()).slice(0, 120)}`) }); }
+      if (method === 'POST' && sub === 'resume') {
+        const health = mailbox.health || {};
+        if (health.status === 'fail') return sendJson(res, 409, { error: 'Fix the domain authentication issues before resuming this mailbox.', health });
+        const breaker = sendEngine.breakerState(mailbox.id);
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.resumed', entityType: 'mailbox', entityId: mailbox.id, summary: `Mailbox ${mailbox.fromEmail} resumed${breaker.tripped ? ' while breaker still tripped (' + breaker.reason + ')' : ''}` });
+        return sendJson(res, 200, { mailbox: sendEngine.setMailboxStatus(mailbox.id, 'active'), warning: breaker.tripped ? `The breaker is still tripped (${breaker.reason}); it will pause again on the next bad signal.` : '' });
+      }
+      if (method === 'POST' && sub === 'restart-ramp') { return sendJson(res, 200, { mailbox: sendEngine.saveMailbox({ id: mailbox.id, restartRamp: true, rampEnabled: true }, { actor: actorName() }) }); }
+      if (method === 'POST' && sub === 'check') {
+        const health = await domainHealth.check(mailbox.fromEmail, { selectors: [mailbox.dkimSelector], force: true }).catch(err => ({ status: 'needs-work', issues: [{ code: 'dns', severity: 'warn', title: 'DNS', detail: err.message, fix: 'Retry the check.' }], checks: {}, checkedAt: new Date().toISOString() }));
+        return sendJson(res, 200, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health), health });
+      }
+      if (method === 'POST' && sub === 'test') {
+        const secretBox = sendEngine.getMailbox(mailbox.id, { secrets: true });
+        let transport;
+        try { transport = mailboxTransport(secretBox); await transport.verify(); configStore.recordAudit({ actor: actorName(), action: 'mailbox.tested', entityType: 'mailbox', entityId: mailbox.id, summary: `SMTP login verified for ${mailbox.fromEmail}` }); return sendJson(res, 200, { ok: true, message: `SMTP login verified for ${mailbox.fromEmail}. No email was sent.` }); }
+        catch (err) { return sendJson(res, 502, { error: `SMTP connection failed: ${String(err.message).slice(0, 200)}` }); }
+        finally { try { transport && transport.close(); } catch {} }
+      }
+    }
+    if (method === 'POST' && pathname === '/api/deliverability/policy') {
+      const body = await readBody(req);
+      const policy = sendEngine.setPolicy(body);
+      configStore.saveSendPolicy(policy);
+      configStore.recordAudit({ actor: actorName(), action: 'send_policy.updated', entityType: 'settings', summary: `Sending policy updated: ${policy.windowStart}–${policy.windowEnd} ${policy.timezone}, days ${policy.sendDays.join('/')}, cap ${policy.defaultDailyCap}, ramp ${policy.ramp.join('→')}` });
+      return sendJson(res, 200, { policy });
+    }
+    const jobRoute = pathname.match(/^\/api\/deliverability\/jobs\/([^/]+)\/(cancel|retry)$/);
+    if (jobRoute && method === 'POST') {
+      const job = sendEngine.getJob(jobRoute[1]); if (!job) return sendJson(res, 404, { error: 'Queue item not found.' });
+      try {
+        const updated = jobRoute[2] === 'cancel' ? sendEngine.cancelJob(job.id, `cancelled by ${actorName()}`) : sendEngine.retryJob(job.id);
+        const lead = db.leads.find(l => l.id === job.leadId);
+        if (lead) { const key = job.meta.followUp ? 'followUpEmailStatus' : 'emailStatus'; if (jobRoute[2] === 'cancel' && lead[key] === 'Queued') { lead[key] = 'Approved'; lead.sendJobId = null; } if (jobRoute[2] === 'retry') { lead[key] = 'Queued'; lead.sendJobId = job.id; } lead.updatedAt = new Date().toISOString(); saveDb(); }
+        configStore.recordAudit({ actor: actorName(), action: `send_job.${jobRoute[2]}`, entityType: 'lead', entityId: job.leadId, summary: `Queue item ${jobRoute[2]} for ${job.to.replace(/^(.).*(@.*)$/, '$1***$2')}` });
+        return sendJson(res, 200, { job: updated });
+      } catch (err) { return sendJson(res, 409, { error: err.message }); }
+    }
+    if (method === 'POST' && pathname === '/api/deliverability/tick') {
+      const result = await sendEngine.tick({ limit: 10 });
+      return sendJson(res, 200, { ok: true, ran: result.ran, results: (result.results || []).map(j => ({ id: j.id, status: j.status, leadId: j.leadId, error: j.lastError })) });
     }
     if (method === 'GET' && pathname === '/api/workbench') {
       const leads = db.leads.map(workbenchLead);
@@ -1502,8 +1644,11 @@ async function handleApi(req, res, url) {
     if (publicOptOut && method === 'POST') {
       const lead = db.leads.find(l => l.bookingToken === publicOptOut[1]);
       if (!lead) return sendJson(res, 404, { error: 'This opt-out link is unavailable.' });
+      const alreadyOut = Boolean(lead.doNotContact);
       lead.doNotContact = true;
       rememberSuppressedEmail(lead.email);
+      for (const job of sendEngine.jobsForLead(lead.id)) if (['queued', 'held', 'failed'].includes(job.status)) sendEngine.cancelJob(job.id, 'recipient opted out');
+      if (!alreadyOut) addEmailEvent(lead.id, 'unsubscribe', null, 'recipient');
       lead.followUpAt = null; lead.followUpStep = 0;
       lead.emailStatus = 'Do not contact';
       lead.followUpEmailStatus = 'Do not contact';
@@ -2056,37 +2201,48 @@ async function handleApi(req, res, url) {
         const draft = followUp ? lead.followUpDraft : lead.emailDraft;
         const approved = followUp ? lead.followUpEmailStatus === 'Approved' && Boolean(lead.followUpApprovedAt) : lead.emailStatus === 'Approved' && Boolean(lead.approvedAt);
         if (!draft || !approved) return sendJson(res, 409, { error: `Approve the ${followUp ? 'follow-up' : 'message'} before sending.` });
+        if (['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status)) return sendJson(res, 409, { error: `Mailbox verification says this address is ${lead.mailboxCheck.status}; fix the address before sending.` });
         const attachProposal = Boolean(followUp && draft?.attachProposal && lead.proposalFile);
         const pdfPath = attachProposal ? path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)) : '';
         if (attachProposal && !fs.existsSync(pdfPath)) return sendJson(res, 409, { error: 'The prepared proposal PDF could not be found.' });
         const to = String(lead.email || '').trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return sendJson(res, 400, { error: 'Add a valid recipient email before sending.' });
-        const lockKey = `${lead.id}:${followUp ? 'follow-up' : 'initial'}`;
-        if (sendingLocks.has(lockKey)) return sendJson(res, 409, { error: 'This email is already being sent.' });
-        sendingLocks.add(lockKey);
-        let transport;
+        const pending = sendEngine.jobsForLead(lead.id).find(j => j.kind === (followUp ? 'follow-up' : 'initial') && ['queued', 'sending', 'held'].includes(j.status));
+        if (pending) return sendJson(res, 409, { error: `This email is already ${pending.status} for ${new Date(pending.scheduledAt).toLocaleString('en-ZA', { timeZone: sendEngine.policy.timezone })}.`, job: pending });
         try {
-          const configured = smtpTransporter(); transport = configured.transport;
           const openTokenCandidate = configStore.publicSettings().openTrackingEnabled ? crypto.randomBytes(24).toString('hex') : '';
           const pixelUrl = openTrackingUrl(openTokenCandidate);
           const openToken = pixelUrl ? openTokenCandidate : null;
           const emailBody = cleanApprovedEmailBody(draft, attachProposal);
           const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
-          const info = await transport.sendMail({
-            from: { name: configured.smtp.fromName, address: configured.smtp.fromEmail },
-            to, subject, text: emailBody, html: emailHtml(emailBody, pixelUrl),
-            attachments: attachProposal ? [{ filename: 'Chelo-Partnership-Proposal.pdf', content: fs.readFileSync(pdfPath), contentType: 'application/pdf' }] : []
+          const origin = publicOrigin(req);
+          const headers = {
+            'List-Unsubscribe': `<${origin}/opt-out/${encodeURIComponent(lead.bookingToken)}>`,
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            'X-Chelo-Lead': lead.id
+          };
+          const job = sendEngine.enqueue({
+            leadId: lead.id, kind: followUp ? 'follow-up' : 'initial', to, subject, text: emailBody, html: emailHtml(emailBody, pixelUrl), headers,
+            attachments: attachProposal ? [{ filename: 'Chelo-Partnership-Proposal.pdf', path: pdfPath, contentType: 'application/pdf' }] : [],
+            mailboxId: body.mailboxId || '', requestedBy: actorName(), sendAt: body.sendNow === true ? new Date().toISOString() : null,
+            meta: { openToken, followUp, attachProposal, actor: actorName(), company: lead.company }
           });
-          if (!info.accepted || !info.accepted.length) throw new Error('SMTP did not accept the recipient address.');
-          const message = recordSentMessage(lead, followUp, 'SMTP', openToken, info.messageId || '', actorName());
-          configStore.recordAudit({ actor: actorName(), action: 'email.smtp_sent', entityType: 'lead', entityId: lead.id, summary: `${followUp ? 'Follow-up' : 'Initial'} email accepted by SMTP${attachProposal ? ' with proposal PDF attachment' : ' without attachments'}` });
-          return sendJson(res, 200, { ok: true, message: attachProposal ? 'SMTP accepted the email with the prepared proposal PDF attached.' : 'SMTP accepted the introductory email without attachments.', openTrackingIncluded: Boolean(openToken), lead: { id: lead.id, company: lead.company, emailStatus: lead.emailStatus, followUpEmailStatus: lead.followUpEmailStatus, followUpAt: lead.followUpAt }, message: { id: message.id, kind: message.kind, sentAt: message.sentAt, status: message.status } });
+          lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Queued';
+          lead.sendJobId = job.id;
+          lead.updatedAt = new Date().toISOString();
+          configStore.recordAudit({ actor: actorName(), action: 'email.queued', entityType: 'lead', entityId: lead.id, summary: `${followUp ? 'Follow-up' : 'Initial'} email queued on ${sendEngine.getMailbox(job.mailboxId)?.fromEmail || 'mailbox'} for ${job.scheduledAt}${attachProposal ? ' with proposal PDF' : ''}` });
+          saveDb();
+          // Serverless hosts have no worker: try the slot right now if it is already due.
+          let result = null;
+          if (new Date(job.scheduledAt).getTime() <= Date.now() + 1000) { const ticked = await sendEngine.tick({ onlyJobId: job.id }); result = ticked.results?.[0] || null; }
+          const finalJob = result || sendEngine.getJob(job.id);
+          const when = new Date(finalJob.scheduledAt).toLocaleString('en-ZA', { timeZone: sendEngine.policy.timezone, dateStyle: 'medium', timeStyle: 'short' });
+          const message = finalJob.status === 'sent' ? 'Sent — the mailbox accepted the email.' : finalJob.status === 'queued' ? `Queued — scheduled for ${when} (${sendEngine.policy.timezone}) inside the sending window and daily cap.` : finalJob.status === 'dead' ? `Rejected by the receiving server: ${finalJob.lastError}` : `Queue status: ${finalJob.status}${finalJob.lastError ? ` — ${finalJob.lastError}` : ''}`;
+          return sendJson(res, finalJob.status === 'dead' ? 502 : 200, { ok: finalJob.status !== 'dead', message, job: finalJob, openTrackingIncluded: Boolean(openToken), lead: { id: lead.id, company: lead.company, emailStatus: lead.emailStatus, followUpEmailStatus: lead.followUpEmailStatus, followUpAt: lead.followUpAt } });
         } catch (err) {
-          configStore.recordAudit({ actor: actorName(), action: 'email.smtp_failed', entityType: 'lead', entityId: lead.id, summary: 'SMTP send attempt failed; message was not recorded as sent' });
-          return sendJson(res, 502, { error: `SMTP send failed: ${String(err.message || 'Connection error').slice(0, 260)}` });
-        } finally {
-          if (transport) transport.close();
-          sendingLocks.delete(lockKey);
+          const status = ['suppressed', 'invalid_recipient', 'domain_health'].includes(err.code) ? 409 : err.code === 'no_mailbox' || err.code === 'no_capacity' ? 503 : 502;
+          configStore.recordAudit({ actor: actorName(), action: 'email.queue_rejected', entityType: 'lead', entityId: lead.id, summary: `Email not queued: ${String(err.message).slice(0, 160)}` });
+          return sendJson(res, status, { error: err.message, code: err.code || 'queue_error' });
         }
       }
       if (method === 'POST' && action === 'mark-sent') {
@@ -2266,6 +2422,22 @@ const requestHandler = async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); return res.end('Method not allowed'); }
   return serveStatic(req, res, url.pathname);
 };
+const SEND_TICK_SECONDS = Math.max(10, Number(process.env.SEND_TICK_SECONDS || 30));
+async function refreshMailboxHealth() {
+  for (const mailbox of sendEngine.listMailboxes()) {
+    const stale = !mailbox.health?.checkedAt || Date.now() - new Date(mailbox.health.checkedAt).getTime() > 12 * 3600e3;
+    if (!stale) continue;
+    const health = await domainHealth.check(mailbox.fromEmail, { selectors: [mailbox.dkimSelector], force: true }).catch(() => null);
+    if (health) sendEngine.setMailboxHealth(mailbox.id, health);
+  }
+}
+if (!SERVERLESS && process.env.NODE_ENV !== 'test') {
+  const timer = setInterval(() => { sendEngine.tick({ limit: 10 }).catch(err => console.warn(`[send-engine] tick failed: ${err.message}`)); }, SEND_TICK_SECONDS * 1000);
+  timer.unref();
+  const healthTimer = setInterval(() => refreshMailboxHealth().catch(() => {}), 60 * 60e3);
+  healthTimer.unref();
+  setTimeout(() => refreshMailboxHealth().catch(() => {}), 5000).unref();
+}
 const server = http.createServer(requestHandler);
 
 if (require.main === module) {
