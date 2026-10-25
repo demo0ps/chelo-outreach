@@ -15,6 +15,8 @@ const createFunderResearch = require('./lib/funder-research');
 const createEmailVerifier = require('./lib/email-verify');
 const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
+const sequences = require('./lib/sequences');
+const triage = require('./lib/reply-triage');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -69,9 +71,17 @@ sendEngine.hooks({
   onSent(job, { mailbox }) {
     const lead = db.leads.find(l => l.id === job.leadId); if (!lead) return;
     const followUp = Boolean(job.meta.followUp);
+    const seq = job.meta.sequenceId && lead.sequence && lead.sequence.id === job.meta.sequenceId ? lead.sequence : null;
+    const step = seq ? seq.steps.find(s => s.n === job.meta.sequenceStep) : null;
+    if (step && step.n > 1) { lead.followUpDraft = { subject: step.subject, body: step.body, updatedAt: new Date().toISOString() }; lead.followUpStep = step.n - 1; lead.followUpEmailStatus = 'Approved'; lead.followUpApprovedAt = seq.approval?.approvedAt || new Date().toISOString(); }
     const message = recordSentMessage(lead, followUp, 'SMTP', job.meta.openToken || null, job.providerMessageId || '', job.meta.actor || 'send-engine');
-    message.mailboxId = job.mailboxId; message.jobId = job.id;
+    message.mailboxId = job.mailboxId; message.jobId = job.id; if (seq) message.sequenceId = seq.id; if (step) message.sequenceStep = step.n;
     lead.sendJobId = null;
+    if (step) {
+      step.status = 'sent'; step.sentAt = job.sentAt; step.messageId = message.id; step.providerMessageId = job.providerMessageId || '';
+      if (step.n === 1 && job.providerMessageId) seq.threadMessageId = job.providerMessageId;
+      advanceSequence(lead, configStore.getPublicBaseUrl() || null);
+    }
     configStore.recordAudit({ actor: job.meta.actor || 'send-engine', action: 'email.smtp_sent', entityType: 'lead', entityId: lead.id, summary: `${followUp ? 'Follow-up' : 'Initial'} email accepted by ${mailbox?.fromEmail || 'mailbox'}${job.meta.attachProposal ? ' with proposal PDF attachment' : ''}` });
     saveDb();
   },
@@ -88,6 +98,7 @@ sendEngine.hooks({
       lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Failed (delivery error)';
       addActivity(`${lead.company}: email could not be delivered after retries (${String(error).slice(0, 80)})`, 'warning', 'send-engine');
     }
+    if (job.meta.sequenceId && lead.sequence?.id === job.meta.sequenceId) { const step = lead.sequence.steps.find(s => s.n === job.meta.sequenceStep); if (step) { step.status = 'failed'; step.error = String(error).slice(0, 160); } stopLeadSequence(lead, cls === 'permanent' ? 'bounced' : 'manual', 'send-engine'); if (cls !== 'permanent') lead.sequence.stoppedReason = `Delivery failed on step ${job.meta.sequenceStep}: ${String(error).slice(0, 100)}`; }
     lead.sendJobId = null; lead.updatedAt = new Date().toISOString();
     configStore.recordAudit({ actor: 'send-engine', action: 'email.send_failed', entityType: 'lead', entityId: lead.id, summary: `Send failed permanently (${cls}): ${String(error).slice(0, 160)}` });
     saveDb();
@@ -870,7 +881,10 @@ function flowStep(lead, name, patch) {
 function deriveFlowStatus(lead) {
   const f = lead.flow; if (!f) return 'new';
   if (f.status === 'running' || f.status === 'dead' || f.status === 'error' || f.status === 'blocked') return f.status;
+  if (lead.triage && !lead.triage.handled) return 'replied';
+  if (lead.sequence && ['running', 'pending-approval'].includes(lead.sequence.status)) return lead.sequence.status === 'pending-approval' ? 'approved' : 'sequence';
   if (lead.emailStatus === 'Sent') return 'sent';
+  if (lead.emailStatus === 'Queued') return 'queued';
   if (lead.emailStatus === 'Approved') return 'approved';
   if (lead.research && lead.research.status === 'pending-review') return 'needs-review';
   if (lead.emailDraft) return 'ready';
@@ -944,6 +958,123 @@ function workbenchLead(lead) {
   return { ...c, flowStatus: deriveFlowStatus(lead) };
 }
 
+
+// ---------------- Sequences (approve once, auto-send, halt on reply) ----------------
+function approvedFactsFor(lead) {
+  const brief = lead?.research; if (!brief || brief.status !== 'approved') return [];
+  return brief.findings.filter(f => (brief.approvedFindingIds || []).includes(f.id)).map(f => f.text).slice(0, 3);
+}
+function buildLeadSequence(lead, origin) {
+  const project = db.projects.find(p => p.id === lead.projectId) || null;
+  return sequences.buildPlan({ lead, links: outreachLinks(lead, origin), project, facts: approvedFactsFor(lead) });
+}
+function stopLeadSequence(lead, reason, actor = 'system') {
+  const seq = lead.sequence; if (!seq || ['stopped', 'completed'].includes(seq.status)) return false;
+  for (const job of sendEngine.jobsForLead(lead.id)) if (['queued', 'held', 'failed'].includes(job.status) && job.meta?.sequenceId === seq.id) sendEngine.cancelJob(job.id, `sequence stopped: ${reason}`);
+  sequences.stop(seq, reason);
+  if (lead.emailStatus === 'Queued') lead.emailStatus = 'Approved';
+  if (lead.followUpEmailStatus === 'Queued') lead.followUpEmailStatus = null;
+  lead.followUpAt = null;
+  lead.updatedAt = new Date().toISOString();
+  configStore.recordAudit({ actor, action: 'sequence.stopped', entityType: 'lead', entityId: lead.id, summary: `Sequence stopped for ${lead.company}: ${seq.stoppedReason}` });
+  return true;
+}
+function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = null } = {}) {
+  const seq = lead.sequence;
+  const origin_ = origin || configStore.getPublicBaseUrl() || `http://localhost:${PORT}`;
+  const headers = { 'List-Unsubscribe': `<${origin_}/opt-out/${encodeURIComponent(lead.bookingToken)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click', 'X-Chelo-Lead': lead.id, 'X-Chelo-Sequence': `${seq.id}:${step.n}` };
+  if (step.n > 1 && seq.threadMessageId) { headers['In-Reply-To'] = seq.threadMessageId; headers.References = seq.threadMessageId; }
+  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, false) : step.body;
+  const job = sendEngine.enqueue({
+    leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
+    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, actor, company: lead.company, openToken: null }
+  });
+  step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
+  if (step.n === 1) { lead.emailStatus = 'Queued'; lead.sendJobId = job.id; } else { lead.followUpEmailStatus = 'Queued'; lead.followUpAt = job.scheduledAt; lead.followUpStep = step.n - 1; }
+  seq.status = 'running'; seq.updatedAt = new Date().toISOString(); lead.updatedAt = seq.updatedAt;
+  return job;
+}
+function advanceSequence(lead, origin) {
+  const seq = lead.sequence; if (!seq || seq.status !== 'running') return;
+  const next = sequences.nextPlannedStep(seq);
+  if (!next) { sequences.stop(seq, 'completed'); lead.followUpAt = null; return; }
+  const earliest = sequences.scheduleFor(seq, next, new Date());
+  try { queueSequenceStep(lead, next, { origin, earliest }); }
+  catch (err) { next.status = 'cancelled'; next.error = String(err.message).slice(0, 200); sequences.stop(seq, err.code === 'suppressed' ? 'do-not-contact' : 'manual'); seq.stoppedReason = `Could not queue step ${next.n}: ${String(err.message).slice(0, 120)}`; }
+}
+function recordTriage(lead, { category, confidence = 'low', reasons = [], hints = {}, excerpt = '', source = 'inbound', subject = '' }) {
+  const now = new Date();
+  lead.triage = { id: id('triage'), category, confidence, reasons, hints, excerpt: String(excerpt || '').replace(/\s+/g, ' ').slice(0, 280), subject: String(subject || '').slice(0, 160), source, sequenceId: lead.sequence?.id || null, sequenceStep: lead.sequence ? (lead.sequence.steps.filter(st => st.status === 'sent').length || null) : null, receivedAt: now.toISOString(), dueAt: triage.slaDueAt(category, now), handled: false, handledAt: null, handledBy: null, outcome: null };
+  return lead.triage;
+}
+/** Every inbound signal passes here first: automatic replies are filtered out, human replies halt the sequence and open a triage item. */
+function handleInboundSignal(normalized, source) {
+  if (normalized.kind === 'reply') {
+    const verdict = triage.classifyReply({ subject: normalized.subject, text: normalized.text, headers: normalized.headers, fromEmail: normalized.email });
+    if (verdict.category === 'automatic') {
+      const lead = db.leads.find(l => String(l.email || '').trim().toLowerCase() === normalized.email) || null;
+      if (lead) { addEmailEvent(lead.id, 'auto_reply', null, source); lead.lastAutoReplyAt = new Date().toISOString(); saveDb(); }
+      return { matched: Boolean(lead), kind: 'auto_reply', leadId: lead?.id || null, message: `Automatic reply ignored (${verdict.reasons.join('; ')}); sequence continues.` };
+    }
+    const result = inbound.applyInboundSignal({ db, configStore, addEmailEvent, addActivity, saveDb, normalized, source });
+    if (result.matched && result.leadId) {
+      const lead = db.leads.find(l => l.id === result.leadId);
+      stopLeadSequence(lead, 'replied', source);
+      recordTriage(lead, { ...verdict, excerpt: normalized.text, subject: normalized.subject, source });
+      if (verdict.category === 'opt-out') applyTriageOutcome(lead, { category: 'opt-out' }, source);
+      saveDb();
+      return { ...result, triage: verdict.category };
+    }
+    return result;
+  }
+  const result = inbound.applyInboundSignal({ db, configStore, addEmailEvent, addActivity, saveDb, normalized, source });
+  if (result.matched && result.leadId && normalized.kind === 'hard_bounce') { const lead = db.leads.find(l => l.id === result.leadId); stopLeadSequence(lead, 'bounced', source); saveDb(); }
+  return result;
+}
+function applyTriageOutcome(lead, body, actor) {
+  const category = String(body.category || lead.triage?.category || 'unclassified');
+  if (!triage.CATEGORIES[category]) throw new Error('Unknown triage category.');
+  const now = new Date().toISOString();
+  const t = lead.triage || recordTriage(lead, { category, source: 'staff' });
+  const outcome = { category, at: now, by: actor };
+  if (category === 'interested') {
+    if (!['Won', 'Not proceeding'].includes(lead.stage)) lead.stage = 'Interested';
+    lead.nextAction = body.note || 'Reply personally and offer briefing times';
+    lead.nextActionDueAt = t.dueAt || triage.slaDueAt('interested');
+  } else if (category === 'not-now') {
+    const resumeOn = body.resumeOn || t.hints?.resumeOn || new Date(Date.now() + 90 * 86400e3).toISOString().slice(0, 10);
+    lead.resumeOn = resumeOn; lead.stage = lead.stage === 'Won' ? lead.stage : 'Contacted';
+    lead.nextAction = `Resurface on ${resumeOn}${body.note ? ` — ${body.note}` : ''}`;
+    lead.nextActionDueAt = `${resumeOn}T07:00:00.000Z`;
+    outcome.resumeOn = resumeOn;
+  } else if (category === 'wrong-person') {
+    const name = String(body.redirectName || t.hints?.redirect?.name || '').trim();
+    const title = String(body.redirectTitle || t.hints?.redirect?.title || '').trim();
+    if (name) {
+      const candidate = { id: id('cand'), company: lead.company, contactName: name, title, email: '', sector: lead.sector || '', sourceName: 'Redirect from reply', sourceUrl: lead.sourceUrl || '', notes: `Redirected by ${lead.contactName || 'previous contact'} on ${now.slice(0, 10)}. Add a public work email before outreach.`, status: 'needs-review', issues: ['Email missing'], createdAt: now, updatedAt: now, checks: {}, source: 'redirect', fromLeadId: lead.id };
+      db.candidates.unshift(candidate); outcome.candidateId = candidate.id; outcome.redirect = { name, title };
+      addActivity(`${lead.company}: redirected to ${name}${title ? ` (${title})` : ''} — added to candidates`, 'update', actor);
+    }
+    lead.nextAction = name ? `Find a work email for ${name} and restart outreach` : 'Ask who the right contact is';
+    lead.stage = lead.stage === 'Won' ? lead.stage : 'Contacted';
+  } else if (category === 'opt-out') {
+    lead.doNotContact = true; rememberSuppressedEmail(lead.email);
+    lead.emailStatus = 'Do not contact'; lead.followUpEmailStatus = 'Do not contact'; lead.followUpAt = null;
+    stopLeadSequence(lead, 'opted-out', actor);
+    if (!db.emailEvents.some(e => e.leadId === lead.id && e.type === 'unsubscribe')) addEmailEvent(lead.id, 'unsubscribe', null, actor);
+    lead.nextAction = 'None — opted out';
+  } else if (category === 'automatic') {
+    lead.nextAction = lead.nextAction || '';
+  }
+  t.category = category; t.handled = true; t.handledAt = now; t.handledBy = actor; t.outcome = outcome;
+  lead.updatedAt = now;
+  configStore.recordAudit({ actor, action: 'reply.triaged', entityType: 'lead', entityId: lead.id, summary: `Reply from ${lead.company} triaged as ${category}${outcome.redirect ? ` → ${outcome.redirect.name}` : ''}${outcome.resumeOn ? ` (resume ${outcome.resumeOn})` : ''}` });
+  return t;
+}
+function triageQueue() {
+  const now = Date.now();
+  return db.leads.filter(l => l.triage && !l.triage.handled).map(l => ({ leadId: l.id, company: l.company, contactName: l.contactName, category: l.triage.category, confidence: l.triage.confidence, receivedAt: l.triage.receivedAt, dueAt: l.triage.dueAt, overdue: Boolean(l.triage.dueAt && Date.parse(l.triage.dueAt) < now), excerpt: l.triage.excerpt, hints: l.triage.hints })).sort((a, b) => (b.overdue - a.overdue) || Date.parse(a.dueAt || a.receivedAt) - Date.parse(b.dueAt || b.receivedAt));
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
@@ -1343,7 +1474,7 @@ async function handleApi(req, res, url) {
       let payload = {};
       try { payload = raw ? JSON.parse(raw) : {}; } catch { return sendJson(res, 400, { error: 'Webhook body must be JSON.' }); }
       const events = Array.isArray(payload) ? payload : [payload];
-      const results = events.slice(0, 100).map(evt => inbound.applyInboundSignal({ db, configStore, addEmailEvent, addActivity, saveDb, normalized: inbound.normalizeInboundEvent(evt), source: 'webhook' }));
+      const results = events.slice(0, 100).map(evt => handleInboundSignal(inbound.normalizeInboundEvent(evt), 'webhook'));
       return sendJson(res, 200, { ok: true, processed: results.length, matched: results.filter(r => r.matched).length, results });
     }
 
@@ -1362,7 +1493,7 @@ async function handleApi(req, res, url) {
       const adminOnly = pathname.startsWith('/api/settings') || pathname.startsWith('/api/staff') || pathname === '/api/demo/clear' || pathname === '/api/inbound/imap-sync';
       if (adminOnly && !['GET'].includes(method) && !roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required for this action.' });
       if (pathname.startsWith('/api/staff') && !roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
-      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft)$/.test(pathname) && pathname !== '/api/copilot/extract') {
+      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract') {
         return sendJson(res, 403, { error: 'Reviewer accounts can approve or return drafts but cannot edit pipeline records.' });
       }
     }
@@ -1459,7 +1590,7 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/followups/digest') return sendJson(res, 200, inbound.buildFollowUpDigest(db.leads));
     if (method === 'POST' && pathname === '/api/inbound/imap-sync') {
       const result = await inbound.checkImapInbox({ host: configStore.getInboundConfig().imapHost, port: configStore.getInboundConfig().imapPort, username: configStore.getInboundConfig().imapUsername, password: configStore.getInboundConfig().imapPassword });
-      const applied = result.signals.map(sig => inbound.applyInboundSignal({ db, configStore, addEmailEvent, addActivity, saveDb, normalized: { ...sig, providerMessageId: '' }, source: 'imap' }));
+      const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '' }, 'imap'));
       configStore.recordAudit({ actor: actorName(), action: 'inbound.imap_synced', entityType: 'integration', summary: `IMAP sync checked ${result.checked} message(s); ${applied.filter(a => a.matched).length} matched prospects` });
       return sendJson(res, 200, { ok: true, checked: result.checked, matched: applied.filter(a => a.matched).length, results: applied });
     }
@@ -1569,6 +1700,7 @@ async function handleApi(req, res, url) {
       const result = await sendEngine.tick({ limit: 10 });
       return sendJson(res, 200, { ok: true, ran: result.ran, results: (result.results || []).map(j => ({ id: j.id, status: j.status, leadId: j.leadId, error: j.lastError })) });
     }
+    if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(), categories: triage.CATEGORIES });
     if (method === 'GET' && pathname === '/api/workbench') {
       const leads = db.leads.map(workbenchLead);
       const counts = leads.reduce((acc, l) => { acc[l.flowStatus] = (acc[l.flowStatus] || 0) + 1; return acc; }, {});
@@ -1648,6 +1780,8 @@ async function handleApi(req, res, url) {
       lead.doNotContact = true;
       rememberSuppressedEmail(lead.email);
       for (const job of sendEngine.jobsForLead(lead.id)) if (['queued', 'held', 'failed'].includes(job.status)) sendEngine.cancelJob(job.id, 'recipient opted out');
+      stopLeadSequence(lead, 'opted-out', 'recipient');
+      if (lead.triage && !lead.triage.handled) { lead.triage.handled = true; lead.triage.handledAt = new Date().toISOString(); lead.triage.handledBy = 'recipient'; lead.triage.outcome = { category: 'opt-out', at: new Date().toISOString(), by: 'recipient' }; }
       if (!alreadyOut) addEmailEvent(lead.id, 'unsubscribe', null, 'recipient');
       lead.followUpAt = null; lead.followUpStep = 0;
       lead.emailStatus = 'Do not contact';
@@ -2192,6 +2326,92 @@ async function handleApi(req, res, url) {
         saveDb();
         return sendJson(res, 200, clientLead(lead));
       }
+      if (method === 'POST' && action === 'sequence/build') {
+        const body = await readBody(req);
+        if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
+        if (lead.sequence && ['running'].includes(lead.sequence.status) && !body.force) return sendJson(res, 409, { error: 'A sequence is already running. Stop it before rebuilding.' });
+        if (!lead.emailDraft) return sendJson(res, 409, { error: 'Draft the first email before building a sequence.' });
+        try { lead.sequence = buildLeadSequence(lead, publicOrigin(req)); }
+        catch (err) { return sendJson(res, 400, { error: err.message }); }
+        lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'sequence.built', entityType: 'lead', entityId: lead.id, summary: `${lead.sequence.steps.length}-step sequence drafted for ${lead.company}` });
+        saveDb();
+        return sendJson(res, 201, { sequence: lead.sequence, lead: clientLead(lead) });
+      }
+      if (method === 'PATCH' && action === 'sequence') {
+        const body = await readBody(req);
+        if (!lead.sequence) return sendJson(res, 404, { error: 'No sequence yet.' });
+        try { sequences.applyStepEdits(lead.sequence, Array.isArray(body.steps) ? body.steps : []); }
+        catch (err) { return sendJson(res, 409, { error: err.message }); }
+        if (lead.sequence.status === 'pending-approval') { lead.sequence.status = 'draft'; lead.sequence.approval = null; }
+        const first = lead.sequence.steps[0]; lead.emailDraft = { ...(lead.emailDraft || {}), subject: first.subject, body: first.body, updatedAt: new Date().toISOString() };
+        lead.updatedAt = new Date().toISOString(); saveDb();
+        return sendJson(res, 200, { sequence: lead.sequence, lead: clientLead(lead) });
+      }
+      if (method === 'POST' && action === 'sequence/approve') {
+        const body = await readBody(req);
+        if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
+        const contactGate = await requireContactReady(lead);
+        if (!contactGate.ok) { saveDb(); return sendJson(res, 409, { error: contactGate.error, contactCheck: contactGate.contactCheck }); }
+        if (['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status)) return sendJson(res, 409, { error: `Mailbox verification says this address is ${lead.mailboxCheck.status}.` });
+        const seq = lead.sequence; if (!seq) return sendJson(res, 404, { error: 'Build the sequence first.' });
+        if (['running', 'completed'].includes(seq.status)) return sendJson(res, 409, { error: `Sequence is already ${seq.status}.` });
+        const policy = configStore.getGovernanceConfig().approvalPolicy;
+        const approverId = req.authSession.userId || req.authSession.username;
+        const approverLabel = `${req.authSession.displayName || req.authSession.username} <${req.authSession.username}>`;
+        const launch = () => {
+          seq.status = 'approved'; seq.approval.approvedAt = new Date().toISOString();
+          const first = seq.steps[0];
+          lead.emailDraft = { ...(lead.emailDraft || {}), subject: first.subject, body: first.body, updatedAt: new Date().toISOString() };
+          lead.emailApproval = { digest: seq.approval.digest, firstApproverId: seq.approval.firstApproverId, firstApprover: seq.approval.firstApprover, firstApprovedAt: seq.approval.firstApprovedAt, secondApproverId: seq.approval.secondApproverId || null, secondApprover: seq.approval.secondApprover || null, secondApprovedAt: seq.approval.secondApprovedAt || null, policy, sequenceId: seq.id };
+          lead.emailStatus = 'Approved'; lead.approvedAt = seq.approval.approvedAt;
+          try { queueSequenceStep(lead, first, { origin: publicOrigin(req), actor: approverLabel }); }
+          catch (err) { seq.status = 'approved'; return { error: err.message, code: err.code }; }
+          return null;
+        };
+        if (body.confirmSecond === true) {
+          if (!seq.approval || seq.status !== 'pending-approval') return sendJson(res, 409, { error: 'No sequence is awaiting a second approval.' });
+          if (seq.approval.firstApproverId === approverId) return sendJson(res, 403, { error: 'Four-eyes policy: a different staff member must countersign.' });
+          if (!roleAllows(req.authSession, ['admin', 'reviewer'])) return sendJson(res, 403, { error: 'Only Admin or Reviewer accounts may countersign.' });
+          if (sequences.planDigest(seq, lead) !== seq.approval.digest) { seq.status = 'draft'; seq.approval = null; saveDb(); return sendJson(res, 409, { error: 'Sequence content changed since the first approval; the approval was voided.' }); }
+          seq.approval = { ...seq.approval, secondApproverId: approverId, secondApprover: approverLabel, secondApprovedAt: new Date().toISOString() };
+          const failure = launch();
+          configStore.recordAudit({ actor: approverLabel, action: 'sequence.approved.second', entityType: 'lead', entityId: lead.id, summary: `Sequence countersigned for ${lead.company} (${sequences.activeSteps(seq).length} steps); digest ${seq.approval.digest.slice(0, 12)}` });
+          saveDb();
+          return sendJson(res, failure ? 409 : 200, { sequence: seq, lead: clientLead(lead), ...(failure ? { error: failure.error } : {}) });
+        }
+        if (!roleAllows(req.authSession, ['admin', 'reviewer', 'owner'])) return sendJson(res, 403, { error: 'Your role cannot approve outbound email.' });
+        if (Array.isArray(body.steps)) { try { sequences.applyStepEdits(seq, body.steps); } catch (err) { return sendJson(res, 409, { error: err.message }); } }
+        const digest = sequences.planDigest(seq, lead);
+        seq.approval = { digest, policy, firstApproverId: approverId, firstApprover: approverLabel, firstApprovedAt: new Date().toISOString(), secondApproverId: null, secondApprover: null, secondApprovedAt: null, approvedAt: null };
+        if (policy === 'four-eyes') {
+          seq.status = 'pending-approval'; seq.updatedAt = new Date().toISOString();
+          lead.emailStatus = 'Pending second approval'; lead.updatedAt = seq.updatedAt;
+          addActivity(`Sequence awaiting countersignature for ${lead.company}`, 'email', approverLabel);
+          configStore.recordAudit({ actor: approverLabel, action: 'sequence.approved.first', entityType: 'lead', entityId: lead.id, summary: `First approval of ${sequences.activeSteps(seq).length}-step sequence for ${lead.company}; awaiting second reviewer (digest ${digest.slice(0, 12)})` });
+          saveDb();
+          return sendJson(res, 200, { sequence: seq, lead: clientLead(lead) });
+        }
+        const failure = launch();
+        addActivity(`${sequences.activeSteps(seq).length}-step sequence approved for ${lead.company}`, 'email', approverLabel);
+        configStore.recordAudit({ actor: approverLabel, action: 'sequence.approved', entityType: 'lead', entityId: lead.id, summary: `Sequence approved for ${lead.company}: ${sequences.activeSteps(seq).map(st => `#${st.n}+${st.offsetDays}d`).join(' ')} (digest ${digest.slice(0, 12)})` });
+        saveDb();
+        if (lead.emailStatus === 'Queued' && new Date(seq.steps[0].scheduledFor).getTime() <= Date.now() + 1000) { await sendEngine.tick({ onlyJobId: seq.steps[0].jobId }); saveDb(); }
+        return sendJson(res, failure ? 409 : 200, { sequence: lead.sequence, lead: clientLead(lead), ...(failure ? { error: failure.error } : {}) });
+      }
+      if (method === 'POST' && action === 'sequence/stop') {
+        const body = await readBody(req);
+        if (!lead.sequence) return sendJson(res, 404, { error: 'No sequence.' });
+        stopLeadSequence(lead, 'manual', actorName());
+        if (body.reason) lead.sequence.stoppedReason = `Stopped by staff: ${String(body.reason).slice(0, 120)}`;
+        saveDb();
+        return sendJson(res, 200, { sequence: lead.sequence, lead: clientLead(lead) });
+      }
+      if (method === 'POST' && action === 'triage') {
+        const body = await readBody(req);
+        try { const t = applyTriageOutcome(lead, body, actorName()); saveDb(); return sendJson(res, 200, { triage: t, lead: clientLead(lead), queue: triageQueue().length }); }
+        catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
       if (method === 'POST' && action === 'send-email') {
         const body = await readBody(req);
         if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
@@ -2264,6 +2484,9 @@ async function handleApi(req, res, url) {
         addEmailEvent(lead.id, 'reply', messageId);
         lead.replyAt = now; lead.followUpAt = null; lead.followUpStep = 0;
         lead.emailStatus = 'Replied (staff recorded)'; lead.nextAction = String(body.nextAction || 'Review reply and respond'); lead.updatedAt = now;
+        stopLeadSequence(lead, 'replied', actorName());
+        const verdict = body.text ? triage.classifyReply({ subject: body.subject || '', text: body.text }) : { category: 'unclassified', confidence: 'low', reasons: ['logged by staff without text'], hints: {} };
+        recordTriage(lead, { ...verdict, excerpt: body.text || '', subject: body.subject || '', source: 'staff' });
         addActivity(`Reply recorded for ${lead.company}`, 'email', actorName());
         saveDb();
         return sendJson(res, 200, lead);

@@ -389,7 +389,7 @@ function shellSidebar() {
     <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${svgIcon('target')}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">impact partnerships</span></span></a>
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
-      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length)}
+      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['replied', 'needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length)}
       ${navItem('overview', 'Overview', 'overview')}
       ${navItem('discover', 'Discover', 'globe', state.data.candidates.filter(c => c.status === 'New candidate').length)}
       ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
@@ -2111,11 +2111,13 @@ function researchModal(lead) {
 // =====================================================================
 // Outreach Workbench — one screen: add/discover → verify → research → match → draft → review & send → track
 // =====================================================================
-const WB_FILTERS = [['all', 'All'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['queued', 'Queued'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
+const WB_FILTERS = [['all', 'All'], ['replied', 'Replied · triage'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['queued', 'Queued'], ['sequence', 'In sequence'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
 function wbStatusOf(lead) {
   if (lead.flowStatus) return lead.flowStatus;
   const f = lead.flow; if (!f) return 'new';
   if (['running', 'dead', 'error', 'blocked'].includes(f.status)) return f.status;
+  if (lead.triage && !lead.triage.handled) return 'replied';
+  if (lead.sequence && lead.sequence.status === 'running') return 'sequence';
   if (lead.emailStatus === 'Sent') return 'sent';
   if (lead.emailStatus === 'Queued') return 'queued';
   if (String(lead.emailStatus || '').startsWith('Failed')) return 'blocked';
@@ -2124,7 +2126,7 @@ function wbStatusOf(lead) {
   if (lead.emailDraft) return 'ready';
   return f.status || 'new';
 }
-const WB_STATUS_META = { queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+const WB_STATUS_META = { replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
 function wbPill(status) { const [label, cls] = WB_STATUS_META[status] || [status, 'pill-new']; return `<span class="stage-pill ${cls}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
@@ -2196,7 +2198,7 @@ function wbStepper(lead) {
   const mailbox = lead.mailboxCheck;
   const projects = state.data.projects || [];
   const emailStatus = lead.emailStatus || 'None';
-  const openStep = s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify';
+  const openStep = s === 'replied' ? 'track' : s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sequence' || s === 'queued' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify';
   const header = `<div class="wb-detail-head">
     <div><div class="eyebrow"><span class="eyebrow-dot"></span>${esc(lead.stage || 'New')}</div><h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ' · no email yet'}</p></div>
     <div class="wb-detail-actions">${wbPill(s)}<button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button><button type="button" class="button button-secondary button-small" data-action="wb-run" data-id="${esc(lead.id)}" ${busy || s === 'running' ? 'disabled' : ''}>${svgIcon('refresh')}${busy || s === 'running' ? 'Working…' : 'Re-run flow'}</button></div>
@@ -2237,9 +2239,9 @@ function wbStepper(lead) {
         <button type="button" class="button button-ghost button-small" data-action="wb-redraft" data-id="${esc(lead.id)}" ${busy || emailStatus === 'Sent' ? 'disabled' : ''}>${svgIcon('wand')}Regenerate draft</button>
         <button type="button" class="button button-ghost button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Proposal PDF</button>
       </div>` : `<p class="subtle">${esc(draft?.detail || 'The draft is generated automatically once the mailbox is verified and a project is chosen.')}</p>`;
-  // 5 · Review & send
+  // 5 · Review & approve the sequence (single-send kept as a fallback)
   const approvalPending = emailStatus === 'Pending second approval';
-  const reviewBody = d ? `<div class="wb-preview"><div class="wb-preview-head"><span>To</span><strong>${esc(lead.contactName || '')} &lt;${esc(lead.email || '')}&gt;</strong></div><div class="wb-preview-head"><span>Subject</span><strong>${esc(d.subject || '')}</strong></div><pre class="wb-preview-body">${esc(d.body || '')}</pre></div>
+  const singleSendBody = d ? `<div class="wb-preview"><div class="wb-preview-head"><span>To</span><strong>${esc(lead.contactName || '')} &lt;${esc(lead.email || '')}&gt;</strong></div><div class="wb-preview-head"><span>Subject</span><strong>${esc(d.subject || '')}</strong></div><pre class="wb-preview-body">${esc(d.body || '')}</pre></div>
       <div class="wb-step-actions">
         ${emailStatus === 'Draft' || emailStatus === 'None' ? `<button type="button" class="button button-primary button-small" data-action="email-approve" data-id="${esc(lead.id)}">${svgIcon('checkCircle')}Approve</button>` : ''}
         ${approvalPending ? `<button type="button" class="button button-primary button-small" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>` : ''}
@@ -2249,10 +2251,11 @@ function wbStepper(lead) {
         ${emailStatus === 'Queued' ? `<span class="stage-pill pill-researched"><span class="wb-spinner"></span>Queued — sends in the next free slot</span><button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(lead.sendJobId || '')}" data-return-view="workbench">${svgIcon('xCircle')}Cancel send</button>` : ''}
         ${String(emailStatus).startsWith('Failed') ? `<span class="stage-pill pill-not-proceeding">${svgIcon('xCircle')}${esc(emailStatus)}</span><button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
       </div>` : '<p class="subtle">Nothing to review yet.</p>';
+  const reviewBody = d ? `${wbSequencePanel(lead)}<details class="wb-legacy"><summary>Send a single email instead (no follow-ups)</summary>${singleSendBody}</details>` : '<p class="subtle">Nothing to review yet.</p>';
   // 6 · Track
   const events = (lead.emailEvents || []).slice(-6).reverse();
   const booking = (state.data.bookings || []).find(b => b.leadId === lead.id);
-  const trackBody = `<div class="wb-track-grid">
+  const trackBody = `${wbTriageCard(lead)}<div class="wb-track-grid">
       <div class="wb-kv"><span>Status</span><strong>${esc(emailStatus)}</strong></div>
       <div class="wb-kv"><span>Opens</span><strong>${lead.openCount || (lead.emailEvents || []).filter(e => e.type === 'open').length || 0}</strong></div>
       <div class="wb-kv"><span>Reply</span><strong>${lead.repliedAt ? isoDate(lead.repliedAt) : '—'}</strong></div>
@@ -2260,7 +2263,7 @@ function wbStepper(lead) {
     </div>
     ${events.length ? `<ul class="wb-events">${events.map(e => `<li>${svgIcon(e.type === 'bounce' ? 'xCircle' : e.type === 'reply' ? 'reply' : e.type === 'open' ? 'eye' : 'activity')}<span>${esc(e.type)}</span><small>${isoDate(e.at)}</small></li>`).join('')}</ul>` : ''}
     <div class="wb-step-actions">
-      ${emailStatus === 'Sent' ? `<button type="button" class="button button-secondary button-small" data-action="follow-up" data-id="${esc(lead.id)}">${svgIcon('send')}Draft follow-up</button><button type="button" class="button button-ghost button-small" data-action="mark-replied" data-id="${esc(lead.id)}">${svgIcon('reply')}Mark replied</button>` : ''}
+      ${emailStatus === 'Sent' && !(lead.sequence && lead.sequence.status === 'running') ? `<button type="button" class="button button-secondary button-small" data-action="follow-up" data-id="${esc(lead.id)}">${svgIcon('send')}Draft follow-up</button><button type="button" class="button button-ghost button-small" data-action="mark-replied" data-id="${esc(lead.id)}">${svgIcon('reply')}Mark replied</button>` : ''}
       ${lead.stage !== 'Won' ? `<button type="button" class="button button-ghost button-small" data-action="mark-won" data-id="${esc(lead.id)}">${svgIcon('trophy')}Mark won → Partners</button>` : `<span class="stage-pill pill-won">${svgIcon('trophy')}Partner</span>`}
       <button type="button" class="button button-ghost button-small" data-action="opt-out" data-id="${esc(lead.id)}">${svgIcon('ban')}Do not contact</button>
     </div>`;
@@ -2270,9 +2273,107 @@ function wbStepper(lead) {
     ${wbStep(2, 'Research CSI focus', researchStep?.status, researchStep?.detail, researchBody, { open: openStep === 'research' })}
     ${wbStep(3, 'Match a Chelo project', match?.status, match?.detail, matchBody, { open: openStep === 'match' })}
     ${wbStep(4, 'Draft email', draft?.status, draft?.detail, draftBody, { open: openStep === 'draft' })}
-    ${wbStep(5, 'Review, approve & send', emailStatus === 'Sent' ? 'sent' : emailStatus === 'Queued' ? 'running' : String(emailStatus).startsWith('Failed') ? 'error' : emailStatus === 'Approved' ? 'approved' : d ? 'review' : null, emailStatus === 'None' ? '' : emailStatus, reviewBody, { open: openStep === 'review' })}
-    ${wbStep(6, 'Track & relationship', emailStatus === 'Sent' ? 'sent' : null, lead.stage === 'Won' ? 'Partner' : '', trackBody, { open: openStep === 'track' })}
+    ${wbStep(5, 'Review & approve sequence', wbSequenceStepStatus(lead, emailStatus), wbSequenceStepDetail(lead, emailStatus), reviewBody, { open: openStep === 'review' })}
+    ${wbStep(6, 'Track, triage & relationship', lead.triage && !lead.triage.handled ? 'review' : emailStatus === 'Sent' ? 'sent' : null, lead.triage && !lead.triage.handled ? `Reply: ${wbTriageLabel(lead.triage.category)}` : lead.stage === 'Won' ? 'Partner' : '', trackBody, { open: openStep === 'track' })}
   </div>`;
+}
+
+const SEQ_STEP_META = { planned: ['Planned', 'pill-new'], queued: ['Queued', 'pill-researched'], sent: ['Sent', 'pill-won'], skipped: ['Skipped', 'pill-new'], cancelled: ['Cancelled', 'pill-not-proceeding'], failed: ['Failed', 'pill-not-proceeding'] };
+const SEQ_STATUS_META = { draft: ['Draft plan', 'pill-new'], 'pending-approval': ['Awaiting countersign', 'pill-pending'], approved: ['Approved', 'pill-won'], running: ['Running', 'pill-researched'], stopped: ['Stopped', 'pill-not-proceeding'], completed: ['Completed', 'pill-won'] };
+const TRIAGE_META = { interested: ['Interested', 'trophy', 'Reply personally and offer briefing times'], 'not-now': ['Not now', 'clock', 'Pause and resurface on a date'], 'wrong-person': ['Wrong person', 'users', 'Capture the redirect as a new contact'], 'opt-out': ['Opt-out', 'ban', 'Suppress workspace-wide'], automatic: ['Automatic', 'activity', 'Ignore — not engagement'], unclassified: ['Needs a human look', 'info', 'Read and categorise'] };
+function wbTriageLabel(cat) { return (TRIAGE_META[cat] || [cat])[0]; }
+function wbSequenceStepStatus(lead, emailStatus) {
+  const seq = lead.sequence;
+  if (seq) return seq.status === 'running' ? 'running' : seq.status === 'completed' ? 'sent' : seq.status === 'stopped' ? (seq.stoppedReason === 'Human reply received' ? 'sent' : 'error') : seq.status === 'pending-approval' ? 'review' : seq.status === 'approved' ? 'approved' : 'review';
+  return emailStatus === 'Sent' ? 'sent' : emailStatus === 'Queued' ? 'running' : String(emailStatus).startsWith('Failed') ? 'error' : emailStatus === 'Approved' ? 'approved' : lead.emailDraft ? 'review' : null;
+}
+function wbSequenceStepDetail(lead, emailStatus) {
+  const seq = lead.sequence; if (!seq) return emailStatus === 'None' ? '' : emailStatus;
+  const sent = seq.steps.filter(s => s.status === 'sent').length; const active = seq.steps.filter(s => !['skipped', 'cancelled'].includes(s.status)).length;
+  if (seq.status === 'running') { const next = seq.steps.find(s => ['queued', 'planned'].includes(s.status)); return `Step ${sent}/${active} sent${next?.scheduledFor ? ` · next ${wbWhen(next.scheduledFor)}` : ''}`; }
+  if (seq.status === 'stopped') return `${seq.stoppedReason || 'Stopped'} · ${sent}/${active} sent`;
+  if (seq.status === 'completed') return `All ${sent} steps sent`;
+  return SEQ_STATUS_META[seq.status]?.[0] || seq.status;
+}
+function wbWhen(iso) { if (!iso) return ''; const d = new Date(iso); return `${d.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}`; }
+function wbSequencePanel(lead) {
+  const seq = lead.sequence; const busy = state.wb.busy[lead.id];
+  const policy = (state.data.settings?.approvalPolicy || state.data.sendPolicy?.approvalPolicy || '');
+  if (!seq || seq.status === 'stopped' && !state.wb.showStoppedSeq?.[lead.id] && false) return '';
+  if (!seq) {
+    return `<div class="wb-seq-intro"><div><h4>${svgIcon('send')}Approve the whole plan once</h4><p class="subtle">First touch plus three short in-thread follow-ups over about two weeks (Tue–Thu, SA business hours). Steps send themselves from the approved mailbox; any human reply stops the plan immediately and opens a triage card.</p></div>
+      <button type="button" class="button button-primary button-small" data-action="seq-build" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('wand')}Build sequence plan</button></div>`;
+  }
+  const editable = ['draft'].includes(seq.status);
+  const [statusLabel, statusCls] = SEQ_STATUS_META[seq.status] || [seq.status, 'pill-new'];
+  const steps = seq.steps.map(st => {
+    const [label, cls] = SEQ_STEP_META[st.status] || [st.status, 'pill-new'];
+    const when = st.sentAt ? `Sent ${wbWhen(st.sentAt)}` : st.scheduledFor ? `Due ${wbWhen(st.scheduledFor)}` : st.n === 1 ? 'Sends in the next free slot after approval' : `+${st.offsetDays} business day${st.offsetDays === 1 ? '' : 's'} after step ${st.n - 1}`;
+    const off = ['skipped', 'cancelled'].includes(st.status);
+    return `<li class="seq-step ${off ? 'is-off' : ''} seq-step-${esc(st.status)}" data-step="${st.n}">
+      <div class="seq-step-rail"><span class="seq-step-dot">${st.status === 'sent' ? svgIcon('check') : st.status === 'failed' || st.status === 'cancelled' ? svgIcon('xCircle') : st.n}</span></div>
+      <div class="seq-step-main">
+        <div class="seq-step-head"><strong>${st.n === 1 ? 'First touch' : `Follow-up ${st.n - 1}`}</strong><span class="stage-pill ${cls}">${esc(label)}</span><small class="subtle">${esc(when)}</small>
+          ${editable ? `<label class="seq-toggle"><input type="checkbox" data-seq-toggle="${st.n}" ${off ? '' : 'checked'} ${st.n === 1 ? 'disabled' : ''} /> include</label>${st.n > 1 ? `<label class="seq-offset">after <input type="number" min="1" max="30" value="${st.offsetDays}" data-seq-offset="${st.n}" /> business days</label>` : ''}` : ''}</div>
+        ${editable && !off ? `<input class="form-control seq-subject" data-seq-subject="${st.n}" value="${esc(st.subject || '')}" ${st.n === 1 ? 'readonly title="Edit the first touch in step 4"' : ''} /><textarea class="form-control seq-body" rows="${st.n === 1 ? 4 : 5}" data-seq-body="${st.n}" ${st.n === 1 ? 'readonly' : ''}>${esc(st.body || '')}</textarea>` : `<details class="seq-preview"><summary>${esc(st.subject || '')}</summary><pre class="wb-preview-body">${esc(st.body || '')}</pre></details>`}
+        ${st.error ? `<p class="form-error">${esc(st.error)}</p>` : ''}
+      </div></li>`;
+  }).join('');
+  const approval = seq.approval || {};
+  const actions = [];
+  if (editable) actions.push(`<button type="button" class="button button-secondary button-small" data-action="seq-save" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('save')}Save plan edits</button>`, `<button type="button" class="button button-primary button-small" data-action="seq-approve" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('checkCircle')}Approve plan & start</button>`, `<button type="button" class="button button-ghost button-small" data-action="seq-build" data-force="true" data-id="${esc(lead.id)}">${svgIcon('refresh')}Rebuild from draft</button>`);
+  if (seq.status === 'pending-approval') actions.push(`<span class="subtle">First approval by ${esc(approval.firstApprover || 'staff')} · a different reviewer must countersign</span>`, `<button type="button" class="button button-primary button-small" data-action="seq-countersign" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('shield')}Countersign (4-eyes)</button>`);
+  if (['running', 'approved', 'pending-approval'].includes(seq.status)) actions.push(`<button type="button" class="button button-danger button-small" data-action="seq-stop" data-id="${esc(lead.id)}">${svgIcon('xCircle')}Stop sequence</button>`);
+  if (['stopped', 'completed'].includes(seq.status) && !lead.doNotContact && !(lead.triage && !lead.triage.handled)) actions.push(`<button type="button" class="button button-ghost button-small" data-action="seq-build" data-force="true" data-id="${esc(lead.id)}">${svgIcon('refresh')}Plan a new sequence</button>`);
+  return `<div class="wb-seq">
+    <div class="wb-seq-head"><div><h4>${svgIcon('send')}Follow-up sequence</h4><p class="subtle">${seq.steps.filter(s => !['skipped', 'cancelled'].includes(s.status)).length} steps · same thread (In-Reply-To) · stops on any human reply, bounce or opt-out${approval.approvedAt ? ` · approved ${isoDate(approval.approvedAt)} (${esc(approval.policy || 'single')})` : ''}</p></div><span class="stage-pill ${statusCls}">${esc(statusLabel)}</span></div>
+    <ol class="seq-steps">${steps}</ol>
+    <div class="wb-step-actions">${actions.join('')}</div>
+  </div>`;
+}
+function wbTriageCard(lead) {
+  const t = lead.triage; if (!t) return '';
+  const [label, icon, action] = TRIAGE_META[t.category] || TRIAGE_META.unclassified;
+  if (t.handled) return `<div class="wb-triage is-handled"><span class="stage-pill pill-won">${svgIcon('check')}Triaged: ${esc(wbTriageLabel(t.outcome?.category || t.category))}</span><small class="subtle">${esc(t.handledBy || '')} · ${isoDate(t.handledAt)}${t.outcome?.resumeOn ? ` · resurfaces ${esc(t.outcome.resumeOn)}` : ''}${t.outcome?.redirect?.name ? ` · redirect → ${esc(t.outcome.redirect.name)}` : ''}</small></div>`;
+  const overdue = t.dueAt && Date.parse(t.dueAt) < Date.now();
+  const redirect = t.hints?.redirect || {}; const resumeOn = t.hints?.resumeOn || '';
+  const sla = t.dueAt ? `<span class="triage-sla ${overdue ? 'is-overdue' : ''}">${svgIcon('clock')}${overdue ? 'Overdue — was due' : 'Respond by'} ${wbWhen(t.dueAt)}</span>` : '';
+  return `<div class="wb-triage" data-lead="${esc(lead.id)}">
+    <div class="wb-triage-head"><div><div class="eyebrow"><span class="eyebrow-dot"></span>Human reply · sequence stopped</div><h4>${svgIcon(icon)}Suggested: ${esc(label)} <small class="subtle">(${esc(t.confidence || 'low')} confidence)</small></h4><p class="subtle">${esc(action)}${t.reasons?.length ? ` · ${esc(t.reasons.slice(0, 2).join('; '))}` : ''}</p></div>${sla}</div>
+    ${t.excerpt ? `<blockquote class="triage-excerpt">${esc(t.excerpt)}</blockquote>` : ''}
+    <div class="triage-inputs">
+      <label class="form-group"><span>Redirect name (wrong person)</span><input class="form-control" id="triage-redirect-name" value="${esc(redirect.name || '')}" placeholder="e.g. Naledi Mokoena" /></label>
+      <label class="form-group"><span>Redirect title</span><input class="form-control" id="triage-redirect-title" value="${esc(redirect.title || '')}" placeholder="Head of CSI" /></label>
+      <label class="form-group"><span>Resurface on (not now)</span><input class="form-control" type="date" id="triage-resume-on" value="${esc(resumeOn)}" /></label>
+      <label class="form-group"><span>Note</span><input class="form-control" id="triage-note" placeholder="Optional context for the timeline" /></label>
+    </div>
+    <div class="triage-actions">${['interested', 'not-now', 'wrong-person', 'opt-out', 'automatic'].map(cat => `<button type="button" class="button ${cat === t.category ? 'button-primary' : 'button-secondary'} button-small" data-action="triage-apply" data-id="${esc(lead.id)}" data-category="${cat}">${svgIcon(TRIAGE_META[cat][1])}${esc(TRIAGE_META[cat][0])}</button>`).join('')}</div>
+  </div>`;
+}
+function wbCollectSequenceEdits() {
+  const steps = {};
+  document.querySelectorAll('[data-seq-toggle]').forEach(el => { steps[el.dataset.seqToggle] = { ...(steps[el.dataset.seqToggle] || {}), n: Number(el.dataset.seqToggle), enabled: el.checked }; });
+  document.querySelectorAll('[data-seq-offset]').forEach(el => { steps[el.dataset.seqOffset] = { ...(steps[el.dataset.seqOffset] || {}), n: Number(el.dataset.seqOffset), offsetDays: Number(el.value) || 1 }; });
+  document.querySelectorAll('[data-seq-subject]').forEach(el => { if (!el.readOnly) steps[el.dataset.seqSubject] = { ...(steps[el.dataset.seqSubject] || {}), n: Number(el.dataset.seqSubject), subject: el.value }; });
+  document.querySelectorAll('[data-seq-body]').forEach(el => { if (!el.readOnly) steps[el.dataset.seqBody] = { ...(steps[el.dataset.seqBody] || {}), n: Number(el.dataset.seqBody), body: el.value }; });
+  return Object.values(steps);
+}
+async function wbSequenceAction(action, button) {
+  const id = button.dataset.id; const url = act => `/api/leads/${encodeURIComponent(id)}/${act}`;
+  const run = async (fn, okMsg) => { state.wb.busy[id] = true; renderApp(); try { const r = await fn(); if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } };
+  if (action === 'seq-build') { await run(() => API(url('sequence/build'), { method: 'POST', body: JSON.stringify({ force: button.dataset.force === 'true' }) }), 'Sequence plan built — review each step, then approve once.'); return true; }
+  if (action === 'seq-save') { await run(() => API(url('sequence'), { method: 'PATCH', body: JSON.stringify({ steps: wbCollectSequenceEdits() }) }), 'Plan saved.'); return true; }
+  if (action === 'seq-approve') { const steps = wbCollectSequenceEdits(); await run(() => API(url('sequence/approve'), { method: 'POST', body: JSON.stringify({ steps }) }), r => r.sequence.status === 'running' ? 'Plan approved — step 1 is queued; follow-ups will send themselves unless they reply.' : 'First approval recorded — a second reviewer must countersign.'); return true; }
+  if (action === 'seq-countersign') { await run(() => API(url('sequence/approve'), { method: 'POST', body: JSON.stringify({ confirmSecond: true }) }), 'Countersigned — the sequence is running.'); return true; }
+  if (action === 'seq-stop') { if (!confirm('Stop this sequence? Remaining follow-ups will be cancelled.')) return true; await run(() => API(url('sequence/stop'), { method: 'POST', body: '{}' }), 'Sequence stopped.'); return true; }
+  if (action === 'triage-apply') {
+    const body = { category: button.dataset.category, redirectName: $('#triage-redirect-name')?.value || '', redirectTitle: $('#triage-redirect-title')?.value || '', resumeOn: $('#triage-resume-on')?.value || '', note: $('#triage-note')?.value || '' };
+    if (body.category === 'wrong-person' && !body.redirectName) { toast('Add the redirect name first so it can be captured as a candidate.', true); return true; }
+    if (body.category === 'opt-out' && !confirm('Suppress this contact workspace-wide? This cannot be undone from the UI.')) return true;
+    await run(() => API(url('triage'), { method: 'POST', body: JSON.stringify(body) }), r => `Triaged as ${wbTriageLabel(r.triage.category)}${r.queue ? ` · ${r.queue} left in queue` : ' · queue clear'}`);
+    return true;
+  }
+  return false;
 }
 async function wbRunFlow(id, { force = false, redraft = false } = {}) {
   state.wb.busy[id] = true; renderApp();
@@ -2290,6 +2391,7 @@ async function wbAction(action, button) {
   if (action === 'wb-focus-add') { $('#wb-add-form input[name="company"]')?.focus(); return true; }
   if (action === 'wb-filter') { state.wb.filter = button.dataset.filter; state.wb.selectedId = null; renderApp(); return true; }
   if (action === 'wb-select') { state.wb.selectedId = id; renderApp(); return true; }
+  if (action.startsWith('seq-') || action === 'triage-apply') return wbSequenceAction(action, button);
   if (action === 'wb-run') { await wbRunFlow(id, { force: button.dataset.force === 'true' }); return true; }
   if (action === 'wb-redraft') { await wbRunFlow(id, { redraft: true }); return true; }
   if (action === 'wb-verify') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/verify-mailbox`, { method: 'POST', body: '{}' }); toast(`Mailbox: ${r.mailbox.status} — ${r.mailbox.reason}`, ['invalid', 'undeliverable'].includes(r.mailbox.status)); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
