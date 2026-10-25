@@ -98,3 +98,9 @@ Worth a one-page look?
 4. Sender: emails go from a named staff member (`{{StaffName}}`) or from "Chelo Partnerships"? Named outperforms; needs each staff member's own mailbox (Batch 1 model).
 5. Meeting at step 2: a Chelo-hosted booking page (our slots, `.ics`) or your existing calendar tool link?
 6. Proof partner names (Bolt, SAB Foundation, TIA, Approved) — permission to cite them in cold emails?
+
+## Picture decisions (2026-10-25)
+- Imagery: generated for now; switch to real photos once a consent process exists (POPIA — children).
+- Placement: hosted page only; emails stay plain text.
+- Funder identity: typography "{{Company}} ×" only; logo only after a signed partnership.
+- Templates: 3, matched to cheloapp.com project categories (classroom/renovation · construction · ICT), auto-selected by Verified Project type.
