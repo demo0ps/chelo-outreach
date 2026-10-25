@@ -479,7 +479,7 @@ h1 { font-size:29px; line-height:1.16; font-weight:690; letter-spacing:-.024em; 
 /* =====================================================================
    Duotone icon system with luminous accents (replaces legacy fill tiers)
    ===================================================================== */
-.icon-svg { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; shape-rendering:geometricPrecision; overflow:visible; transition:transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease; }
+.icon-svg { width:16px; height:16px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; shape-rendering:geometricPrecision; overflow:visible; transition:transform .22s cubic-bezier(.2,.8,.2,1), filter .22s ease; }
 .icon-svg .icon-line { fill:none; stroke:currentColor; stroke-width:1.8; vector-effect:non-scaling-stroke; }
 .icon-svg .icon-tint { fill:currentColor; stroke:none; opacity:.14; transition:opacity .22s ease; }
 .icon-svg .icon-accent { fill:url(#chelo-icon-accent); stroke:none; filter:url(#chelo-icon-glow); opacity:.95; transform-box:fill-box; transform-origin:center; transition:transform .25s cubic-bezier(.2,.8,.2,1), opacity .2s ease; }
@@ -545,3 +545,11 @@ a.button { display:inline-flex; align-items:center; gap:7px; }
 .detail-section-title .icon-svg { width:13px; height:13px; color:#6b5fd6; flex:0 0 auto; }
 .h-icon { display:inline-flex; align-items:center; gap:7px; }
 .h-icon .icon-svg { width:14px; height:14px; color:#5a4fc9; flex:0 0 auto; }
+
+/* ---- Sizing guards: every icon host gets an explicit footprint ---- */
+.panel-action { display:inline-flex; align-items:center; gap:6px; }
+.panel-action .icon-svg { width:14px; height:14px; }
+.auth-submit .icon-svg, .button-lime .icon-svg { width:14px; height:14px; }
+.mobile-menu .icon-svg { width:20px; height:20px; }
+.empty-state-icon .icon-svg { width:22px; height:22px; }
+.approval-trail-title .icon-svg, .radar-heading .icon-svg { width:14px; height:14px; }

@@ -176,3 +176,9 @@ Committed & promoted. Remaining: user to eyeball live site; report any specific 
 - [x] 7 panel titles, 13 detail-section titles, 2 radar headings, 5 settings/CSV h3s now carry glyphs (.panel-title/.section-title-text/.h-icon)
 - [x] copilot tabs already iconed; stage/status pills intentionally text-only (colour-coded)
 - [ ] user visual confirmation on Chrome desktop
+
+## Round 3 (screenshot: giant/"upside-down" kanban + prospects on Overview)
+- [x] Root cause: `.panel-action` had no icon size → SVG expanded to container width. Added global `.icon-svg` 16px default + explicit sizes for panel-action, auth-submit, button-lime, mobile-menu, empty-state-icon, approval-trail-title, radar-heading
+- [x] Kanban glyph redrawn as a bordered board with 3 lanes + cards (no longer reads as inverted bars)
+- [x] Verified arrow directions: upload/download/arrow/back/logout/external/trend/send all correct
+- [ ] user visual confirmation on Chrome desktop
