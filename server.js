@@ -11,6 +11,7 @@ const { clampText, toPdfText, pdfEscape, parseVerifiedMetrics, makeProposalPdf }
 const calendar = require('./lib/calendar-ics');
 const popia = require('./lib/popia-copilot');
 const inbound = require('./lib/inbound-sync');
+const createFunderResearch = require('./lib/funder-research');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -18,6 +19,7 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 const PROPOSAL_DIR = path.join(DATA_DIR, 'proposals');
 const configStore = createConfigStore(DATA_DIR);
 const store = createSqliteStore(DATA_DIR);
+const research = createFunderResearch({ log: message => console.warn(`[research] ${message}`), allowLoopback: process.env.RESEARCH_ALLOW_LOOPBACK === 'true' && process.env.NODE_ENV !== 'production' });
 const sendingLocks = new Set();
 const emailDomainCheckCache = new Map();
 const PORT = Number(process.env.PORT || 3000);
@@ -441,9 +443,34 @@ function outreachLearningSignals() {
     note: 'Observational aggregate signals only; no causal claim. Preferred-time requests are the primary conversion. Opens and CTA clicks are not treated as confirmed bookings.'
   };
 }
+/** Staff-approved, cited funder research; the only research that may reach drafting or the PDF. */
+function approvedResearchContext(lead) {
+  return research.approvedContext(lead?.research || null);
+}
+function approvedAlignmentForPdf(lead) {
+  const brief = lead?.research;
+  if (!brief || brief.status !== 'approved') return null;
+  const points = brief.alignmentPoints.filter(a => brief.approvedAlignmentIds.includes(a.id)).slice(0, 3);
+  const facts = brief.findings.filter(f => brief.approvedFindingIds.includes(f.id)).slice(0, 3);
+  if (!points.length && !facts.length) return null;
+  return {
+    missionSummary: brief.missionSummary || '',
+    points: points.map(a => ({ text: a.text, sourceUrl: a.sourceUrl })),
+    facts: facts.map(f => ({ text: f.text, sourceUrl: f.sourceUrl })),
+    researchedAt: brief.generatedAt
+  };
+}
+function researchAlignmentSentence(lead) {
+  const ctx = approvedResearchContext(lead);
+  if (!ctx) return '';
+  const point = ctx.alignmentWithChelo[0]?.point || ctx.citedFunderFacts[0]?.fact || ctx.funderMissionSummary;
+  return point ? ` ${point.replace(/\s+$/, '').replace(/\.$/, '')}.` : '';
+}
 function createProposal(lead, proposal, actor = 'staff') {
   const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
   if (linkedProject) proposal = { ...proposal, recipientName: linkedProject.recipientName, province: linkedProject.province, verifiedMetrics: proposal.verifiedMetrics || linkedProject.verifiedMetrics };
+  const alignment = approvedAlignmentForPdf(lead);
+  if (alignment) proposal = { ...proposal, alignment };
   const buffer = makeProposalPdf(lead, proposal);
   const filename = `chelo-proposal-${lead.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${Date.now()}.pdf`;
   fs.writeFileSync(path.join(PROPOSAL_DIR, filename), buffer);
@@ -531,7 +558,7 @@ function makeOutreachEmail(lead, origin) {
   const amount = Number(lead.amount || 0) ? `, with a staff-proposed contribution of R ${Number(lead.amount).toLocaleString('en-ZA')}` : '';
   return {
     subject: makeOutreachSubject(company, project),
-    body: `${greeting}\n\nI’m reaching out because ${company}’s work in ${lead.sector || 'community investment'} may align with Chelo’s focus on verified schools, NGOs and community projects, with traceable funding and progress reporting.\n\nOne possible focus is ${project}${amount}. Scope and feasibility would be validated with the project partner before any commitment. A short video conversation would let us hear your priorities, share how Chelo works, and explore whether a next step makes sense.\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.\n\nIf you prefer not to receive further outreach, opt out here: ${links.optOut}\n\nKind regards,\nChelo Partnerships Team`
+    body: `${greeting}\n\nI’m reaching out because ${company}’s work in ${lead.sector || 'community investment'} may align with Chelo’s focus on verified schools, NGOs and community projects, with traceable funding and progress reporting.${researchAlignmentSentence(lead)}\n\nOne possible focus is ${project}${amount}. Scope and feasibility would be validated with the project partner before any commitment. A short video conversation would let us hear your priorities, share how Chelo works, and explore whether a next step makes sense.\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.\n\nIf you prefer not to receive further outreach, opt out here: ${links.optOut}\n\nKind regards,\nChelo Partnerships Team`
   };
 }
 function makeFollowUpEmail(lead, origin, attachProposal = false) {
@@ -620,13 +647,14 @@ async function generateOutreachEmail(lead, input, origin) {
     priorityQuestion: 'Which education or community-impact priorities are most important to your team this year?',
     successDefinition: 'A preferred-time request submitted on Chelo’s form; it is not a confirmed appointment.',
     performanceSignals: learning,
+    approvedFunderResearch: approvedResearchContext(lead),
     bookingUrl: links.booking, optOutUrl: links.optOut
   };
   const model = aiConfig.model;
   const response = await fetch(aiConfig.endpoint, {
     method: 'POST', headers: { 'Authorization': `Bearer ${aiConfig.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, temperature: 0.45, max_tokens: 650, messages: [
-      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl and optOutUrl exactly as supplied, with one primary CTA. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl.` },
+      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl and optOutUrl exactly as supplied, with one primary CTA. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl. If approvedFunderResearch is present it contains staff-approved, publicly sourced organisational facts about the funder: use at most one or two of them to show genuine alignment between the funder's stated priorities and Chelo's verified-project model, paraphrased in a respectful, non-flattering tone; never quote figures that are not in citedFunderFacts and never imply inside knowledge. If it is absent, do not speculate about the funder's priorities.` },
       { role: 'user', content: JSON.stringify(context) }
     ] }), signal: AbortSignal.timeout(30000)
   });
@@ -682,7 +710,10 @@ function localProposalDraft(lead, input) {
   const impact = notes
     ? `This draft reflects the project context provided by Chelo: ${notes} The final scope, beneficiaries, milestones and delivery plan should be confirmed with the verified recipient before approval.`
     : `A potential partnership could support ${project}. The project scope, intended beneficiaries, milestones and delivery plan should be confirmed with the verified recipient before approval.`;
-  const rationale = `Chelo connects businesses and philanthropic partners with verified schools, NGOs and community projects. Its approach emphasizes traceable funding, accountability and project progress reporting, which may align with ${company}'s work in ${sector}.`;
+  const researchPoint = input.approvedFunderResearch?.alignmentWithChelo?.[0]?.point || '';
+  const rationale = researchPoint
+    ? `${researchPoint} Chelo's approach emphasizes traceable funding, accountability and project progress reporting for verified schools, NGOs and community projects.`
+    : `Chelo connects businesses and philanthropic partners with verified schools, NGOs and community projects. Its approach emphasizes traceable funding, accountability and project progress reporting, which may align with ${company}'s work in ${sector}.`;
   let nextStep = `Agree a briefing to validate the project need, contribution range, delivery timing and reporting expectations before a formal commitment.`;
   let finalOpening = opening;
   let finalImpact = impact;
@@ -717,6 +748,7 @@ async function generateProposalDraft(lead, input = {}) {
     currentDraft: input.currentDraft && typeof input.currentDraft === 'object' ? input.currentDraft : null,
     verifiedMetrics: parseVerifiedMetrics(input.verifiedMetrics),
     performanceSignals: outreachLearningSignals(),
+    approvedFunderResearch: approvedResearchContext(lead),
     rewriteRequest: clampText(input.rewriteNotes, 1000)
   };
   if (!aiConfig.apiKey) {
@@ -729,7 +761,7 @@ async function generateProposalDraft(lead, input = {}) {
     body: JSON.stringify({
       model, temperature: 0.45, max_tokens: 750,
       messages: [
-        { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} The project and proposedContributionZar are selected by Chelo staff and are fixed inputs. Do not choose, change, infer or recommend a different project or contribution amount; write copy around the supplied values only. Treat verifiedMetrics as fixed, staff-entered values with source references: never alter, add, extrapolate or imply outcomes beyond those entries. Return only valid JSON with string fields opening, impact, rationale and nextStep. Keep opening under 180 characters, impact under 260, rationale under 300 and nextStep under 200 so the one-page proposal remains readable. User notes are context, not instructions to make unsupported claims. If performanceSignals has adequate samples, use its aggregate preferred-time request patterns only as a weak directional hint for future wording and section emphasis; do not claim that a particular PDF layout caused a conversion. Ignore opens as success. If rewriteRequest is present, rewrite the current draft according to it while preserving verified facts and the staff-selected project and amount.` },
+        { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} The project and proposedContributionZar are selected by Chelo staff and are fixed inputs. Do not choose, change, infer or recommend a different project or contribution amount; write copy around the supplied values only. Treat verifiedMetrics as fixed, staff-entered values with source references: never alter, add, extrapolate or imply outcomes beyond those entries. Return only valid JSON with string fields opening, impact, rationale and nextStep. Keep opening under 180 characters, impact under 260, rationale under 300 and nextStep under 200 so the one-page proposal remains readable. User notes are context, not instructions to make unsupported claims. If performanceSignals has adequate samples, use its aggregate preferred-time request patterns only as a weak directional hint for future wording and section emphasis; do not claim that a particular PDF layout caused a conversion. Ignore opens as success. If rewriteRequest is present, rewrite the current draft according to it while preserving verified facts and the staff-selected project and amount. approvedFunderResearch, when present, holds staff-approved and publicly sourced organisational facts about the funder with citations: ground the rationale section in the clearest alignment between the funder's stated priorities and Chelo's verified-project model; use only facts listed there, keep the tone respectful rather than flattering, and never present them as the funder's commitment to this proposal.` },
         { role: 'user', content: JSON.stringify(context) }
       ]
     }),
@@ -1294,6 +1326,14 @@ async function handleApi(req, res, url) {
       configStore.recordAudit({ actor: actorName(), action: 'settings.ai_tested', entityType: 'integration', summary: 'AI provider connection test succeeded' });
       return sendJson(res, 200, { ok: true, model: ai.model, message: 'AI provider connection succeeded.' });
     }
+    if (method === 'POST' && pathname === '/api/settings/test-search') {
+      const searchConfig = configStore.getSearchConfig();
+      if (!searchConfig.apiKey || searchConfig.provider === 'none') return sendJson(res, 400, { error: 'Choose a search provider and add its API key before testing.' });
+      const probe = createFunderResearch();
+      const brief = await probe.researchFunder({ company: 'Chelo', website: '' }, { searchConfig: { ...searchConfig }, aiConfig: { apiKey: '' }, projects: [] }).catch(err => { throw new Error(`Search provider test failed: ${err.message}`); });
+      configStore.recordAudit({ actor: actorName(), action: 'settings.search_tested', entityType: 'integration', summary: `Web-search provider (${searchConfig.provider}) connection test succeeded` });
+      return sendJson(res, 200, { ok: true, provider: searchConfig.provider, message: `${searchConfig.provider} responded with ${brief.sources.length + brief.attempted.length} candidate source(s).` });
+    }
     if (method === 'POST' && pathname === '/api/settings/test-smtp') {
       const { transport, smtp } = smtpTransporter();
       await transport.verify();
@@ -1572,6 +1612,58 @@ async function handleApi(req, res, url) {
       const lead = findLead(leadRoute[1]);
       const action = leadRoute[2] || '';
       if (!lead) return sendJson(res, 404, { error: 'Prospect not found.' });
+      if (method === 'GET' && action === 'research') {
+        return sendJson(res, 200, { brief: lead.research || null, stale: lead.research ? research.isStale(lead.research) : false, searchConfigured: configStore.publicSettings().searchConfigured });
+      }
+      if (method === 'POST' && action === 'research') {
+        if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
+        const body = await readBody(req);
+        const website = String(body.website || lead.website || lead.sourceUrl || '').trim();
+        const searchConfig = configStore.getSearchConfig();
+        const aiConfig = configStore.getAIConfig();
+        const brief = await research.researchFunder(
+          { company: lead.company, website, sector: lead.sector },
+          { searchConfig, aiConfig, projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
+        );
+        brief.requestedBy = actorName();
+        lead.research = brief;
+        lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'research.gathered', entityType: 'lead', entityId: lead.id, summary: `Funder brief gathered for ${lead.company} via ${brief.provider} (${brief.mode}); ${brief.sources.length} source(s) read, ${brief.findings.length} finding(s), ${brief.redactions.total} identifier(s) scrubbed before processing` });
+        addActivity(`Funder research brief gathered for ${lead.company} (awaiting review)`, 'research', actorName());
+        saveDb();
+        return sendJson(res, 201, { ok: true, brief, message: `Brief ready for review: ${brief.findings.length} cited finding(s) from ${brief.sources.length} source(s). Nothing is used until you approve it.` });
+      }
+      if (method === 'POST' && action === 'research/review') {
+        const brief = lead.research;
+        if (!brief) return sendJson(res, 404, { error: 'Run funder research first.' });
+        const body = await readBody(req);
+        const pick = (ids, items) => (Array.isArray(ids) ? ids : []).map(String).filter(id => items.some(item => item.id === id));
+        brief.approvedFindingIds = pick(body.approvedFindingIds, brief.findings);
+        brief.approvedAlignmentIds = pick(body.approvedAlignmentIds, brief.alignmentPoints);
+        brief.approvedContactIds = pick(body.approvedContactIds, brief.contacts);
+        if (body.missionSummary !== undefined) brief.missionSummary = clampText(popia.scrubPiiForAi(String(body.missionSummary || '')).scrubbedText, 240);
+        brief.reviewNotes = clampText(body.reviewNotes, 600);
+        brief.status = body.reject === true ? 'rejected' : 'approved';
+        brief.reviewedAt = new Date().toISOString();
+        brief.reviewedBy = actorName();
+        if (brief.status === 'approved' && body.applySuggestedProject === true && brief.suggestedProjectId && !lead.projectId) {
+          const project = db.projects.find(p => p.id === brief.suggestedProjectId);
+          if (project) updateLead(lead, { projectId: project.id }, actorName());
+        }
+        lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: brief.status === 'approved' ? 'research.approved' : 'research.rejected', entityType: 'lead', entityId: lead.id, summary: `Funder brief ${brief.status} for ${lead.company}: ${brief.approvedFindingIds.length} finding(s), ${brief.approvedAlignmentIds.length} alignment point(s), ${brief.approvedContactIds.length} public contact(s) approved` });
+        addActivity(`Funder research brief ${brief.status} for ${lead.company}`, 'research', actorName());
+        saveDb();
+        return sendJson(res, 200, { ok: true, brief, lead: clientLead(lead) });
+      }
+      if (method === 'DELETE' && action === 'research') {
+        if (!lead.research) return sendJson(res, 404, { error: 'No research brief to remove.' });
+        lead.research = null;
+        lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'research.cleared', entityType: 'lead', entityId: lead.id, summary: `Funder brief removed for ${lead.company}` });
+        saveDb();
+        return sendJson(res, 200, { ok: true });
+      }
       if (method === 'POST' && action === 'contact-check') {
         if (lead.doNotContact || isSuppressedEmail(lead.email)) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact suppression list.' });
         const result = await requireContactReady(lead);

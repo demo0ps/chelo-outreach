@@ -17,7 +17,7 @@ const state = {
   bookingInfo: null, bookingLoading: false, bookingSubmitted: false, bookingError: '',
   optOutInfo: null, optOutDone: false,
   importInput: null, importReport: null, csvImportPreview: null, currentDate: new Date(), mobileMoreOpen: false,
-  projectFilter: 'All provinces', copilot: null, copilotBusy: false, projectImportPreview: null
+  projectFilter: 'All provinces', copilot: null, copilotBusy: false, projectImportPreview: null, researchBusy: false, researchError: '', copilotTab: 'web'
 };
 let auditSearchTimer = null;
 let auditRequestId = 0;
@@ -557,6 +557,7 @@ function settingsView() {
   const smtpState = settings.smtpConfigured ? `Configured · ${settings.smtpHost}:${settings.smtpPort}` : 'Not configured';
   const content = state.settingsSection === 'audit' ? auditView() : `<div class="settings-status-grid"><div class="settings-status-card"><span class="metric-icon">${svgIcon('spark')}</span><div><strong>AI drafting</strong><small>${esc(aiState)}</small></div><span class="status-dot ${settings.aiConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('mail')}</span><div><strong>SMTP sending</strong><small>${esc(smtpState)}</small></div><span class="status-dot ${settings.smtpConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('eye')}</span><div><strong>Open measurement</strong><small>${settings.openTrackingReady ? 'Pixel ready · public HTTPS URL set' : settings.openTrackingEnabled ? 'Enabled · needs public HTTPS URL' : 'Disabled'}</small></div><span class="status-dot ${settings.openTrackingReady ? 'is-on' : ''}"></span></div></div>
     <form id="settings-form" data-form="settings" class="settings-form"><section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('spark')}</span><div><h2>AI provider</h2><p>Optional OpenAI-compatible endpoint for proposal and email copy. Use HTTPS except for loopback testing. Secrets stay on the server and are never returned to the browser.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-ai-endpoint">Chat completions endpoint</label><input class="form-control" id="setting-ai-endpoint" name="aiEndpoint" type="url" value="${esc(settings.aiEndpoint || 'https://api.openai.com/v1/chat/completions')}" placeholder="https://api.openai.com/v1/chat/completions" /></div><div class="form-group"><label for="setting-ai-model">Model</label><input class="form-control" id="setting-ai-model" name="aiModel" value="${esc(settings.aiModel || 'gpt-4o-mini')}" /></div><div class="form-group full"><label for="setting-ai-key">API key <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-ai-key" name="aiApiKey" type="password" autocomplete="new-password" placeholder="${settings.aiConfigured ? 'Key is stored; value is hidden' : 'Paste API key'}" /></div><label class="check-row"><input type="checkbox" name="clearAiKey" /> Remove saved AI key <small>Environment keys, if set, remain active.</small></label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-ai">${svgIcon('spark')} Test AI connection</button></div></section>
+    <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('globe')}</span><div><h2>Web research provider</h2><p>Powers the Research copilot's funder briefs. Only staff-initiated, organisation-level lookups run; fetched pages are PII-scrubbed before any AI call and every finding is cited for human review. Without a provider, research reads the funder's official website (Source URL) only.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-search-provider">Provider</label><select class="form-control" id="setting-search-provider" name="searchProvider">${['none','tavily','serper','bing'].map(v => `<option value="${v}" ${(settings.searchProvider || 'none') === v ? 'selected' : ''}>${{ none: 'None (official website only)', tavily: 'Tavily', serper: 'Serper (Google)', bing: 'Bing Web Search' }[v]}</option>`).join('')}</select></div><div class="form-group"><label for="setting-search-key">Search API key <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-search-key" name="searchApiKey" type="password" autocomplete="new-password" placeholder="${settings.searchConfigured ? 'Key is stored; value is hidden' : 'Paste search API key'}" /></div><label class="check-row"><input type="checkbox" name="clearSearchKey" /> Remove saved search key <small>SEARCH_PROVIDER / SEARCH_API_KEY environment values, if set, remain active.</small></label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-search">${svgIcon('globe')} Test search provider</button><span class="subtle">${settings.searchConfigured ? `Configured · ${esc(settings.searchProvider)} · ${settings.searchKeySource === 'environment' ? 'server environment' : 'encrypted Settings'}` : 'Not configured'}</span></div></section>
       <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>SMTP email sending</h2><p>After a staff member approves an email, the app can submit it to your SMTP server. First-touch invitations are sent without a PDF; a prepared proposal is attached only to an appropriate follow-up. Test connection verifies access but sends no email.</p></div></div><div class="settings-fields"><div class="form-group"><label for="setting-smtp-host">SMTP host</label><input class="form-control" id="setting-smtp-host" name="smtpHost" value="${esc(settings.smtpHost || '')}" placeholder="smtp.example.com" /></div><div class="form-group"><label for="setting-smtp-port">Port</label><input class="form-control" id="setting-smtp-port" name="smtpPort" type="number" min="1" max="65535" value="${Number(settings.smtpPort || 587)}" /></div><div class="form-group"><label for="setting-smtp-user">Username <span class="optional">(optional)</span></label><input class="form-control" id="setting-smtp-user" name="smtpUsername" autocomplete="username" value="${esc(settings.smtpUsername || '')}" /></div><div class="form-group"><label for="setting-smtp-password">Password <span class="optional">(leave blank to keep current)</span></label><input class="form-control" id="setting-smtp-password" name="smtpPassword" type="password" autocomplete="new-password" placeholder="${settings.smtpPasswordConfigured ? 'Password is stored; value is hidden' : 'SMTP password or app password'}" /></div><div class="form-group"><label for="setting-from-name">From name</label><input class="form-control" id="setting-from-name" name="smtpFromName" value="${esc(settings.smtpFromName || 'Chelo Partnerships Team')}" /></div><div class="form-group"><label for="setting-from-email">From email</label><input class="form-control" id="setting-from-email" name="smtpFromEmail" type="email" value="${esc(settings.smtpFromEmail || '')}" placeholder="partnerships@cheloapp.com" /></div><label class="check-row"><input type="checkbox" name="smtpSecure" ${settings.smtpSecure ? 'checked' : ''} /> Implicit TLS <small>Usually port 465; leave unchecked for STARTTLS, often port 587.</small></label><label class="check-row"><input type="checkbox" name="clearSmtpPassword" /> Remove saved SMTP password</label></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="test-smtp">${svgIcon('activity')} Test SMTP connection</button><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section>
       <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('eye')}</span><div><h2>Analytics & tracking</h2><p>First-party CTA hits are counted by Chelo. Open measurement uses a 1×1 tracking pixel and is approximate; image proxies, privacy features and blockers may distort it.</p></div></div><div class="settings-fields"><label class="check-row"><input type="checkbox" name="openTrackingEnabled" ${settings.openTrackingEnabled ? 'checked' : ''} /> Add open-tracking pixel to SMTP and .eml emails</label><div class="form-group full"><label for="setting-public-url">Public HTTPS app URL</label><input class="form-control" id="setting-public-url" name="publicBaseUrl" type="url" value="${esc(settings.publicBaseUrl || (location.protocol === 'https:' ? location.origin : ''))}" placeholder="https://partnerships.example.org" /><span class="form-hint">The recipient’s mail client must be able to reach this HTTPS address to load the pixel and CTA. Localhost and private preview URLs will not track opens for external recipients.</span></div></div><div class="settings-card-actions"><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section></form>`;
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
@@ -604,6 +605,7 @@ function renderModal() {
   if (type === 'project-detail') return projectDetailModal(state.data.projects.find(p => p.id === id));
   if (type === 'project-import') return projectImportModal(state.projectImportPreview);
   if (type === 'copilot') return copilotModal();
+  if (type === 'research') return researchModal(getLead(id));
   if (type === 'staff-form') return staffFormModal(state.data.staff.find(u => u.id === id));
   if (type === 'booking-edit') return bookingEditModal(getBooking(id));
   return '';
@@ -627,7 +629,7 @@ function leadFormModal(lead) {
     <div class="form-group"><label for="grantWindowOpenMonth">Grant window opens</label><select class="form-control" id="grantWindowOpenMonth" name="grantWindowOpenMonth">${monthOptions(lead?.grantWindowOpenMonth)}</select></div>
     <div class="form-group"><label for="grantWindowCloseMonth">Grant window closes</label><select class="form-control" id="grantWindowCloseMonth" name="grantWindowCloseMonth">${monthOptions(lead?.grantWindowCloseMonth)}</select></div>
     <div class="form-group"><label for="nextGrantDeadline">Next grant deadline</label><input class="form-control" id="nextGrantDeadline" name="nextGrantDeadline" type="date" value="${esc(verificationDateValue(lead?.nextGrantDeadline))}" /><span class="form-hint">Feeds the Grant-Cycle Radar on the Overview.</span></div>
-    <div class="form-group copilot-launch"><label>Research copilot</label><button type="button" class="button button-secondary" data-action="open-copilot" data-target="lead-form">${svgIcon('spark')} Paste-to-Extract from public CSI text</button><span class="form-hint">Staff paste public report text; PII is scrubbed server-side before any AI call.</span></div>
+    <div class="form-group copilot-launch"><label>Research copilot</label><button type="button" class="button button-secondary" data-action="open-copilot" data-target="lead-form">${svgIcon('spark')} Open research copilot</button><span class="form-hint">Web research (cited funder brief) or Paste-to-Extract; PII is scrubbed server-side before any AI call.</span></div>
     <div class="form-group"><label for="sourceName">Source name</label><input class="form-control" id="sourceName" name="sourceName" value="${esc(lead?.sourceName || '')}" placeholder="Annual report / grants page" /></div>
     <div class="form-group"><label for="sourceUrl">Source URL</label><input class="form-control" id="sourceUrl" name="sourceUrl" type="url" value="${esc(lead?.sourceUrl || '')}" placeholder="https://…" /></div>
     <div class="form-group"><label for="contactLastVerifiedAt">Contact last verified by staff</label><input class="form-control" id="contactLastVerifiedAt" name="contactLastVerifiedAt" type="date" value="${esc(verificationDateValue(lead?.contactLastVerifiedAt))}" /><span class="form-hint">Set only after confirming the person, role and details. DNS checks do not verify a mailbox.</span></div>
@@ -729,6 +731,7 @@ function leadDetailModal(lead) {
     <div class="detail-section"><div class="detail-section-title">Point of contact</div><div class="detail-grid"><div class="detail-item"><small>Name / role</small><strong>${esc(lead.contactName || 'Not added')} · ${esc(lead.title || '—')}</strong></div><div class="detail-item"><small>Email</small><a href="mailto:${encodeURIComponent(lead.email || '')}">${esc(lead.email || 'Not added')}</a></div><div class="detail-item"><small>Phone</small><strong>${esc(lead.phone || 'Not added')}</strong></div><div class="detail-item"><small>Relationship owner</small><strong>${esc(lead.owner || 'Unassigned')}</strong></div><div class="detail-item"><small>Contact verified by staff</small><strong class="${contactFreshness.className}">${esc(contactFreshness.text)}${lead.contactLastVerifiedAt ? ` · ${esc(dateOnly(lead.contactLastVerifiedAt))}` : ''}</strong></div></div></div>
     <div class="detail-section"><div class="detail-section-title">Opportunity</div><div class="detail-grid"><div class="detail-item"><small>Potential contribution</small><strong>${money(lead.amount)}</strong></div><div class="detail-item"><small>Fit score</small><strong>${Number(lead.fitScore || 0)}% match</strong></div><div class="detail-item"><small>Verified project</small><strong>${esc(lead.project || 'Not specified')}</strong>${lead.projectId ? `<button type="button" class="table-action" data-action="open-project" data-id="${esc(lead.projectId)}">View funding gap</button>` : ''}</div><div class="detail-item"><small>Grant cycle</small><strong>${esc(grantCycleLabel(lead))}</strong></div><div class="detail-item"><small>Next action</small><strong>${esc(lead.nextAction || 'Review')}</strong></div></div></div>
     <div class="detail-section"><div class="detail-section-title">Research provenance</div><div class="detail-item"><small>Recorded public source</small>${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(lead.sourceName || source)} ${svgIcon('external')}</a>` : `<strong>${esc(lead.sourceName || 'No source recorded')}</strong>`}<small class="${sourceFreshness.className}">${esc(sourceFreshness.text)}${lead.sourceLastVerifiedAt ? ` · ${esc(dateOnly(lead.sourceLastVerifiedAt))}` : ''}</small></div></div>
+    ${researchDetailSection(lead)}
     <div class="detail-section"><div class="detail-section-title">Relationship and partner priorities</div><div class="detail-grid"><div class="detail-item"><small>Warm-introduction / relationship context</small><div class="detail-note">${esc(lead.relationshipContext || 'No introduction path recorded yet.')}</div></div><div class="detail-item"><small>Partner priorities and timing</small><div class="detail-note">${esc(lead.partnerPriorities || 'No priorities or timing recorded yet.')}</div></div></div></div>
     ${lead.notes ? `<div class="detail-section"><div class="detail-section-title">Research notes</div><div class="detail-note">${esc(lead.notes)}</div></div>` : ''}
     <div class="detail-section"><div class="detail-section-title">Outreach status</div><div class="detail-grid"><div class="detail-item"><small>Email</small><strong>${esc(lead.emailStatus || 'Not started')}</strong></div><div class="detail-item"><small>Follow-up</small><strong>${lead.followUpAt ? isoDate(lead.followUpAt) : 'Not scheduled'}</strong></div></div>${lead.proposalFile ? `<div class="attachment-row"><div class="attachment-info"><span class="pdf-icon">PDF</span><span>Chelo partnership proposal<small>Generated ${isoDate(lead.updatedAt)}</small></span></div><a class="button button-secondary button-small" href="${proposalDownload(lead)}" download>Download</a></div>` : ''}</div>
@@ -745,6 +748,7 @@ function proposalModal(lead) {
     : 'AI is not connected in this preview. The guided local draft demonstrates the workflow; configure OPENAI_API_KEY on the server for model-generated drafts and rewrites.';
   const body = `<form id="proposal-form" data-form="proposal" data-id="${esc(lead.id)}"><input type="hidden" name="generationMode" id="p-generation-mode" value="${esc(saved.generationMode || 'manual')}" />
     <div class="ai-guidance-card"><div class="ai-guidance-icon">${svgIcon('spark')}</div><div><strong>${aiConfigured ? 'AI-guided proposal writing' : 'Guided proposal preview'}</strong><p>${aiNote}</p><small>Guardrails: verified recipients · traceable funding · impact reporting · no invented metrics or unconfirmed outcomes.</small></div></div>
+    ${researchBriefCard(lead, 'proposal')}
     <div class="form-grid">
     <div class="form-group full"><label for="p-company">Prepared for</label><input class="form-control" id="p-company" name="company" value="${esc(saved.company || lead.company)}" required readonly /></div>
     <div class="form-group"><label for="p-contact">Attention</label><input class="form-control" id="p-contact" name="contactName" value="${esc(saved.contactName || lead.contactName || '')}" readonly /></div>
@@ -770,6 +774,7 @@ function outreachModal(lead) {
     ? `Connected model: ${esc(state.data.aiModel || 'configured AI')}. It may use aggregate preferred-time results to refine wording; staff keep the selected project, contribution and verified facts fixed.`
     : 'No AI provider is configured. The guided local preview demonstrates the email workflow; it is not model-generated.';
   const body = `<div class="ai-guidance-card"><div class="ai-guidance-icon">${svgIcon('spark')}</div><div><strong>Prepare the first-touch invitation</strong><p>${aiNote}</p><small>This email’s only ask is a 20-minute introductory video chat. No proposal PDF or proposal link is included.</small></div></div>
+    ${researchBriefCard(lead, 'outreach')}
     <form id="outreach-form" data-form="outreach" data-id="${esc(lead.id)}"><div class="form-grid">
       <div class="form-group full"><label for="o-project">Staff-selected project / impact focus *</label><input class="form-control" id="o-project" name="project" value="${esc(saved.project || lead.project || '')}" required placeholder="The specific project you want to discuss" /></div>
       <div class="form-group"><label for="o-amount">Staff-selected contribution amount (ZAR) *</label><input class="form-control" id="o-amount" name="amount" type="number" min="0" step="1000" value="${Number(saved.amount ?? lead.amount ?? 0) || ''}" required placeholder="250000" /></div>
@@ -1088,10 +1093,10 @@ async function dispatchAction(button) {
       state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false }));
       state.authError = ''; state.view = 'overview'; renderAuthGate(); return;
     }
-    if (action === 'test-ai' || action === 'test-smtp') {
+    if (action === 'test-ai' || action === 'test-smtp' || action === 'test-search') {
       button.disabled = true;
       try {
-        const result = await API(`/api/settings/${action === 'test-ai' ? 'test-ai' : 'test-smtp'}`, { method: 'POST', body: '{}' });
+        const result = await API(`/api/settings/${action}`, { method: 'POST', body: '{}' });
         toast(result.message || 'Connection test succeeded.');
       } finally { button.disabled = false; }
       return;
@@ -1189,6 +1194,45 @@ async function dispatchAction(button) {
       toast(`${result.created} project(s) added, ${result.updated} updated${result.errors.length ? `, ${result.errors.length} rejected` : ''}.`, Boolean(result.errors.length)); return;
     }
     if (action === 'open-copilot') { state.copilot = { target: button.dataset.target || 'lead-form', text: '', result: null, error: '' }; const returnTo = state.modal; const leadFormDraft = $('#lead-form') ? formDataObject($('#lead-form')) : null; return openModal('copilot', null, { returnTo, leadFormDraft }); }
+    if (action === 'copilot-tab') { state.copilotTab = button.dataset.tab === 'paste' ? 'paste' : 'web'; renderApp(); return; }
+    if (action === 'research-run') {
+      const lead = getLead(id); if (!lead) return;
+      const website = $('#research-website')?.value?.trim() || '';
+      state.researchBusy = true; state.researchError = ''; renderApp();
+      try {
+        const result = await API(`/api/leads/${encodeURIComponent(lead.id)}/research`, { method: 'POST', body: JSON.stringify({ website }) });
+        await refresh();
+        state.researchBusy = false;
+        openModal('research', lead.id, { returnTo: button.dataset.return ? { type: button.dataset.return, id: lead.id } : (state.modal?.type === 'research' ? state.modal.returnTo : state.modal) });
+        toast(result.message || 'Funder brief ready for review.');
+      } catch (err) { state.researchBusy = false; state.researchError = err.message; renderApp(); toast(err.message, true); }
+      return;
+    }
+    if (action === 'research-open') { const lead = getLead(id); if (!lead) return; return openModal('research', lead.id, { returnTo: state.modal }); }
+    if (action === 'research-back') { const returnTo = state.modal?.returnTo; state.modal = returnTo && returnTo.type ? returnTo : null; renderApp(); return; }
+    if (action === 'research-approve' || action === 'research-reject') {
+      const lead = getLead(id); if (!lead?.research) return;
+      const panel = $('#research-review'); if (!panel) return;
+      const checked = name => Array.from(panel.querySelectorAll(`input[name="${name}"]:checked`)).map(el => el.value);
+      const payload = { approvedFindingIds: checked('finding'), approvedAlignmentIds: checked('alignment'), approvedContactIds: checked('contact'), missionSummary: $('#research-mission')?.value, reviewNotes: $('#research-notes')?.value || '', applySuggestedProject: Boolean($('#research-apply-project')?.checked), reject: action === 'research-reject' };
+      if (action === 'research-approve' && !payload.approvedFindingIds.length && !payload.approvedAlignmentIds.length) return toast('Tick at least one finding or alignment point, or reject the brief.', true);
+      button.disabled = true;
+      try {
+        await API(`/api/leads/${encodeURIComponent(lead.id)}/research/review`, { method: 'POST', body: JSON.stringify(payload) });
+        await refresh();
+        toast(action === 'research-approve' ? `Brief approved: ${payload.approvedFindingIds.length} finding(s) and ${payload.approvedAlignmentIds.length} alignment point(s) will inform the email and PDF.` : 'Brief rejected; drafting will not use it.');
+        const returnTo = state.modal?.returnTo; state.modal = returnTo && returnTo.type ? returnTo : { type: 'lead-detail', id: lead.id }; renderApp();
+      } finally { button.disabled = false; }
+      return;
+    }
+    if (action === 'research-clear') {
+      const lead = getLead(id); if (!lead?.research) return;
+      if (!confirm('Remove this funder brief? Approved findings will no longer inform drafts.')) return;
+      await API(`/api/leads/${encodeURIComponent(lead.id)}/research`, { method: 'DELETE' });
+      await refresh(); toast('Funder brief removed.');
+      const returnTo = state.modal?.returnTo; state.modal = returnTo && returnTo.type ? returnTo : { type: 'lead-detail', id: lead.id }; renderApp();
+      return;
+    }
     if (action === 'copilot-run') {
       const text = $('#copilot-text')?.value || '';
       state.copilot = { ...(state.copilot || {}), text, error: '', result: null }; state.copilotBusy = true; renderApp();
@@ -1357,6 +1401,7 @@ async function handleSubmit(event) {
       data.clearSmtpPassword = Boolean(form.elements.clearSmtpPassword?.checked);
       if (form.elements.autoSendCalendarInvite) data.autoSendCalendarInvite = Boolean(form.elements.autoSendCalendarInvite.checked);
       if (form.elements.clearImapPassword) data.clearImapPassword = Boolean(form.elements.clearImapPassword.checked);
+      if (form.elements.clearSearchKey) data.clearSearchKey = Boolean(form.elements.clearSearchKey.checked);
       if (!form.elements.smtpSecure) delete data.smtpSecure;
       if (!form.elements.openTrackingEnabled) delete data.openTrackingEnabled;
       if (!form.elements.clearAiKey) delete data.clearAiKey;
@@ -1786,14 +1831,23 @@ function projectImportModal(preview) {
 }
 function copilotModal() {
   const c = state.copilot || { text: '', result: null, error: '' };
+  const tab = state.copilotTab || 'web';
+  const tabs = `<div class="copilot-tabs" role="tablist"><button type="button" class="copilot-tab ${tab === 'web' ? 'is-active' : ''}" data-action="copilot-tab" data-tab="web" role="tab">${svgIcon('globe')} Web research</button><button type="button" class="copilot-tab ${tab === 'paste' ? 'is-active' : ''}" data-action="copilot-tab" data-tab="paste" role="tab">${svgIcon('edit')} Paste-to-Extract</button></div>`;
+  if (tab === 'web') {
+    const lead = state.modal?.returnTo?.id ? getLead(state.modal.returnTo.id) : null;
+    const webBody = `${tabs}<div class="note-callout"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>How web research works.</strong> Staff start a lookup for one organisation. Chelo queries the configured search provider${state.data.settings?.searchConfigured ? ` (${esc(state.data.settings.searchProvider)})` : ' (not configured — official website only)'} and the funder's official site for public CSI, foundation and annual-report pages, scrubs emails, phone numbers and ID numbers before any AI step, and returns a cited Funder Brief. You tick what may be used; only approved findings reach the email and proposal PDF.</span></div>
+      ${lead ? researchBriefCard(lead, 'copilot') : `<div class="empty-state" style="margin-top:14px"><strong>Save the prospect first.</strong><p>Web research attaches a brief to a saved prospect so it can be reviewed, audited and reused for 30 days. Add the organisation, then open the copilot from the prospect's details, Prepare outreach or Proposal screens.</p></div>`}`;
+    const webFooter = `<div class="modal-footer-left"><span class="subtle">POPIA: organisation-level public facts only · no contact details are collected</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">Close</button></div>`;
+    return modalFrame('Research copilot', 'Gather cited public context and align the ask with the funder’s mission.', webBody, webFooter, true);
+  }
   const r = c.result;
   const extracted = r?.extracted;
   const resultBlock = r ? `<div class="copilot-result"><div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>${r.mode === 'openai' ? 'AI-assisted extraction' : 'Local extraction (no AI provider)'}.</strong> ${esc(r.message)} Redacted before processing: ${r.redactions.emails} email(s), ${r.redactions.phones} phone(s), ${r.redactions.saIds} ID number(s).</span></div><div class="detail-grid" style="margin-top:12px"><div class="detail-item"><small>Sector</small><strong>${esc(extracted.sector || '—')}</strong></div><div class="detail-item"><small>Grant window</small><strong>${esc(grantCycleLabel(extracted))}</strong></div><div class="detail-item"><small>Suggested project</small><strong>${esc(state.data.projects.find(p => p.id === extracted.suggestedProjectId)?.name || 'None (staff decide)')}</strong></div><div class="detail-item"><small>Signals</small><strong>${extracted.employeeVolunteering ? 'Volunteering · ' : ''}${extracted.inKindSupport ? 'In-kind · ' : ''}${(extracted.focusAreas || []).length} focus area(s)</strong></div></div><div class="detail-item" style="margin-top:10px"><small>Partner priorities (editable after apply)</small><div class="detail-note">${esc(extracted.partnerPriorities || '')}</div></div>${(extracted.focusAreas || []).length ? `<div class="chip-row">${extracted.focusAreas.map(f => `<span class="stage-pill pill-researched">${esc(f)}</span>`).join('')}</div>` : ''}</div>` : '';
-  const body = `<div class="note-callout"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>POPIA boundary.</strong> Paste only text from public CSI reports, sustainability pages or grant guidelines. Chelo never scrapes websites. Emails, phone numbers and SA ID numbers are scrubbed server-side before any AI call; relationship notes and contact details are never sent.</span></div>
+  const body = `<div class="note-callout"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>POPIA boundary.</strong> Paste only text from public CSI reports, sustainability pages or grant guidelines (ideal for PDFs the web tab cannot read). Chelo never bulk-crawls websites; research runs only when staff ask for one organisation. Emails, phone numbers and SA ID numbers are scrubbed server-side before any AI call; relationship notes and contact details are never sent.</span></div>
     <div class="form-group" style="margin-top:12px"><label for="copilot-text">Public excerpt</label><textarea class="form-control" id="copilot-text" style="min-height:180px" maxlength="12000" placeholder="Paste a paragraph or two from the public source…">${esc(c.text)}</textarea></div>
     ${c.error ? `<div class="form-error">${esc(c.error)}</div>` : ''}${resultBlock}`;
   const footer = `<div class="modal-footer-left"><span class="subtle">${state.copilotBusy ? 'Scrubbing & extracting…' : 'Human review required before saving'}</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">Close</button><button type="button" class="button button-secondary" data-action="copilot-run" ${state.copilotBusy ? 'disabled' : ''}>${svgIcon('spark')} Extract</button>${extracted ? `<button type="button" class="button button-primary" data-action="copilot-apply">${svgIcon('check')} Apply to prospect form</button>` : ''}</div>`;
-  return modalFrame('Paste-to-Extract copilot', 'Structure public CSI text into priorities and grant timing.', body, footer, true);
+  return modalFrame('Research copilot', 'Structure public CSI text into priorities and grant timing.', `${tabs}${body}`, footer, true);
 }
 function radarView() {
   const radar = state.data.radar;
@@ -1862,4 +1916,65 @@ function bookingEditModal(b) {
   </div></form>`;
   const footer = `<div class="modal-footer-left"><a class="button button-ghost button-small" href="/api/bookings/${encodeURIComponent(b.id)}/invite.ics" download>${svgIcon('download')} Download .ics</a></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">Cancel</button><button type="submit" form="booking-edit-form" class="button button-primary">Save briefing</button></div>`;
   return modalFrame('Briefing details', `${b.organization} · ${b.contactName}`, body, footer, true);
+}
+
+// ---- Funder research (web) — cited brief, human review, then drafting ----
+function researchStatus(lead) {
+  const brief = lead?.research;
+  if (!brief) return { key: 'none', label: 'No funder brief yet', pill: 'pill-new' };
+  const stale = brief.expiresAt && new Date(brief.expiresAt).getTime() < Date.now();
+  if (brief.status === 'approved' && stale) return { key: 'stale', label: `Approved brief is older than 30 days (${dateOnly(brief.generatedAt)})`, pill: 'pill-contacted' };
+  if (brief.status === 'approved') return { key: 'approved', label: `Approved · ${brief.approvedFindingIds.length} finding(s), ${brief.approvedAlignmentIds.length} alignment point(s) in use`, pill: 'pill-won' };
+  if (brief.status === 'rejected') return { key: 'rejected', label: 'Brief rejected · not used in drafts', pill: 'pill-not-proceeding' };
+  return { key: 'pending', label: `Awaiting review · ${brief.findings.length} cited finding(s) from ${brief.sources.length} source(s)`, pill: 'pill-researched' };
+}
+function researchBriefCard(lead, context) {
+  if (!lead) return '';
+  const status = researchStatus(lead);
+  const busy = state.researchBusy;
+  const searchConfigured = Boolean(state.data.settings?.searchConfigured);
+  const website = lead.research?.website || lead.website || lead.sourceUrl || '';
+  const needsWebsite = !searchConfigured && !website;
+  const hint = searchConfigured
+    ? `Uses ${esc(state.data.settings.searchProvider)} plus the official website. Only organisation-level public facts are kept; PII is scrubbed before any AI step.`
+    : 'No search provider is configured (Settings → Web research provider). Research will read the official website only.';
+  const runLabel = status.key === 'none' ? 'Research funder' : 'Re-run research';
+  const intro = context === 'copilot' ? '' : `<small>${status.key === 'approved' ? 'Approved findings will shape the alignment wording in this draft and the PDF’s “Alignment with your mission” section.' : status.key === 'pending' ? 'Review the brief so approved findings can inform this draft.' : 'Optional: gather cited public context on the funder’s mission before drafting.'}</small>`;
+  return `<div class="research-card research-${status.key}"><div class="research-card-head"><span class="ai-guidance-icon">${svgIcon('globe')}</span><div><strong>Funder brief · ${esc(lead.company)}</strong><span class="stage-pill ${status.pill}">${esc(status.label)}</span>${intro}</div></div>
+    <div class="research-card-body"><div class="form-group"><label for="research-website">Official website <span class="optional">(optional)</span></label><input class="form-control" id="research-website" value="${esc(website)}" placeholder="https://www.organisation.co.za" ${busy ? 'disabled' : ''} /><span class="form-hint">${hint}${needsWebsite ? ' Add the website to enable research.' : ''}</span></div>
+    <div class="research-card-actions"><button type="button" class="button button-secondary button-small" data-action="research-run" data-id="${esc(lead.id)}" data-return="${esc(context === 'copilot' ? 'lead-detail' : context)}" ${busy ? 'disabled' : ''}>${svgIcon('globe')} ${busy ? 'Researching…' : runLabel}</button>${lead.research ? `<button type="button" class="button button-secondary button-small" data-action="research-open" data-id="${esc(lead.id)}">${svgIcon('eye')} ${status.key === 'pending' ? 'Review brief' : 'View brief'}</button>` : ''}${state.researchError ? `<span class="form-error">${esc(state.researchError)}</span>` : ''}</div></div></div>`;
+}
+function researchDetailSection(lead) {
+  const brief = lead?.research;
+  const status = researchStatus(lead);
+  const approvedPoints = brief ? brief.alignmentPoints.filter(a => brief.approvedAlignmentIds.includes(a.id)) : [];
+  return `<div class="detail-section"><div class="detail-section-title">Funder research <span class="stage-pill ${status.pill}">${esc(status.label)}</span></div>
+    ${brief ? `<div class="detail-item"><small>Mission summary (public sources)</small><div class="detail-note">${esc(brief.missionSummary || 'No mission statement extracted.')}</div>${brief.focusAreas?.length ? `<div class="chip-row">${brief.focusAreas.map(f => `<span class="stage-pill pill-researched">${esc(f)}</span>`).join('')}</div>` : ''}${approvedPoints.length ? `<ul class="research-list compact">${approvedPoints.map(a => `<li>${esc(a.text)} ${a.sourceUrl ? `<a class="source-link" href="${esc(safeUrl(a.sourceUrl))}" target="_blank" rel="noopener noreferrer">source ${svgIcon('external')}</a>` : ''}</li>`).join('')}</ul>` : ''}</div>` : `<p class="subtle">Run web research from Prepare outreach, the proposal editor or the Research copilot to gather cited public context on this funder’s mission.</p>`}
+    <div class="detail-actions" style="margin-top:8px">${brief ? `<button type="button" class="button button-secondary button-small" data-action="research-open" data-id="${esc(lead.id)}">${svgIcon('eye')} ${status.key === 'pending' ? 'Review brief' : 'View brief'}</button>` : ''}<button type="button" class="button button-secondary button-small" data-action="open-copilot" data-target="lead-detail">${svgIcon('globe')} Research copilot</button></div></div>`;
+}
+function researchModal(lead) {
+  if (!lead) return '';
+  const brief = lead.research;
+  if (!brief) return modalFrame('Funder brief', `No research brief for ${lead.company} yet.`, researchBriefCard(lead, 'lead-detail'), `<div class="modal-footer-left"></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="research-back">Back</button></div>`, true);
+  const status = researchStatus(lead);
+  const editable = true;
+  const checked = (list, id) => (brief.status === 'pending-review' ? true : list.includes(id)) ? 'checked' : '';
+  const conf = c => `<span class="research-confidence conf-${esc(c)}">${esc(c)}</span>`;
+  const src = (url, title) => url ? `<a class="source-link" href="${esc(safeUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(title || url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))} ${svgIcon('external')}</a>` : '';
+  const suggested = brief.suggestedProjectId ? state.data.projects.find(p => p.id === brief.suggestedProjectId) : null;
+  const kindLabel = { mission: 'Mission', programme: 'Programme', public_figure: 'Public figure', grant_window: 'Grant window' };
+  const body = `<div id="research-review">
+    <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>${brief.mode === 'openai' ? 'AI-synthesised from public pages' : 'Local extraction from public pages'} via ${esc(brief.provider)}.</strong> Gathered ${isoDate(brief.generatedAt)}${brief.requestedBy ? ` by ${esc(brief.requestedBy)}` : ''}; valid for 30 days. Scrubbed before processing: ${brief.redactions.emails} email(s), ${brief.redactions.phones} phone(s), ${brief.redactions.saIds} ID number(s). Tick only facts you have checked against the source — approved items inform the email and the PDF’s “Alignment with your mission” section.</span></div>
+    ${brief.warnings?.length ? `<div class="note-callout warn"><span class="note-callout-icon">${svgIcon('info')}</span><span>${brief.warnings.map(esc).join(' ')}</span></div>` : ''}
+    <div class="form-group" style="margin-top:12px"><label for="research-mission">Mission summary <span class="optional">(editable; printed in the PDF when approved)</span></label><textarea class="form-control" id="research-mission" maxlength="240" rows="2">${esc(brief.missionSummary || '')}</textarea>${brief.focusAreas?.length ? `<div class="chip-row">${brief.focusAreas.map(f => `<span class="stage-pill pill-researched">${esc(f)}</span>`).join('')}</div>` : ''}</div>
+    <div class="research-group"><h4>Alignment with Chelo <span class="subtle">(${brief.alignmentPoints.length})</span></h4>${brief.alignmentPoints.length ? brief.alignmentPoints.map(a => `<label class="research-item"><input type="checkbox" name="alignment" value="${esc(a.id)}" ${checked(brief.approvedAlignmentIds, a.id)} /><span><strong>${esc(a.text)}</strong>${a.evidence ? `<em>Evidence: ${esc(a.evidence)}</em>` : ''}<small>${src(a.sourceUrl, a.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">No alignment points could be grounded in the sources.</p>'}</div>
+    <div class="research-group"><h4>Cited findings <span class="subtle">(${brief.findings.length})</span></h4>${brief.findings.length ? brief.findings.map(f => `<label class="research-item"><input type="checkbox" name="finding" value="${esc(f.id)}" ${checked(brief.approvedFindingIds, f.id)} /><span><strong>${esc(f.text)}</strong><small><span class="research-kind">${esc(kindLabel[f.kind] || f.kind)}</span> ${conf(f.confidence)} ${src(f.sourceUrl, f.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">No findings. Try adding the official website or use Paste-to-Extract on a PDF report.</p>'}</div>
+    <div class="research-group"><h4>Publicly listed CSI / foundation leads <span class="subtle">(${brief.contacts.length})</span></h4><p class="form-hint">Names and titles from public pages only — no emails or phone numbers are collected. Verify before adding to the prospect.</p>${brief.contacts.length ? brief.contacts.map(c => `<label class="research-item"><input type="checkbox" name="contact" value="${esc(c.id)}" ${checked(brief.approvedContactIds, c.id)} /><span><strong>${esc(c.name)}</strong> · ${esc(c.title)}<small>${conf(c.confidence)} ${src(c.sourceUrl, c.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">None found.</p>'}</div>
+    ${suggested && !lead.projectId ? `<label class="check-row"><input type="checkbox" id="research-apply-project" checked /> Link suggested verified project: <strong>${esc(suggested.name)}</strong> <small>${esc(suggested.sector)} · ${esc(suggested.province)}</small></label>` : ''}
+    <div class="research-group"><h4>Sources read <span class="subtle">(${brief.sources.length})</span></h4><ul class="research-list compact">${brief.sources.map(s => `<li>${src(s.url, s.title)} ${s.official ? '<span class="research-kind">official site</span>' : ''}</li>`).join('')}${(brief.attempted || []).filter(a => a.status === 'skipped').slice(0, 6).map(a => `<li class="subtle">Skipped ${esc(a.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 70))} — ${esc(a.reason || '')}</li>`).join('')}</ul></div>
+    <div class="form-group"><label for="research-notes">Reviewer note <span class="optional">(optional, audited)</span></label><input class="form-control" id="research-notes" maxlength="600" value="${esc(brief.reviewNotes || '')}" placeholder="e.g. Verified against 2024 integrated report; excluded dated programme." /></div>
+    ${brief.reviewedAt ? `<p class="subtle">Last reviewed ${isoDate(brief.reviewedAt)} by ${esc(brief.reviewedBy || 'staff')} · ${esc(brief.status)}</p>` : ''}
+  </div>`;
+  const footer = `<div class="modal-footer-left"><button type="button" class="button button-secondary button-small" data-action="research-run" data-id="${esc(lead.id)}" ${state.researchBusy ? 'disabled' : ''}>${svgIcon('globe')} ${state.researchBusy ? 'Researching…' : 'Re-run'}</button><button type="button" class="button button-secondary button-small" data-action="research-clear" data-id="${esc(lead.id)}">Remove</button></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="research-back">Back</button><button type="button" class="button button-secondary" data-action="research-reject" data-id="${esc(lead.id)}">Reject brief</button><button type="button" class="button button-primary" data-action="research-approve" data-id="${esc(lead.id)}">${svgIcon('check')} Approve selected &amp; use</button></div>`;
+  return modalFrame(`Funder brief · ${lead.company}`, status.label, body, footer, true, 'modal-wide');
 }

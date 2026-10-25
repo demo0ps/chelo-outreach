@@ -35,6 +35,7 @@ const appContext = {
   esc: value => String(value ?? ''),
   svgIcon: () => '<svg></svg>',
   modalFrame: (title, subtitle, body, footer) => `<dialog>${title}${subtitle}${body}${footer}</dialog>`,
+  researchBriefCard: () => '<div class="research-card"></div>',
 };
 vm.runInNewContext(`${appEmailFunction}\n${appHelperFunction}\n${appOutreachModal}\nglobalThis.test = { makeEmailDraft, emailBodyForAttachmentMode, outreachModal };`, appContext);
 
@@ -67,6 +68,7 @@ const serverEmailHelpers = sliceFunction(serverSource, 'function cleanApprovedEm
 const serverEmlBuilder = sliceFunction(serverSource, 'function buildEmailEml(lead, draft, followUp, pixelUrl = \'\', pdfBuffer = null) {', '\nfunction sendPdf');
 const serverContext = {
   INTRO_MEETING_MINUTES: meetingMinutes,
+  researchAlignmentSentence: () => '',
   Buffer,
   crypto,
   safeFilename: name => String(name || '').replace(/[^a-zA-Z0-9_.-]/g, '-'),

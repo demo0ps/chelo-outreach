@@ -529,3 +529,36 @@ textarea.form-control { resize: vertical; min-height: 77px; line-height: 1.5; }
 .check-row.full { grid-column: 1 / -1; }
 .briefing-details a { color: #5945e8; font-weight: 650; }
 @media (max-width: 900px) { .radar-grid, .policy-toggle { grid-template-columns: 1fr; } .project-grid { grid-template-columns: 1fr; } }
+
+/* ---- Research copilot: web research + funder brief review ---- */
+.copilot-tabs { display: flex; gap: 6px; margin-bottom: 14px; padding: 4px; background: #f1efff; border-radius: 12px; }
+.copilot-tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 0; border-radius: 9px; background: transparent; color: #5b5680; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.copilot-tab.is-active { background: #fff; color: #2f2768; box-shadow: 0 4px 14px rgba(74, 58, 173, 0.12); }
+.copilot-tab .icon-svg { width: 15px; height: 15px; }
+.research-card { margin: 12px 0 16px; border: 1px solid #e3dff5; border-radius: 16px; background: linear-gradient(180deg, #fbfaff, #f5f3ff); padding: 14px 16px; }
+.research-card-head { display: flex; gap: 12px; align-items: flex-start; }
+.research-card-head > div { display: flex; flex-direction: column; gap: 6px; }
+.research-card-head strong { color: #2f2768; font-size: 13.5px; }
+.research-card-head small { color: #6c6790; font-size: 12px; line-height: 1.5; }
+.research-card-head .stage-pill { align-self: flex-start; }
+.research-card-body { margin-top: 12px; }
+.research-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.research-approved { border-color: #c9c2f2; }
+.research-pending { border-color: #e9d9a8; background: linear-gradient(180deg, #fffdf6, #fff8e6); }
+.research-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid #ece9f8; }
+.research-group h4 { margin: 0 0 8px; font-size: 13px; color: #2f2768; display: flex; align-items: center; gap: 8px; }
+.research-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 10px; cursor: pointer; }
+.research-item:hover { background: #f6f4ff; }
+.research-item input { margin-top: 4px; flex-shrink: 0; accent-color: #5945e8; }
+.research-item span { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: #3f3a63; line-height: 1.5; }
+.research-item strong { color: #2a2454; font-weight: 600; }
+.research-item em { color: #6c6790; font-style: normal; font-size: 12px; }
+.research-item small { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #7a7599; font-size: 11.5px; }
+.research-kind { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #ece9ff; color: #4a3aad; font-size: 11px; font-weight: 600; }
+.research-confidence { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: capitalize; }
+.conf-high { background: #e4f1ff; color: #1f5fa8; }
+.conf-medium { background: #fff1d6; color: #8a5a00; }
+.conf-low { background: #f3f0f8; color: #6b6590; }
+.research-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #3f3a63; line-height: 1.6; }
+.research-list.compact li { margin-bottom: 4px; }
+.note-callout.warn { background: #fff8e6; border-color: #f0dca8; }
