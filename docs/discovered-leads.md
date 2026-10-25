@@ -50,3 +50,10 @@ Endpoints: `POST /api/leads/catalogue/mailboxes {limit≤40}` (bulk, 4 concurren
 UI: Discover panel → **Find mailboxes (N)** with live progress and counts (found / none published / still to search); Workbench step 1 → **Find published mailbox** button and a candidate list with **Use this**.
 
 Limits: it only finds what organisations publish. Expect roughly a third to half of SA corporates to publish a generic CSI/foundation/info mailbox; the rest need the waterfall (public CSI lead name + title) and a staff-entered public address.
+
+## Pipeline rule (decided 2026-10-25): no email, no pipeline
+- Acceptable email = **published generic mailbox on the organisation's own domain**. No paid providers, no named personal addresses.
+- Catalogue organisations are imported with `hidden: 'awaiting-contact'` and are **excluded** from `/api/init`, `/api/leads`, `/api/workbench`, `/api/signals` and the grant-cycle list. `GET /api/leads?include=hidden` shows them.
+- The moment an email is set — by the finder, by **Use this**, or by staff editing the record — `revealLeadIfContactable()` removes the flag and the lead appears in the pipeline with fit/window already computed.
+- Discover panel shows *In pipeline (has email)* vs *Awaiting contact (hidden)*; the daily cron keeps searching 8 hidden organisations per run; `unreachable` sites retry after 24h, `none-published` is final until staff re-run.
+- Each Discover button now has its own progress label; the finder reports `found / checked (left)` per batch of 8 (6 concurrent) so it stays inside Vercel's 60 s limit.

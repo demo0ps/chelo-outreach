@@ -586,3 +586,4 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .cat-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}.cat-stats div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--z-200);border-radius:10px}.cat-stats small{font-size:11px;color:var(--z-500)}.cat-stats strong{font-size:16px}.cat-stats strong.ok{color:#15803d}.cat-stats strong.bad{color:#b91c1c}
 .cat-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.cat-chip{font-size:11.5px;padding:3px 9px;border-radius:999px;background:var(--z-100);color:var(--z-700)}.cat-chip b{color:var(--a-600)}
 .org-pill{font-size:10.5px;gap:4px;display:inline-flex;align-items:center}.org-pill .icon-svg{width:12px;height:12px}
+.cat-storage{margin-top:8px!important;display:flex;gap:6px;align-items:center}.cat-storage .icon-svg{width:14px;height:14px}

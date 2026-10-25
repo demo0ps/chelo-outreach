@@ -14,7 +14,7 @@ const state = {
   dlv: { data: null, loading: false, error: '', editing: null },
   dq: { data: null, loading: false, error: '', busy: false },
   rel: { summary: null, loading: false, error: '', busy: false, view: null, viewId: null, tab: 'timeline' },
-  cat: { status: null, loading: false, busy: false, progress: '' },
+  cat: { status: null, loading: false, busy: false, task: '', progress: '', storage: null },
   wb: { selectedId: null, sort: 'fit', filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
@@ -2605,22 +2605,22 @@ function orgPill(check) {
 async function loadCatalogue(force = false) {
   if (state.cat.loading || (state.cat.status && !force)) return;
   state.cat.loading = true;
-  try { state.cat.status = await API('/api/leads/catalogue'); } catch (err) { toast(err.message, true); } finally { state.cat.loading = false; renderApp(); }
+  try { const [status, storage] = await Promise.all([API('/api/leads/catalogue'), API('/api/storage').catch(() => null)]); state.cat.status = status; state.cat.storage = storage; } catch (err) { toast(err.message, true); } finally { state.cat.loading = false; renderApp(); }
 }
 function cataloguePanel() {
   const c = state.cat.status;
   if (!c) return `<section class="panel cat-panel"><p class="subtle">Loading the discovered-funders catalogue…</p></section>`;
   const pct = c.total ? Math.round((c.imported / c.total) * 100) : 0;
   const projects = Object.entries(c.byProject || {}).map(([name, n]) => `<span class="cat-chip">${esc(name)} <b>${n}</b></span>`).join('');
-  return `<section class="panel cat-panel"><div class="cat-head"><div><h3>${svgIcon('globe')}Discovered funders · SA CSI catalogue</h3><p class="subtle">${c.total} South African companies, corporate foundations, trusts and IPPs with active CSI / SED programmes — organisation-level only (no personal data), each mapped to one of your six verified projects with CSI focus, likely financial year-end and a suggested ask. On load, every organisation's domain is verified (MX/DNS) and duplicates against your existing records are linked, not copied. Then <b>Find mailboxes</b> crawls each organisation's own contact / CSI / foundation pages for its <i>published generic</i> mailbox (csi@, foundation@, info@…), verifies it and sets it on the record — personal addresses are never captured.</p></div>
-      <div class="cat-actions"><button type="button" class="button button-primary" data-action="cat-import" ${state.cat.busy || !c.remaining ? 'disabled' : ''}>${svgIcon('download')}${state.cat.busy ? (state.cat.progress || 'Loading…') : c.remaining ? `Load ${c.remaining} discovered funders` : 'All loaded'}</button>${c.mailboxes?.toSearch ? `<button type="button" class="button button-secondary" data-action="cat-mailboxes" ${state.cat.busy ? 'disabled' : ''}>${svgIcon('mail')}${state.cat.busy && state.cat.progress.startsWith('Mailbox') ? state.cat.progress : `Find mailboxes (${c.mailboxes.toSearch})`}</button>` : ''}${c.verification.pending ? `<button type="button" class="button button-secondary" data-action="cat-verify" ${state.cat.busy ? 'disabled' : ''}>${svgIcon('refresh')}Verify ${c.verification.pending} pending</button>` : ''}<button type="button" class="button button-ghost" data-view="workbench">${svgIcon('wand')}Open workbench</button></div></div>
+  return `<section class="panel cat-panel"><div class="cat-head"><div><h3>${svgIcon('globe')}Discovered funders · SA CSI catalogue</h3><p class="subtle">${c.total} South African companies, corporate foundations, trusts and IPPs with active CSI / SED programmes — organisation-level only (no personal data), each mapped to one of your six verified projects with CSI focus, likely financial year-end and a suggested ask. On load, every organisation's domain is verified (MX/DNS) and duplicates against your existing records are linked, not copied. Then <b>Find mailboxes</b> crawls each organisation's own contact / CSI / foundation pages for its <i>published generic</i> mailbox (csi@, foundation@, info@…), verifies it and sets it on the record — personal addresses are never captured. <b>Only organisations with an email enter the pipeline</b>; the rest wait in a hidden "awaiting contact" bucket that the weekly cron keeps working through.</p>${state.cat.storage ? `<p class="subtle cat-storage">${state.cat.storage.durable ? `${svgIcon('shield')} Durable storage on: synced to Supabase (v${state.cat.storage.sync?.version || 0}${state.cat.storage.sync?.lastPushAt ? `, last push ${relDate(state.cat.storage.sync.lastPushAt)}` : ''}).` : state.cat.storage.ephemeralHost ? `${svgIcon('info')} <b>Demo host:</b> this Vercel instance has no durable storage — loaded funders and found mailboxes vanish on restart. Set SUPABASE_URL + SUPABASE_SERVICE_KEY to keep them.` : `${svgIcon('shield')} Local SQLite storage.`}</p>` : ''}</div>
+      <div class="cat-actions"><button type="button" class="button button-primary" data-action="cat-import" ${state.cat.busy || !c.remaining ? 'disabled' : ''}>${svgIcon('download')}${state.cat.task === 'import' ? (state.cat.progress || 'Loading…') : c.remaining ? `Load ${c.remaining} discovered funders` : 'All loaded'}</button>${c.mailboxes?.toSearch ? `<button type="button" class="button button-secondary" data-action="cat-mailboxes" ${state.cat.busy ? 'disabled' : ''}>${svgIcon('mail')}${state.cat.task === 'mailboxes' ? state.cat.progress : `Find mailboxes (${c.mailboxes.toSearch})`}</button>` : ''}${c.verification.pending ? `<button type="button" class="button button-secondary" data-action="cat-verify" ${state.cat.busy ? 'disabled' : ''}>${svgIcon('refresh')}Verify ${c.verification.pending} pending</button>` : ''}<button type="button" class="button button-ghost" data-view="workbench">${svgIcon('wand')}Open workbench</button></div></div>
     <div class="cat-progress"><span style="width:${pct}%"></span></div>
-    <div class="cat-stats"><div><small>In pipeline</small><strong>${c.imported} / ${c.total}</strong></div><div><small>Organisation verified</small><strong class="ok">${c.verification.verified}</strong></div><div><small>Domain dead / unreachable</small><strong class="${c.verification.failed ? 'bad' : ''}">${c.verification.failed}</strong></div><div><small>Check pending</small><strong>${c.verification.pending}</strong></div><div><small>Mailbox found</small><strong class="ok">${c.mailboxes?.found || 0}</strong></div><div><small>No mailbox published</small><strong>${c.mailboxes?.nonePublished || 0}</strong></div><div><small>Still to search</small><strong>${c.mailboxes?.toSearch || 0}</strong></div></div>
+    <div class="cat-stats"><div><small>Loaded</small><strong>${c.imported} / ${c.total}</strong></div><div><small>In pipeline (has email)</small><strong class="ok">${c.visible || 0}</strong></div><div><small>Awaiting contact (hidden)</small><strong>${c.awaitingContact || 0}</strong></div><div><small>Organisation verified</small><strong class="ok">${c.verification.verified}</strong></div><div><small>Domain dead / unreachable</small><strong class="${c.verification.failed ? 'bad' : ''}">${c.verification.failed}</strong></div><div><small>Check pending</small><strong>${c.verification.pending}</strong></div><div><small>Mailbox found</small><strong class="ok">${c.mailboxes?.found || 0}</strong></div><div><small>No mailbox published</small><strong>${c.mailboxes?.nonePublished || 0}</strong></div><div><small>Still to search</small><strong>${c.mailboxes?.toSearch || 0}</strong></div></div>
     <div class="cat-chips">${projects}</div></section>`;
 }
 async function catAction(action) {
   if (action === 'cat-import') {
-    state.cat.busy = true; let created = 0, skipped = 0, verified = 0;
+    state.cat.busy = true; state.cat.task = 'import'; let created = 0, skipped = 0, verified = 0;
     try {
       for (let i = 0; i < 12; i++) {
         state.cat.progress = `Loading… ${created} added`; renderApp();
@@ -2630,27 +2630,27 @@ async function catAction(action) {
       }
       toast(`${created} discovered funders loaded · ${verified} organisations verified${skipped ? ` · ${skipped} linked to existing records` : ''}.`);
     } catch (err) { toast(err.message, true); }
-    finally { state.cat.busy = false; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
+    finally { state.cat.busy = false; state.cat.task = ''; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
     return true;
   }
   if (action === 'cat-mailboxes') {
-    state.cat.busy = true; let searched = 0, found = 0;
+    state.cat.busy = true; state.cat.task = 'mailboxes'; let searched = 0, found = 0;
     try {
       for (let i = 0; i < 40; i++) {
-        state.cat.progress = `Mailboxes… ${found} found / ${searched} checked`; renderApp();
-        const r = await API('/api/leads/catalogue/mailboxes', { method: 'POST', body: JSON.stringify({ limit: 10 }) });
-        searched += r.searched; found += (r.results.published || 0) + (r.results['pattern-verified'] || 0); state.cat.status = r.status;
+        state.cat.progress = `Checking sites… ${found} found / ${searched} checked (${state.cat.status?.mailboxes?.toSearch ?? '?'} left)`; renderApp();
+        const r = await API('/api/leads/catalogue/mailboxes', { method: 'POST', body: JSON.stringify({ limit: 8 }) });
+        searched += r.searched; found += r.found || 0; state.cat.status = r.status;
         if (!r.searched || !r.status.mailboxes.toSearch) break;
       }
-      toast(`Mailbox finder: ${found} generic mailboxes found across ${searched} organisations.`);
+      toast(`Mailbox finder: ${found} generic mailboxes found across ${searched} organisations — ${found} lead(s) now in the pipeline.`);
     } catch (err) { toast(err.message, true); }
-    finally { state.cat.busy = false; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
+    finally { state.cat.busy = false; state.cat.task = ''; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
     return true;
   }
   if (action === 'cat-verify') {
-    state.cat.busy = true; state.cat.progress = 'Verifying…'; renderApp();
+    state.cat.busy = true; state.cat.task = 'verify'; state.cat.progress = 'Verifying…'; renderApp();
     try { const r = await API('/api/leads/catalogue/verify', { method: 'POST', body: JSON.stringify({ limit: 80 }) }); state.cat.status = r.status; toast(`Checked ${r.checked} organisations: ${r.results.verified || 0} verified, ${r.results.invalid || 0} dead, ${r.results.retry || 0} to retry.`); }
-    catch (err) { toast(err.message, true); } finally { state.cat.busy = false; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
+    catch (err) { toast(err.message, true); } finally { state.cat.busy = false; state.cat.task = ''; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
     return true;
   }
   return false;

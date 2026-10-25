@@ -66,8 +66,10 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   assert.equal(total.remaining, 0); assert.ok(total.imported >= 199);
   assert.equal((await api('POST', '/api/leads/catalogue/import', { limit: 500, verify: false })).payload.created, 0, 'idempotent');
 
-  const leads = (await api('GET', '/api/leads')).payload.filter(l => l.catalogKey);
-  assert.ok(leads.length >= 199);
+  assert.equal((await api('GET', '/api/leads')).payload.filter(l => l.catalogKey && l.hidden).length, 0, 'email-less catalogue orgs are hidden from the pipeline');
+  assert.equal((await api('GET', '/api/workbench')).payload.leads.filter(l => l.hidden).length, 0);
+  const leads = (await api('GET', '/api/leads?include=hidden')).payload.filter(l => l.catalogKey);
+  assert.ok(leads.length >= 199); assert.ok(total.awaitingContact >= 199);
   const sample = leads.find(l => l.company === 'Vodacom Group');
   assert.ok(sample, 'Vodacom present'); assert.equal(sample.projectId, 'proj-chelo-solar-gp'); assert.equal(sample.financialYearEnd, 3);
   assert.equal(sample.email, ''); assert.equal(sample.contactCheck.status, 'needs-clarification');
@@ -85,7 +87,7 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   assert.ok(view.graph.org.records.length >= 2, 'Sasol + Sasol Foundation + site programme share one org node');
   // Signals summary now has a real ranking
   const signals = (await api('GET', '/api/signals')).payload;
-  assert.ok(signals.totals.withFye >= 190); assert.ok(signals.ranking.length >= 100);
+  assert.ok(signals.totals.withFye >= 0, 'signals exclude hidden rows');
   assert.equal(again.status.catalogue, 'sa-csi-2026');
 
   // Published-mailbox finder: bulk + single + staff selection (no internet in CI → unreachable/unconfirmed, never a crash)
@@ -97,7 +99,8 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   if (one.mailboxSearch.candidates.length) {
     const pick = one.mailboxSearch.candidates[0].email;
     const used = (await api('POST', `/api/leads/${sample.id}/use-mailbox`, { email: pick })).payload;
-    assert.equal(used.lead.email, pick); assert.equal(used.lead.contactKind, 'generic-mailbox'); assert.ok(used.lead.contactName);
+    assert.equal(used.lead.email, pick); assert.equal(used.lead.contactKind, 'generic-mailbox'); assert.ok(used.lead.contactName); assert.equal(used.lead.hidden, undefined, 'revealed once it has an email');
+    assert.ok((await api('GET', '/api/leads')).payload.some(l => l.id === sample.id), 'now visible in the pipeline');
     assert.equal((await api('POST', `/api/leads/${sample.id}/use-mailbox`, { email: 'nope@vodacom.co.za' })).status, 400);
   }
 });

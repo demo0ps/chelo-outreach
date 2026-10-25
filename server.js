@@ -140,13 +140,15 @@ function saveDbDeferred() {
   savePending = true;
   saveTimer = setTimeout(() => { try { flushDb(); } catch (err) { console.error('Deferred persist failed:', err.message); } }, 400);
 }
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    try { if (savePending) flushDb(); } catch {}
-    try { store.close(); } catch {}
-    process.exit(0);
-  });
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return; shuttingDown = true;
+  try { if (savePending) flushDb(); } catch {}
+  try { if (module.exports.remoteSync) await Promise.race([module.exports.remoteSync.push(), new Promise(r => setTimeout(r, 8000))]); } catch {}
+  try { store.close(); } catch {}
+  process.exit(0);
 }
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { shutdown(); });
 function id(prefix) { return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`; }
 function addActivity(text, type = 'update', actor = 'staff') {
   db.activities.unshift({ id: id('activity'), text, type, createdAt: new Date().toISOString() });
@@ -1223,7 +1225,7 @@ function leadFit(lead, now = new Date()) {
 }
 function signalsSummary() {
   const now = new Date();
-  const rows = db.leads.filter(l => !l.doNotContact && l.stage !== 'Won').map(l => { const fit = leadFit(l, now); return { id: l.id, company: l.company, contactName: l.contactName, project: l.project || '', stage: l.stage, financialYearEnd: l.financialYearEnd || null, fyeSource: l.fyeSource || '', fit: fit.score, band: fit.band, window: fit.window, weakest: fit.weakest }; });
+  const rows = visibleLeads().filter(l => !l.doNotContact && l.stage !== 'Won').map(l => { const fit = leadFit(l, now); return { id: l.id, company: l.company, contactName: l.contactName, project: l.project || '', stage: l.stage, financialYearEnd: l.financialYearEnd || null, fyeSource: l.fyeSource || '', fit: fit.score, band: fit.band, window: fit.window, weakest: fit.weakest }; });
   const known = rows.filter(r => r.window?.known);
   const phases = known.reduce((acc, r) => { acc[r.window.phase] = (acc[r.window.phase] || 0) + 1; return acc; }, {});
   return {
@@ -1303,6 +1305,8 @@ function relationshipsSummary(now = new Date()) {
 }
 
 // ---- Discovered leads catalogue (curated SA CSI funders) + bulk organisation verification ----
+function visibleLeads() { return db.leads.filter(l => !l.hidden); }
+function revealLeadIfContactable(lead) { if (lead.hidden === 'awaiting-contact' && normalizeEmail(lead.email)) { delete lead.hidden; lead.revealedAt = new Date().toISOString(); return true; } return false; }
 function catalogueStatus() {
   const rows = discoveredCatalogue.discoveredLeads();
   const have = new Set([...db.leads, ...db.candidates, ...db.partners].map(l => l.catalogKey).filter(Boolean));
@@ -1312,7 +1316,8 @@ function catalogueStatus() {
   const pending = imported.filter(l => !l.orgCheck || l.orgCheck.status === 'retry').length;
   const byProject = rows.reduce((acc, r) => { acc[r.project] = (acc[r.project] || 0) + 1; return acc; }, {});
   const mailboxes = { found: imported.filter(l => normalizeEmail(l.email)).length, searched: imported.filter(l => l.mailboxSearch).length, nonePublished: imported.filter(l => l.mailboxSearch && !normalizeEmail(l.email)).length, toSearch: imported.filter(l => mailboxSearchDue(l)).length };
-  return { catalogue: 'sa-csi-2026', total: rows.length, imported: imported.length, mailboxes, remaining: rows.filter(r => !have.has(r.catalogKey)).length, verification: { verified, failed, pending }, byProject, contactsNeeded: imported.filter(l => !normalizeEmail(l.email)).length };
+  const awaiting = imported.filter(l => l.hidden === 'awaiting-contact').length;
+  return { catalogue: 'sa-csi-2026', total: rows.length, imported: imported.length, visible: imported.length - awaiting, awaitingContact: awaiting, mailboxes, remaining: rows.filter(r => !have.has(r.catalogKey)).length, verification: { verified, failed, pending }, byProject, contactsNeeded: imported.filter(l => !normalizeEmail(l.email)).length };
 }
 async function verifyOrganisation(lead) {
   const domain = relationships.registrableDomain(lead.website) || relationships.registrableDomain(lead.sourceUrl);
@@ -1348,6 +1353,7 @@ async function importDiscoveredLeads({ limit = 60, verify = true, actor = 'staff
     lead.catalogKey = row.catalogKey; lead.catalogue = row.catalogue; lead.catalogueTier = row.tier; lead.website = row.website; lead.footprint = row.footprint;
     lead.fyeSource = row.financialYearEnd ? 'research' : null; lead.fyeEvidence = row.financialYearEnd ? { text: 'catalogue (typical reporting year-end) — confirm', sourceTitle: 'SA CSI funder catalogue' } : null;
     lead.discovered = { source: 'catalogue', batch: row.catalogue, importedAt: checkedAt, importedBy: actor };
+    lead.hidden = 'awaiting-contact'; // only email-bearing leads enter the pipeline; the finder/cron reveals them
     db.leads.push(lead); created.push(lead);
   }
   let verification = null;
@@ -1389,6 +1395,7 @@ async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true } = {
     lead.contactLastVerifiedAt = result.ranAt.slice(0, 10);
     if (!lead.sourceName) lead.sourceName = 'Organisation website';
     lead.contactCheck = await inspectContactRecord(lead);
+    revealLeadIfContactable(lead);
     lead.updatedAt = new Date().toISOString();
     configStore.recordAudit({ actor, action: 'lead.mailbox_found', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${chosen.pattern ? 'pattern-verified' : 'published'} mailbox ${maskEmail(chosen.email)} (${chosen.kind}; ${chosen.verification.status})` });
   }
@@ -1396,10 +1403,11 @@ async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true } = {
 }
 async function findCatalogueMailboxes({ limit = 12, actor = 'staff' } = {}) {
   const due = db.leads.filter(l => l.catalogKey && mailboxSearchDue(l)).slice(0, Math.max(1, Math.min(40, limit)));
-  const outcomes = await mapWithConcurrency(due, 4, async lead => { try { const r = await findLeadMailbox(lead, actor); return r.status; } catch (err) { lead.mailboxSearch = { ranAt: new Date().toISOString(), status: 'unreachable', error: String(err.message || err).slice(0, 200), candidates: [], pages: [] }; return 'unreachable'; } });
+  const outcomes = await mapWithConcurrency(due, 6, async lead => { try { const r = await findLeadMailbox(lead, actor); return r.status; } catch (err) { lead.mailboxSearch = { ranAt: new Date().toISOString(), status: 'unreachable', error: String(err.message || err).slice(0, 200), candidates: [], pages: [] }; return 'unreachable'; } });
   const results = outcomes.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {});
-  if (due.length) { addActivity(`Mailbox finder checked ${due.length} discovered funders · ${(results.published || 0) + (results['pattern-verified'] || 0)} mailboxes found`, 'lead', actor); saveDb(); }
-  return { searched: due.length, results, status: catalogueStatus() };
+  const found = (results.published || 0) + (results['pattern-verified'] || 0);
+  if (due.length) { addActivity(`Mailbox finder checked ${due.length} discovered funders · ${found} published mailboxes found · ${found} lead(s) revealed in the pipeline`, 'lead', actor); saveDb(); }
+  return { searched: due.length, found, results, status: catalogueStatus() };
 }
 function sendJson(res, status, payload, extraHeaders = {}) {
   const data = JSON.stringify(payload);
@@ -1917,7 +1925,7 @@ async function handleApi(req, res, url) {
     }
     if (method === 'GET' && pathname === '/api/radar') {
       const now = new Date();
-      const items = [...db.leads.map(l => ({ kind: 'prospect', id: l.id, company: l.company, owner: l.owner, stage: l.stage, project: l.project, amount: l.amount, cycle: popia.computeGrantCycleStatus(l, now) })), ...db.candidates.filter(c => !c.promotedLeadId).map(c => ({ kind: 'candidate', id: c.id, company: c.company, owner: c.owner, stage: c.status, project: c.project, amount: c.amount, cycle: popia.computeGrantCycleStatus(c, now) }))]
+      const items = [...visibleLeads().map(l => ({ kind: 'prospect', id: l.id, company: l.company, owner: l.owner, stage: l.stage, project: l.project, amount: l.amount, cycle: popia.computeGrantCycleStatus(l, now) })), ...db.candidates.filter(c => !c.promotedLeadId).map(c => ({ kind: 'candidate', id: c.id, company: c.company, owner: c.owner, stage: c.status, project: c.project, amount: c.amount, cycle: popia.computeGrantCycleStatus(c, now) }))]
         .filter(item => item.cycle.code !== 'none');
       const order = { 'closing-soon': 0, open: 1, upcoming: 2, scheduled: 3, passed: 4 };
       items.sort((a, b) => (order[a.cycle.code] ?? 9) - (order[b.cycle.code] ?? 9));
@@ -1936,7 +1944,7 @@ async function handleApi(req, res, url) {
 
     if (method === 'GET' && pathname === '/api/init') {
       const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
-      const leads = db.leads.map(clientLead);
+      const leads = visibleLeads().map(clientLead);
       const settings = configStore.publicSettings();
       return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
@@ -2043,6 +2051,7 @@ async function handleApi(req, res, url) {
     // ---- Batch 5: relationships + stewardship ----
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
     if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
+    if (method === 'GET' && pathname === '/api/storage') return sendJson(res, 200, { durable: Boolean(module.exports.remoteSync), dataDir: DATA_DIR, ephemeralHost: Boolean(process.env.VERCEL), sync: module.exports.remoteSync ? module.exports.remoteSync.status() : null });
     if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/mailboxes') { const body = await readBody(req); return sendJson(res, 200, await findCatalogueMailboxes({ limit: Number(body.limit) || 12, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/verify') { const body = await readBody(req); return sendJson(res, 200, await reverifyOrganisations({ limit: Number(body.limit) || 60, actor: actorName() })); }
@@ -2137,7 +2146,7 @@ async function handleApi(req, res, url) {
     if (method === 'POST' && pathname === '/api/data/check-duplicates') { const body = await readBody(req); return sendJson(res, 200, checkDuplicates({ company: body.company, email: normalizeEmail(body.email), website: body.website }, { excludeId: body.excludeId || null })); }
     if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(), categories: triage.CATEGORIES });
     if (method === 'GET' && pathname === '/api/workbench') {
-      const leads = db.leads.map(workbenchLead);
+      const leads = visibleLeads().map(workbenchLead);
       const counts = leads.reduce((acc, l) => { acc[l.flowStatus] = (acc[l.flowStatus] || 0) + 1; return acc; }, {});
       return sendJson(res, 200, { leads, counts, running: [...flowRuns.keys()], smtpProbe: !SMTP_PROBE_DISABLED, searchConfigured: configStore.publicSettings().searchConfigured });
     }
@@ -2149,7 +2158,7 @@ async function handleApi(req, res, url) {
       await Promise.all(pending.map(l => runLeadFlow(l, { actor: actorName(), origin })));
       return sendJson(res, 200, { ok: true, ran: pending.map(l => l.id), remaining: db.leads.filter(l => !l.flow && !l.doNotContact && l.emailStatus !== 'Sent').length });
     }
-    if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, db.leads.map(clientLead));
+    if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, (url.searchParams.get('include') === 'hidden' ? db.leads : visibleLeads()).map(clientLead));
     if (method === 'GET' && pathname === '/api/candidates') return sendJson(res, 200, db.candidates);
     if (method === 'GET' && pathname === '/api/partners') return sendJson(res, 200, db.partners);
     if (method === 'GET' && pathname === '/api/bookings') return sendJson(res, 200, db.bookings);
@@ -2604,6 +2613,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'PATCH' && !action) {
         const body = await readBody(req);
+        if (body.email !== undefined) setImmediate(() => { try { revealLeadIfContactable(lead); saveDbDeferred(); } catch {} });
         if (lead.doNotContact && body.doNotContact === false) return sendJson(res, 409, { error: 'The do-not-contact suppression is retained to prevent re-import or accidental outreach.' });
         const draftFields = ['emailDraft', 'followUpDraft', 'emailStatus', 'followUpEmailStatus'].some(key => body[key] !== undefined);
         if (draftFields) {
@@ -2866,7 +2876,7 @@ async function handleApi(req, res, url) {
         if (isSuppressedEmail(email)) return sendJson(res, 409, { error: 'That address is on the suppression list.' });
         lead.email = email; lead.contactKind = 'generic-mailbox'; if (!lead.contactName) lead.contactName = 'CSI / Social Investment team'; if (!lead.title) lead.title = 'Generic organisation mailbox';
         lead.contactSource = { kind: cand.pattern ? 'pattern-mailbox (staff-selected)' : 'published-mailbox (staff-selected)', sourceUrl: cand.sources?.[0] || '', verification: cand.verification, at: new Date().toISOString() };
-        lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10); lead.contactCheck = await inspectContactRecord(lead); lead.updatedAt = new Date().toISOString();
+        lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10); lead.contactCheck = await inspectContactRecord(lead); revealLeadIfContactable(lead); lead.updatedAt = new Date().toISOString();
         configStore.recordAudit({ actor: actorName(), action: 'lead.mailbox_selected', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: staff selected ${maskEmail(email)}` });
         saveDb(); return sendJson(res, 200, { ok: true, lead: workbenchLead(lead) });
       }
@@ -3135,11 +3145,16 @@ if (!SERVERLESS && process.env.NODE_ENV !== 'test') {
 }
 const server = http.createServer(requestHandler);
 
-if (require.main === module) {
+function listen() {
   server.listen(PORT, HOST, () => {
     console.log(`Chelo Partnerships Workspace running at http://${HOST}:${PORT}`);
     console.log(`Data directory: ${DATA_DIR} (SQLite WAL: ${path.basename(store.sqlitePath)}). Demo prospects are fictional; verified projects are Chelo seed records.`);
   });
 }
 
-module.exports = { server, requestHandler, flushPendingWrites: () => { if (savePending) flushDb(); } };
+// Durable sync (Supabase Storage) — optional; wired by api/index.js (serverless) and start.js (long-running).
+const remoteSyncLib = require('./lib/remote-sync');
+const remoteSync = remoteSyncLib.fromEnv(DATA_DIR);
+if (remoteSync) remoteSync.setBeforeSnapshot(() => { if (savePending) flushDb(); try { store.conn.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} });
+if (require.main === module || process.env.CHELO_AUTO_LISTEN === 'true') listen();
+module.exports = { server, requestHandler, remoteSync, DATA_DIR, listen, flushPendingWrites: () => { if (savePending) flushDb(); } };

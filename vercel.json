@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron/data-tick",
-      "schedule": "30 4 * * 1"
+      "schedule": "30 4 * * *"
     }
   ]
 }
