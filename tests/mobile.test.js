@@ -45,6 +45,8 @@ const click = (t, action, data = {}) => t.dispatchAction({ dataset: { action, ..
 test('mobile: phone mode renders Inbox with replies, failed sends and briefing requests; desktop chrome absent', async () => {
   const { t, html } = boot(); fixtures(t);
   t.renderApp();
+  assert.match(html.app, /<h1>Approvals<\/h1>/, 'lands on Approvals');
+  await click(t, 'm-tab', { tab: 'inbox' });
   assert.match(html.app, /class="m-shell"/); assert.match(html.app, /class="m-tabs"/);
   assert.doesNotMatch(html.app, /class="sidebar"|class="app-shell"|data-view="ops"|Deliverability|Data quality/);
   assert.match(html.app, /Umoya Holdings/); assert.match(html.app, /Suggested: Wrong person/); assert.match(html.app, /overdue/);
@@ -83,7 +85,10 @@ test('mobile: Leads search + detail facts; More → notifications and relationsh
   assert.match(html.app, /Briefing requested/); assert.match(html.app, /data-action="confirm-booking" data-id="bk1"/);
   assert.match(html.app, /<dt>Fit<\/dt><dd>78 · budgeting/);
   await click(t, 'm-tab', { tab: 'more' });
-  assert.match(html.app, /Notifications/); assert.match(html.app, /Relationships/); assert.match(html.app, /data-action="logout"/); assert.match(html.app, /Reviewer · strict 4-eyes/);
+  assert.match(html.app, /Notifications/); assert.match(html.app, /Relationships/); assert.match(html.app, /data-action="logout"/); assert.match(html.app, /Build .* · phone layout/);
+  await click(t, 'm-section', { section: 'overview' });
+  assert.match(html.app, /<h1>Overview<\/h1>/); assert.match(html.app, /Open prospects/); assert.match(html.app, /Pipeline pulse/); assert.match(html.app, /Sequences running/);
+  await click(t, 'm-back'); assert.match(html.app, /Reviewer · strict 4-eyes/);
   assert.match(html.app, /desktop-only/);
   await click(t, 'm-section', { section: 'notifications' });
   assert.match(html.app, /past the response SLA/); assert.match(html.app, /countersignature/); assert.match(html.app, /circuit breaker/); assert.match(html.app, /stewardship touch/);
