@@ -15,6 +15,9 @@ function fakeStorage() {
       const body = Buffer.concat(chunks);
       if (req.headers.authorization !== 'Bearer service-key') { res.writeHead(401); return res.end('{"error":"unauthorised"}'); }
       if (req.method === 'POST' && req.url === '/storage/v1/bucket') { res.writeHead(objects.has('__bucket') ? 409 : 200); objects.set('__bucket', 1); return res.end('{}'); }
+      const list = req.url.match(/^\/storage\/v1\/object\/list\/([^/]+)$/);
+      if (list && req.method === 'POST') { const { prefix } = JSON.parse(body.toString() || '{}'); const names = new Set(); for (const k of objects.keys()) if (k.startsWith(prefix)) names.add(k.slice(prefix.length).split('/')[0]); res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify([...names].map(name => ({ name })))); }
+      if (req.method === 'DELETE' && /^\/storage\/v1\/object\/[^/]+$/.test(req.url)) { const { prefixes } = JSON.parse(body.toString() || '{}'); for (const k of prefixes || []) objects.delete(k); res.writeHead(200); return res.end('[]'); }
       const m = req.url.match(/^\/storage\/v1\/object\/([^/]+)\/(.+)$/); if (!m) { res.writeHead(404); return res.end(); }
       const key = decodeURIComponent(m[2]);
       if (req.method === 'POST') { if (objects.has(key) && req.headers['x-upsert'] !== 'true') { res.writeHead(409); return res.end(); } objects.set(key, body); res.writeHead(200); return res.end('{"Key":"x"}'); }
@@ -109,4 +112,39 @@ test('push retries once when the first attempt times out on a stale socket', asy
   const sync = createRemoteSync({ url: 'https://x.supabase.co', serviceKey: 'k', dataDir: dir, fetchImpl });
   const r = await sync.push();
   assert.equal(r.pushed, 1); assert.equal(r.error, undefined); assert.ok(Object.keys(store).some(u => u.endsWith('manifest.json')));
+});
+
+test('history: first push of the day writes a dated copy; old days are pruned; key file stays out when env key is set', async t => {
+  const storage = fakeStorage(); const url = await storage.start(); t.after(() => storage.server.close());
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-h-'));
+  fs.writeFileSync(path.join(dir, 'chelo.sqlite'), 'db'); fs.writeFileSync(path.join(dir, '.settings-key'), 'k');
+  // seed a stale history day
+  storage.objects.set('workspace/history/2020-01-01/manifest.json', Buffer.from('{}')); storage.objects.set('workspace/history/2020-01-01/chelo.sqlite', Buffer.from('x'));
+  const prev = process.env.SETTINGS_ENCRYPTION_KEY; process.env.SETTINGS_ENCRYPTION_KEY = 'env-key';
+  try {
+    const sync = createRemoteSync({ url, serviceKey: 'service-key', dataDir: dir });
+    const r = await sync.push(); assert.equal(r.pushed, 1);
+    const today = new Date().toISOString().slice(0, 10);
+    assert.ok(storage.objects.has(`workspace/history/${today}/chelo.sqlite`)); assert.ok(storage.objects.has(`workspace/history/${today}/manifest.json`));
+    assert.ok(!storage.objects.has('workspace/history/2020-01-01/manifest.json'), 'stale day pruned');
+    assert.ok(!storage.objects.has('workspace/.settings-key'), 'key file not uploaded when env key set');
+    fs.writeFileSync(path.join(dir, 'chelo.sqlite'), 'db2'); await sync.push();
+    assert.equal(storage.objects.get(`workspace/history/${today}/chelo.sqlite`).toString(), 'db', 'history is once per day, not overwritten');
+    assert.equal(sync.status().lastHistoryDay, today);
+  } finally { if (prev === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY; else process.env.SETTINGS_ENCRYPTION_KEY = prev; }
+});
+
+test('security headers: CSP, nosniff, referrer, frame denial; HSTS only on https; cookie SameSite=Lax', async () => {
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-sec-')); process.env.NODE_ENV = 'test'; process.env.SMTP_PROBE_DISABLED = 'true';
+  const app = require('../server');
+  const srv = http.createServer(app.requestHandler); await new Promise(r => srv.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const res = await fetch(`${base}/api/auth/status`); const h = res.headers;
+    assert.match(h.get('content-security-policy'), /default-src 'self'/); assert.match(h.get('content-security-policy'), /frame-ancestors 'none'/);
+    assert.equal(h.get('x-content-type-options'), 'nosniff'); assert.equal(h.get('x-frame-options'), 'DENY'); assert.equal(h.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(h.get('strict-transport-security'), null);
+    const res2 = await fetch(`${base}/api/auth/status`, { headers: { 'x-forwarded-proto': 'https' } }); assert.match(res2.headers.get('strict-transport-security'), /max-age=31536000/);
+    const setup = await fetch(`${base}/api/auth/setup`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ username: 'sec@cheloapp.com', displayName: 'Sec', password: 'correct-horse-battery' }) });
+    assert.equal(setup.status, 201); assert.match(setup.headers.get('set-cookie'), /SameSite=Lax/); assert.doesNotMatch(setup.headers.get('set-cookie'), /SameSite=None/);
+  } finally { srv.close(); }
 });

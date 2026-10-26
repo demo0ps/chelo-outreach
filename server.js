@@ -1467,8 +1467,9 @@ function cookieHeader(req, token, maxAge) {
   const forwardedHttps = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
   const originHttps = /^https:\/\//i.test(String(req.headers.origin || req.headers.referer || ''));
   const secure = forwardedHttps || originHttps || Boolean(req.socket.encrypted);
-  // Live previews may be embedded cross-site. Partitioned cookies keep the session usable there while CSRF tokens protect mutations.
-  const sameSite = secure ? '; SameSite=None; Secure; Partitioned' : '; SameSite=Strict';
+  // Own domain: SameSite=Lax (top-level navigations keep the session; cross-site POSTs don't carry it). Embedded live previews
+  // (iframe) need SameSite=None + Partitioned; CSRF tokens still protect every mutation.
+  const sameSite = secure ? (EMBEDDED_PREVIEW ? '; SameSite=None; Secure; Partitioned' : '; SameSite=Lax; Secure') : '; SameSite=Lax';
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${maxAge}${sameSite}`;
 }
 function createSession(req, user, res, options = {}) {
@@ -3126,7 +3127,24 @@ function serveSharedProposal(res, token) {
   return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal.pdf`, 'inline');
 }
 
+// Browser hardening. EMBEDDED_PREVIEW=true relaxes framing + cookie SameSite for hosted live previews (iframe); never set it on your own domain.
+const EMBEDDED_PREVIEW = process.env.EMBEDDED_PREVIEW === 'true';
+const CSP = [
+  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
+  "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", EMBEDDED_PREVIEW ? 'frame-ancestors *' : "frame-ancestors 'none'",
+].join('; ');
+function applySecurityHeaders(req, res) {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Cross-Origin-Opener-Policy', EMBEDDED_PREVIEW ? 'unsafe-none' : 'same-origin');
+  if (!EMBEDDED_PREVIEW) res.setHeader('X-Frame-Options', 'DENY');
+  const https = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https' || Boolean(req.socket.encrypted);
+  if (https) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+}
 const requestHandler = async (req, res) => {
+  applySecurityHeaders(req, res);
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
   const trackedOpen = url.pathname.match(/^\/track\/open\/([a-f0-9]{48})\.gif$/);

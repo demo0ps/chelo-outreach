@@ -67,7 +67,7 @@ update statuses every turn. I present candidates with scores; **you choose** wha
 
 | # | Idea | Source | Status | I / A / E / S | Notes |
 |---|------|--------|--------|---------------|-------|
-| G1 | Hardening batch: CSP/HSTS/frame-ancestors headers; SameSite=Lax on own domain; stop uploading `.settings-key` (env authoritative); bucket snapshot history (7 daily) | security review 2026-10-25 | ready | 4/2/4/5 | Awaiting go. |
+| G1 | Hardening batch: CSP/HSTS/frame-ancestors headers; SameSite=Lax on own domain; stop uploading `.settings-key` (env authoritative); bucket snapshot history (7 daily) | security review 2026-10-25 | shipped | 4/2/4/5 | docs/hardening.md |
 | G2 | TOTP MFA for admins + "sign out everywhere" | security review | seed | 3/2/3/5 | |
 | G3 | API-wide rate limiting (not only login) | security review | seed | 2/2/4/5 | |
 | G4 | Privacy notice text covering cross-border hosting (s72 POPIA) | security review | seed | 3/1/5/5 | Document, not code. |
