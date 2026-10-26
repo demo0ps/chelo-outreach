@@ -7,7 +7,8 @@
   const mq = window.matchMedia(PHONE_QUERY);
   window.isPhone = () => mq.matches && !location.pathname.startsWith('/book/') && !location.pathname.startsWith('/p/') && !location.pathname.startsWith('/opt-out/');
   mq.addEventListener('change', () => { if (state.auth?.authenticated) renderApp(); });
-  state.m = { tab: 'inbox', leadId: null, q: '', partnerId: null, section: null };
+  const BUILD = (document.querySelector('script[src*="mobile.js"]')?.getAttribute('src') || '').split('v=')[1] || 'dev';
+  state.m = { tab: 'approvals', leadId: null, q: '', partnerId: null, section: null };
 
   const when = iso => { if (!iso) return ''; const d = new Date(iso); const days = Math.round((Date.now() - d) / 86400000); if (days === 0) return d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }); if (days === 1) return 'yesterday'; if (days < 7) return `${days}d ago`; return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }); };
   const leadsSorted = () => state.data.leads.slice().sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
@@ -110,7 +111,18 @@
   }
 
   // ---- More ------------------------------------------------------------------------------------
+  function overviewLite() {
+    const leads = state.data.leads; const active = getActiveLeads(); const partners = state.data.partners || [];
+    const requests = state.data.bookings.filter(b => b.status === 'Requested').length;
+    const cards = [['Open prospects', String(active.length), `${leads.length} total`, 'prospects'], ['Potential pipeline', money(getPipelineValue()), 'estimated ask value', 'trend'], ['Briefing requests', String(requests), requests ? 'awaiting confirmation' : 'none pending', 'calendar'], ['Active partners', String(partners.length), `${money(partners.reduce((n, p) => n + Number(p.amount || 0), 0))} won`, 'partners']];
+    const stages = [['Prospects', leads.filter(l => !['Won', 'Not proceeding'].includes(l.stage)).length], ['In conversation', leads.filter(l => ['Contacted', 'Interested'].includes(l.stage)).length], ['Proposals out', leads.filter(l => l.stage === 'Proposal sent').length], ['Briefings', state.data.bookings.filter(b => ['Requested', 'Confirmed'].includes(b.status)).length], ['Sequences running', leads.filter(l => l.sequence?.status === 'running').length], ['Won', leads.filter(l => l.stage === 'Won').length]];
+    const max = Math.max(1, ...stages.map(x => x[1]));
+    return `${header('Overview', { back: true, sub: 'Snapshot · full analytics on desktop' })}
+      <div class="m-kpis">${cards.map(([k, v, f, i]) => `<div class="m-kpi"><span class="m-kpi-icon">${svgIcon(i)}</span><span class="m-kpi-label">${esc(k)}</span><strong>${esc(v)}</strong><small>${esc(f)}</small></div>`).join('')}</div>
+      <section class="m-card"><h3>${svgIcon('pipeline')}Pipeline pulse</h3><ul class="m-bars">${stages.map(([k, v]) => `<li><span>${esc(k)}</span><i style="width:${Math.round(v / max * 100)}%"></i><strong>${v}</strong></li>`).join('')}</ul></section>`;
+  }
   function moreView() {
+    if (state.m.section === 'overview') return overviewLite();
     if (state.m.section === 'relationships') return relationshipsLite();
     if (state.m.section === 'notifications') return notificationsView();
     const n = notifications(); const danger = n.filter(x => x.tone === 'danger').length;
@@ -118,9 +130,10 @@
     return `${header('More')}<section class="m-list">
       ${row('notifications', 'bell', 'Notifications', n.length ? `${n.length} signal${n.length === 1 ? '' : 's'}` : 'All quiet', danger ? `<span class="m-badge is-inline">${danger}</span>` : '')}
       ${row('relationships', 'partners', 'Relationships', 'Won partners · last touch · next due')}
+      ${row('overview', 'overview', 'Overview', 'Prospects · pipeline · briefings · partners')}
     </section>
     <section class="m-card"><h3>${svgIcon('prospects')}${esc(state.auth.displayName || state.auth.username || '')}</h3><p class="subtle">${esc(roleLabel(state.auth.role))} · ${state.auth.approvalPolicy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}</p><div class="m-actions"><button type="button" class="button button-secondary" data-action="m-refresh">${svgIcon('refresh')}Refresh</button>${state.auth.openAccessDemo ? '' : `<button type="button" class="button button-ghost" data-action="logout">${svgIcon('logout')}Sign out</button>`}</div></section>
-    <p class="m-foot-note">Ops, deliverability, data quality, analytics, discovery and settings are desktop-only.</p>`;
+    <p class="m-foot-note">Ops, deliverability, data quality, analytics, discovery and settings are desktop-only.<br>Build ${esc(BUILD)} · phone layout</p>`;
   }
   function notificationsView() {
     const n = notifications();
@@ -162,6 +175,8 @@
     if (action === 'm-refresh') { await refresh(); toast('Refreshed.'); return true; }
     return false;
   };
+  // If app.js already painted the desktop shell before this file ran, repaint in phone mode.
+  if (state.auth?.authenticated && window.isPhone()) { try { renderApp(); } catch (e) { console.error('mobile repaint failed', e); } }
   document.addEventListener('input', event => {
     if (event.target && event.target.id === 'm-search' && window.isPhone()) { state.m.q = event.target.value; const pos = event.target.selectionStart; renderApp(); const el = $('#m-search'); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (e) { /* ignore */ } } }
   });
