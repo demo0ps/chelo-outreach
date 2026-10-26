@@ -112,6 +112,27 @@ test('root account: technical surface is root-only; root is immutable to other a
   assert.equal((await root('POST', '/api/auth/login', { username: 'founder@cheloapp.com', password: 'rotated-root-password-9' })).status, 200);
   assert.equal((await root('GET', '/api/auth/status')).payload.isRoot, true);
 
+  // Everything root touches reads "Chelo system" to others — except a 4-eyes countersignature
+  const lead = (await root('POST', '/api/leads', { company: 'Umoya Holdings', contactName: 'Sipho Dlamini', email: 'sipho@github.com', sector: 'Mining', projectId: 'proj-chelo-solar-gp', sourceName: 'Website', sourceUrl: 'https://github.com', owner: 'Founder (root)' })).payload;
+  await root('POST', `/api/leads/${lead.id}/flow`, {});
+  const firstByRoot = await root('POST', `/api/leads/${lead.id}/approve-email`, {});
+  assert.ok([200, 409].includes(firstByRoot.status), JSON.stringify(firstByRoot.payload));
+  const seen = (await other('GET', '/api/init')).payload;
+  const asOther = seen.leads.find(l => l.id === lead.id);
+  assert.equal(asOther.owner, 'Chelo system');
+  assert.ok(!JSON.stringify(seen).match(/founder/i), 'no trace of the root name/email anywhere in init for others');
+  // other admin countersigns (policy is four-eyes) → their own name is visible to root
+  const cs = await other('POST', `/api/leads/${lead.id}/approve-email`, { confirmSecond: true });
+  assert.equal(cs.status, 200, JSON.stringify(cs.payload));
+  // reverse: other approves first, root countersigns → root's signature stays visible as secondApprover
+  const lead2 = (await other('POST', '/api/leads', { company: 'Thembi Mining', contactName: 'Zanele', email: 'zanele@github.com', sector: 'Mining', projectId: 'proj-chelo-solar-gp', sourceName: 'Website', sourceUrl: 'https://github.com' })).payload;
+  await other('POST', `/api/leads/${lead2.id}/flow`, {});
+  assert.ok([200, 409].includes((await other('POST', `/api/leads/${lead2.id}/approve-email`, {})).status));
+  const cs2 = await root('POST', `/api/leads/${lead2.id}/approve-email`, { confirmSecond: true });
+  assert.equal(cs2.status, 200, JSON.stringify(cs2.payload));
+  const l2 = (await other('GET', '/api/init')).payload.leads.find(l => l.id === lead2.id);
+  assert.match(String(l2.emailApproval?.secondApprover || JSON.stringify(l2)), /Founder/, 'countersignature by root remains visible');
+
   // Other admins keep everyday admin powers: staff management of non-root accounts
   const owner = await other('POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Owner', role: 'owner', password: 'owner-password-strong-1' });
   assert.equal(owner.status, 201);

@@ -1462,7 +1462,24 @@ function opsSnapshot() {
     cron, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, aiConfigured: Boolean(settings.aiConfigured), recentFailures: failures
   }, now);
 }
+// Root invisibility: for non-root sessions every API payload has the root account's name/email replaced by "Chelo system".
+// Exception: a 4-eyes countersignature (secondApprover) always shows the real signer — two visible humans.
+const ROOT_MASK = 'Chelo system';
+function rootMasker() {
+  const root = configStore.getRootUser(); if (!root) return null;
+  const parts = [`${root.displayName} <${root.username}>`, root.username, root.displayName].filter(x => x && x.length >= 3);
+  const re = new RegExp(parts.map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  return value => String(value).replace(re, ROOT_MASK).replace(new RegExp(`${ROOT_MASK}( <${ROOT_MASK}>)+`, 'g'), ROOT_MASK);
+}
+function maskRootDeep(value, mask, key = '') {
+  if (key === 'secondApprover') return value;
+  if (typeof value === 'string') return mask(value);
+  if (Array.isArray(value)) return value.map(v => maskRootDeep(v, mask));
+  if (value && typeof value === 'object') { const out = {}; for (const [k, v] of Object.entries(value)) out[k] = maskRootDeep(v, mask, k); return out; }
+  return value;
+}
 function sendJson(res, status, payload, extraHeaders = {}) {
+  if (res.maskRoot && payload && typeof payload === 'object') { const mask = rootMasker(); if (mask) payload = maskRootDeep(payload, mask); }
   const data = JSON.stringify(payload);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(data), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
   res.end(data);
@@ -1914,6 +1931,7 @@ async function handleApi(req, res, url) {
       if (pathname.startsWith('/api/staff') && !roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
       // Root gate: the founding administrator alone sees the technical surface (engine, infra, integrations, raw exports).
       req.authSession.isRoot = isRootSession(req.authSession);
+      res.maskRoot = !req.authSession.isRoot;
       if (isTechnicalPath(pathname) && !req.authSession.isRoot) return sendJson(res, 403, { error: 'This area is reserved for the root account.' });
       if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract') {
         return sendJson(res, 403, { error: 'Reviewer accounts can approve or return drafts but cannot edit pipeline records.' });
