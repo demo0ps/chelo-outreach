@@ -1502,7 +1502,7 @@ function createSession(req, user, res, options = {}) {
   const account = typeof user === 'string' ? { username: user, displayName: user.split('@')[0], role: 'admin', id: '' } : user;
   store.putSession(token, { username: account.username, userId: account.id || '', displayName: account.displayName || account.username, role: account.role || 'admin', csrfToken, demoAccess, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
   res.setHeader('Set-Cookie', cookieHeader(req, token, Math.floor(SESSION_TTL_MS / 1000)));
-  return { authenticated: true, setupRequired: false, username: account.username, displayName: account.displayName || account.username, role: account.role || 'admin', userId: account.id || '', csrfToken, demoAccess, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy };
+  return { authenticated: true, setupRequired: false, isRoot: demoAccess || configStore.isRootUser(account.id || ''), username: account.username, displayName: account.displayName || account.username, role: account.role || 'admin', userId: account.id || '', csrfToken, demoAccess, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy };
 }
 function clientIp(req) {
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -1522,15 +1522,26 @@ function safeOriginRequest(req) {
     return parsed.host === requestHost;
   } catch { return false; }
 }
+function isRootSession(session) {
+  if (!session) return false;
+  if (session.demoAccess || DEMO_OPEN_ACCESS) return true;
+  return configStore.isRootUser(session.userId);
+}
+const TECHNICAL_PATHS = ['/api/ops', '/api/deliverability', '/api/data', '/api/storage', '/api/inbound/webhook-info', '/api/inbound/imap-sync', '/api/audit/export.csv', '/api/demo/clear'];
+function isTechnicalPath(pathname) {
+  if (pathname === '/api/data/check-duplicates') return false; // intake dedup runs for every staff member
+  if (pathname.startsWith('/api/settings/test-')) return true;
+  return TECHNICAL_PATHS.some(p => pathname === p || pathname.startsWith(`${p}/`));
+}
 function authStatus(req) {
   const approvalPolicy = configStore.getGovernanceConfig().approvalPolicy;
-  if (DEMO_OPEN_ACCESS) return { authenticated: true, setupRequired: false, username: 'demo@cheloapp.com', displayName: 'Demo Admin', role: 'admin', userId: 'demo', csrfToken: DEMO_OPEN_CSRF_TOKEN, demoAccess: true, openAccessDemo: true, demoAccessAvailable: false, approvalPolicy };
+  if (DEMO_OPEN_ACCESS) return { authenticated: true, setupRequired: false, username: 'demo@cheloapp.com', displayName: 'Demo Admin', role: 'admin', userId: 'demo', isRoot: true, csrfToken: DEMO_OPEN_CSRF_TOKEN, demoAccess: true, openAccessDemo: true, demoAccessAvailable: false, approvalPolicy };
   const session = sessionForRequest(req);
   if (!session) return { authenticated: false, setupRequired: !configStore.hasAdmin(), demoAccessAvailable: DEMO_ADMIN_ACCESS };
   if (session.expiresAt - Date.now() < SESSION_TTL_MS - 5 * 60 * 1000) {
     store.putSession(session.token, { ...session, expiresAt: Date.now() + SESSION_TTL_MS });
   }
-  return { authenticated: true, setupRequired: false, username: session.username, displayName: session.displayName, role: session.role, userId: session.userId, csrfToken: session.csrfToken, demoAccess: Boolean(session.demoAccess), demoAccessAvailable: DEMO_ADMIN_ACCESS, approvalPolicy };
+  return { authenticated: true, setupRequired: false, username: session.username, displayName: session.displayName, role: session.role, userId: session.userId, isRoot: isRootSession(session), csrfToken: session.csrfToken, demoAccess: Boolean(session.demoAccess), demoAccessAvailable: DEMO_ADMIN_ACCESS, approvalPolicy };
 }
 function smtpTransporter() {
   let smtp = configStore.getSmtpConfig();
@@ -1893,6 +1904,9 @@ async function handleApi(req, res, url) {
       const adminOnly = pathname.startsWith('/api/settings') || pathname.startsWith('/api/staff') || pathname === '/api/demo/clear' || pathname === '/api/inbound/imap-sync';
       if (adminOnly && !['GET'].includes(method) && !roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required for this action.' });
       if (pathname.startsWith('/api/staff') && !roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+      // Root gate: the founding administrator alone sees the technical surface (engine, infra, integrations, raw exports).
+      req.authSession.isRoot = isRootSession(req.authSession);
+      if (isTechnicalPath(pathname) && !req.authSession.isRoot) return sendJson(res, 403, { error: 'This area is reserved for the root account.' });
       if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract') {
         return sendJson(res, 403, { error: 'Reviewer accounts can approve or return drafts but cannot edit pipeline records.' });
       }
@@ -1950,7 +1964,7 @@ async function handleApi(req, res, url) {
     }
 
     // ---- Staff accounts & governance ----
-    if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: configStore.listUsers(), approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
+    if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: configStore.listUsers(), rootUserId: configStore.getRootUser()?.id || null, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
     if (method === 'POST' && pathname === '/api/staff') {
       const body = await readBody(req);
       const user = configStore.createUser({ username: body.username, displayName: body.displayName, role: body.role, password: body.password });
@@ -1960,7 +1974,7 @@ async function handleApi(req, res, url) {
     const staffRoute = pathname.match(/^\/api\/staff\/([^/]+)$/);
     if (staffRoute && method === 'PUT') {
       const body = await readBody(req);
-      const user = configStore.updateUser(staffRoute[1], body);
+      const user = configStore.updateUser(staffRoute[1], body, { actorId: req.authSession.userId });
       if (body.active === false || body.password) store.deleteSessionsForUser(user.username);
       configStore.recordAudit({ actor: actorName(), action: 'staff.updated', entityType: 'user', entityId: user.id, summary: `Staff account updated: ${user.displayName} (${user.role}${user.active ? '' : ', deactivated'})` });
       return sendJson(res, 200, user);
@@ -2001,7 +2015,7 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/init') {
       const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
       const leads = visibleLeads().map(clientLead);
-      const settings = configStore.publicSettings();
+      const settings = configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) });
       return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
@@ -2224,10 +2238,13 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/partners') return sendJson(res, 200, db.partners);
     if (method === 'GET' && pathname === '/api/bookings') return sendJson(res, 200, db.bookings);
 
-    if (method === 'GET' && pathname === '/api/settings') return sendJson(res, 200, configStore.publicSettings());
+    if (method === 'GET' && pathname === '/api/settings') return sendJson(res, 200, configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) }));
     if (method === 'PUT' && pathname === '/api/settings') {
-      const body = await readBody(req);
+      const rawBody = await readBody(req);
+      const body = req.authSession?.isRoot ? rawBody : configStore.governanceOnly(rawBody);
+      if (!req.authSession?.isRoot && Object.keys(body).length !== Object.keys(rawBody || {}).length) return sendJson(res, 403, { error: 'Integration settings can only be changed by the root account.' });
       const settings = configStore.saveSettings(body);
+      if (!req.authSession?.isRoot) { const scoped = configStore.publicSettings({ technical: false }); configStore.recordAudit({ actor: actorName(), action: 'settings.updated', entityType: 'settings', summary: `Governance settings updated: ${Object.keys(body).join(', ')}` }); return sendJson(res, 200, scoped); }
       configStore.recordAudit({ actor: actorName(), action: 'settings.updated', entityType: 'settings', summary: 'Workspace settings updated (AI, SMTP, tracking, governance, briefings or inbound); secret values omitted' });
       return sendJson(res, 200, settings);
     }

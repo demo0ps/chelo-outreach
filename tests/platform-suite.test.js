@@ -110,7 +110,7 @@ test('config store: multi-user auth, approval digests and hash-chained audit', (
   assert.equal(cs.hasAdmin(), true);
   assert.equal(cs.authenticateUser('review@cheloapp.com', 'another-long-password').role, 'reviewer');
   assert.equal(cs.authenticateUser('review@cheloapp.com', 'wrong-password-value'), null);
-  assert.throws(() => cs.updateUser(admin.id, { role: 'owner' }), /at least one active administrator/);
+  assert.throws(() => cs.updateUser(admin.id, { role: 'owner' }), /root account is always an administrator/);
   cs.updateUser(reviewer.id, { active: false });
   assert.equal(cs.authenticateUser('review@cheloapp.com', 'another-long-password'), null);
   const payload = { to: 'a@b.co', kind: 'initial', subject: 'S', body: 'B', attachProposal: false, pdfSha256: '', project: 'P', amount: 1 };
