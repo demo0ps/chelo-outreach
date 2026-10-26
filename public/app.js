@@ -1773,7 +1773,7 @@ function renderPublicPage() {
       ${m.project ? `<div class="pp-project"><span class="pp-badge">${svgIcon('shield')} ${esc(m.project.status || 'Verified')}${m.project.verifiedAt ? ` · ${esc(String(m.project.verifiedAt).slice(0, 10))}` : ''}</span><h2>${esc(m.project.name)}</h2><p>${esc(m.project.summary || '')}</p></div>` : ''}
       <div class="pp-receive"><h3>What ${esc(m.company)} receives</h3><ul>${m.receive.map(r => `<li>${svgIcon('check')}${esc(r)}</li>`).join('')}</ul></div>
       ${done ? `<div class="booking-success"><div class="success-check">${svgIcon('check')}</div><h2>Request received</h2><p>The Chelo team will confirm your slot by email with a calendar invite.</p></div>` : `<div class="pp-cta"><h3>Pick a 15-minute slot</h3><div class="pp-slots">${slots}</div>${state.pageError ? `<div class="form-error">${esc(state.pageError)}</div>` : ''}<a class="pp-alt" href="${esc(m.bookingPath)}">Prefer another time? Choose your own →</a></div>`}
-      <footer class="pp-foot"><span>Every rand traceable · cheloapp.com</span><a href="${esc(m.optOutPath)}">Stop further outreach</a></footer>
+      ${(m.trustedBy || []).length ? `<div class="pp-trust"><span>Trusted by</span>${m.trustedBy.map(t => `<strong>${esc(t)}</strong>`).join("")}</div>` : ""}<footer class="pp-foot"><span>Every rand traceable · cheloapp.com</span><a href="${esc(m.optOutPath)}">Stop further outreach</a></footer>
     </div></section></main>`;
 }
 async function initPublicPage() {

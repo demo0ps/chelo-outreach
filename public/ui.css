@@ -636,6 +636,8 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .pp-slot span { font-size: 12px; opacity: .85; }
 .pp-alt { display: inline-block; margin-top: 12px; font-size: 14px; color: var(--a-600, #5945e8); text-decoration: none; }
 .pp-lead { font-size: 16px; line-height: 1.6; color: #3f3f46; }
+.pp-trust { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12.5px; color: var(--muted-foreground, #71717a); }
+.pp-trust strong { color: #27272a; font-weight: 600; letter-spacing: .02em; }
 .pp-foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border, #e4e4e7); padding-top: 16px; font-size: 12.5px; color: var(--muted-foreground, #71717a); }
 .pp-foot a { color: inherit; }
 @media (max-width: 600px) { .pp { padding: 0 0 40px; } .pp-card { border-radius: 0; border-left: 0; border-right: 0; } .pp-hero { min-height: 320px; } .pp-hero-text, .pp-body { padding-left: 20px; padding-right: 20px; } .pp-numbers { grid-template-columns: 1fr; } .pp-slots { grid-template-columns: 1fr; } }
