@@ -427,6 +427,7 @@ function renderMobileMoreMenu() {
   return `<div class="mobile-more-backdrop" id="mobile-more-backdrop"><section class="mobile-more-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-more-title"><div class="mobile-more-heading"><div><span class="eyebrow">Workspace</span><h2 id="mobile-more-title">More sections</h2></div><button type="button" class="close-button" data-action="mobile-more-close" aria-label="Close navigation">${svgIcon('close')}</button></div><div class="mobile-more-grid">${items.map(([view, label, icon]) => `<button type="button" class="mobile-more-link ${state.view === view ? 'active' : ''}" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ''}><span class="mobile-more-icon">${svgIcon(icon)}</span><span>${label}</span>${state.view === view ? '<span class="mobile-more-current">Current</span>' : ''}</button>`).join('')}</div></section></div>`;
 }
 function renderApp() {
+  if (typeof window.isPhone === 'function' && window.isPhone() && typeof window.renderMobileApp === 'function') return window.renderMobileApp();
   const app = $('#app');
   const demoWarning = state.auth.demoAccess ? `<div class="demo-admin-warning"><strong>${state.auth.openAccessDemo ? 'Open-access demo · full admin privileges.' : 'Demo admin · full access.'}</strong> Use only fictional sample data; do not enter real contacts, AI keys or SMTP credentials.</div>` : '';
   app.innerHTML = `<div class="app-shell">${shellSidebar()}<div class="main-shell">${shellHeader()}<main class="main-content">${demoWarning}${renderView()}</main></div>${renderMobileMoreMenu()}</div>`;
@@ -1206,6 +1207,7 @@ function fillProposalDraft(result) {
 
 async function dispatchAction(button) {
   const action = button.dataset.action;
+  if (String(action || '').startsWith('m-') && typeof window.mobileAction === 'function') { if (await window.mobileAction(action, button)) return; }
   if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
@@ -1818,12 +1820,13 @@ document.addEventListener('click', async event => {
   const settingsTab = event.target.closest('[data-settings-tab]');
   if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
   const viewButton = event.target.closest('[data-view]');
-  if (viewButton) { event.preventDefault(); setView(viewButton.dataset.view); return; }
+  if (viewButton) { event.preventDefault(); if (typeof window.isPhone === 'function' && window.isPhone() && state.auth?.authenticated) { state.m.tab = ({ briefings: 'inbox', partners: 'more', prospects: 'leads', pipeline: 'leads', workbench: 'approvals' })[viewButton.dataset.view] || 'inbox'; state.m.leadId = null; if (state.m.tab === 'more') state.m.section = 'relationships'; renderApp(); return; } setView(viewButton.dataset.view); return; }
   const ppBook = event.target.closest('[data-action="pp-book"]');
   if (ppBook) { event.preventDefault(); await bookFromPage(ppBook.dataset.date, ppBook.dataset.time); return; }
   const actionButton = event.target.closest('[data-action]');
   if (actionButton) { event.preventDefault(); await dispatchAction(actionButton); return; }
   const leadRow = event.target.closest('[data-open-lead]');
+  if (leadRow && typeof window.isPhone === 'function' && window.isPhone() && state.m) { event.preventDefault(); state.m.leadId = leadRow.dataset.openLead; renderApp(); return; }
   if (leadRow) { openModal('lead-detail', leadRow.dataset.openLead); return; }
   if (event.target.id === 'modal-backdrop') closeModal();
   if (event.target.id === 'mobile-more-backdrop') { state.mobileMoreOpen = false; renderApp(); }
