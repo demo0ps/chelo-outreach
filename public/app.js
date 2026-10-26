@@ -1418,6 +1418,8 @@ async function dispatchAction(button) {
       await API(`/api/staff/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ active: !user.active }) });
       await refresh(); toast(user.active ? 'Account deactivated and sessions revoked.' : 'Account reactivated.'); return;
     }
+    if (action === 'set-outreach-style') { await API('/api/settings', { method: 'PUT', body: JSON.stringify({ outreachStyle: button.dataset.style }) }); await refresh(); toast(button.dataset.style === 'ladder' ? 'CTA ladder enabled for new drafts and sequences.' : 'Classic first-touch template enabled.'); return; }
+    if (action === 'set-guardrail') { await API('/api/settings', { method: 'PUT', body: JSON.stringify({ guardrail: button.dataset.mode }) }); await refresh(); toast(button.dataset.mode === 'block' ? 'Guardrail will block approvals with issues.' : 'Guardrail set to warn only.'); return; }
     if (action === 'set-approval-policy') {
       await API('/api/settings', { method: 'PUT', body: JSON.stringify({ approvalPolicy: button.dataset.policy }) });
       state.auth = await API('/api/auth/status'); await refresh(); toast(button.dataset.policy === 'four-eyes' ? 'Strict 4-eyes approval enabled for all outbound email.' : 'Single-approver policy enabled.'); return;
@@ -1755,6 +1757,39 @@ async function initPublicBooking() {
     $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Partnership briefing</div><h1>Invitation unavailable</h1><p>This link may have expired or the contact has been suppressed.</p></div><div class="booking-card-body"><p class="page-subtitle">Please reply to your Chelo contact for assistance.</p></div></article></main>`;
   } else renderPublicBooking();
 }
+// Hosted partnership page (/p/:token): funder-as-hero picture, three numbers, what you receive, two slots + booking.
+function renderPublicPage() {
+  const root = $('#app'); const m = state.pageInfo;
+  const brand = `<div class="pp-brand"><img src="/brand/chelo-mark.svg" alt="" width="28" height="28" /><span>Chelo</span></div>`;
+  if (!m) { root.innerHTML = `<main class="pp"><section class="pp-card">${brand}<p class="page-subtitle">Loading…</p></section></main>`; return; }
+  if (m.error) { root.innerHTML = `<main class="pp"><section class="pp-card">${brand}<h1>This page is not available</h1><p class="page-subtitle">${esc(m.error)}</p></section></main>`; return; }
+  if (m.expired) { root.innerHTML = `<main class="pp"><section class="pp-card"><div class="pp-hero pp-hero-${esc(m.template)}" style="background-image:url('${esc(m.image)}')"><div class="pp-hero-text">${brand}<h1>${esc(m.fallback.title)}</h1></div></div><div class="pp-body"><p class="pp-lead">${esc(m.fallback.text)}</p><a class="button button-primary" href="${esc(m.fallback.href)}" rel="noopener">${svgIcon('external')} Browse live verified projects</a></div></section></main>`; return; }
+  const done = state.pageBooked;
+  const slots = (m.slots || []).map(sl => `<button type="button" class="pp-slot" data-action="pp-book" data-date="${esc(sl.date)}" data-time="${esc(sl.time)}">${svgIcon('calendar')}<strong>${esc(sl.label)}</strong><span>${m.meetingDurationMinutes || 15} min · video</span></button>`).join('');
+  root.innerHTML = `<main class="pp"><section class="pp-card">
+    <div class="pp-hero pp-hero-${esc(m.template)}" style="background-image:url('${esc(m.image)}')"><div class="pp-hero-text">${brand}<span class="pp-kicker">${esc(m.company)} ×</span><h1>${esc(m.project?.recipient || m.project?.name || 'A verified school')}</h1><p>${esc(m.picture)}</p></div></div>
+    <div class="pp-body">
+      <div class="pp-numbers">${m.numbers.map(n => `<div class="pp-num"><strong>${esc(n.value)}</strong><span>${esc(n.label)}</span></div>`).join('')}</div>
+      ${m.project ? `<div class="pp-project"><span class="pp-badge">${svgIcon('shield')} ${esc(m.project.status || 'Verified')}${m.project.verifiedAt ? ` · ${esc(String(m.project.verifiedAt).slice(0, 10))}` : ''}</span><h2>${esc(m.project.name)}</h2><p>${esc(m.project.summary || '')}</p></div>` : ''}
+      <div class="pp-receive"><h3>What ${esc(m.company)} receives</h3><ul>${m.receive.map(r => `<li>${svgIcon('check')}${esc(r)}</li>`).join('')}</ul></div>
+      ${done ? `<div class="booking-success"><div class="success-check">${svgIcon('check')}</div><h2>Request received</h2><p>The Chelo team will confirm your slot by email with a calendar invite.</p></div>` : `<div class="pp-cta"><h3>Pick a 15-minute slot</h3><div class="pp-slots">${slots}</div>${state.pageError ? `<div class="form-error">${esc(state.pageError)}</div>` : ''}<a class="pp-alt" href="${esc(m.bookingPath)}">Prefer another time? Choose your own →</a></div>`}
+      <footer class="pp-foot"><span>Every rand traceable · cheloapp.com</span><a href="${esc(m.optOutPath)}">Stop further outreach</a></footer>
+    </div></section></main>`;
+}
+async function initPublicPage() {
+  renderPublicPage();
+  const token = location.pathname.split('/').filter(Boolean).pop();
+  try { state.pageInfo = await API(`/api/public/page/${encodeURIComponent(token)}`); } catch (err) { state.pageInfo = { error: err.message }; }
+  renderPublicPage();
+}
+async function bookFromPage(date, time) {
+  const m = state.pageInfo; const token = location.pathname.split('/').filter(Boolean).pop();
+  const name = m.contactName || prompt('Your name'); const email = m.email || prompt('Your work email');
+  if (!name || !email) return;
+  try { await API(`/api/public/booking/${encodeURIComponent(token)}`, { method: 'POST', body: JSON.stringify({ name, email, organization: m.company, date, time, note: 'Booked from partnership page' }) }); state.pageBooked = true; state.pageError = ''; }
+  catch (err) { state.pageError = err.message; }
+  renderPublicPage();
+}
 function renderPublicOptOut() {
   const info = state.optOutInfo;
   if (!info) {
@@ -1784,6 +1819,8 @@ document.addEventListener('click', async event => {
   if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
   const viewButton = event.target.closest('[data-view]');
   if (viewButton) { event.preventDefault(); setView(viewButton.dataset.view); return; }
+  const ppBook = event.target.closest('[data-action="pp-book"]');
+  if (ppBook) { event.preventDefault(); await bookFromPage(ppBook.dataset.date, ppBook.dataset.time); return; }
   const actionButton = event.target.closest('[data-action]');
   if (actionButton) { event.preventDefault(); await dispatchAction(actionButton); return; }
   const leadRow = event.target.closest('[data-open-lead]');
@@ -1886,6 +1923,7 @@ document.addEventListener('keydown', event => {
 async function init() {
   if (!document.getElementById('app')) return; // design/gallery pages load app.js only for the icon definitions
   if (location.pathname.startsWith('/book/')) return initPublicBooking();
+  if (location.pathname.startsWith('/p/')) return initPublicPage();
   if (location.pathname.startsWith('/opt-out/')) return initPublicOptOut();
   try {
     state.auth = await API('/api/auth/status');
@@ -1945,6 +1983,7 @@ function projectFormModal(project) {
     <div class="form-group full"><label for="p-cycle">Grant / delivery window</label><input class="form-control" id="p-cycle" name="grantCycleWindow" value="${esc(project?.grantCycleWindow || '')}" placeholder="e.g. Q1–Q3 delivery · Section 18A verified" /></div>
     <div class="form-group full"><label for="p-source">Verification source URL</label><input class="form-control" id="p-source" name="sourceUrl" type="url" value="${esc(project?.sourceUrl || '')}" placeholder="https://…" /></div>
     <div class="form-group full"><label for="p-summary">Summary</label><textarea class="form-control" id="p-summary" name="summary" maxlength="1200">${esc(project?.summary || '')}</textarea></div>
+    <div class="form-group full"><label for="p-picture">End-state picture <span class="optional">(one sentence funders will read; use {{company}} for the funder)</span></label><textarea class="form-control" id="p-picture" name="picture" maxlength="300" placeholder="Picture the first day of term: 24 freshly painted classrooms at Philemon Montsho Primary — and a co-branded photo of {{company}} on the wall that made it happen.">${esc(project?.picture || '')}</textarea></div>
     <div class="form-group full"><label for="p-metrics">Verified metrics (max 3, one per line)</label><textarea class="form-control" id="p-metrics" name="verifiedMetrics" placeholder="Metric | baseline | latest | unit | period | verified source">${esc(verifiedMetricsText(project?.verifiedMetrics || []))}</textarea><span class="form-hint">Format: Metric | baseline value | latest value | unit | period | verified source.</span></div>
   </div></form>`;
   const footer = `<div class="modal-footer-left">${edit ? `<button type="button" class="button button-ghost button-small" data-action="delete-project" data-id="${esc(project.id)}">${svgIcon('trash')}Remove</button>` : '<span class="subtle">Adds a verified project to the catalog</span>'}</div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Cancel</button><button type="submit" form="project-form" class="button button-primary">${svgIcon('save')}${edit ? 'Save project' : 'Add project'}</button></div>`;
@@ -2028,6 +2067,7 @@ function governanceView(isAdmin) {
   const rows = staff.map(u => `<tr><td><strong>${esc(u.displayName)}</strong><span class="company-secondary">${esc(u.username)}</span></td><td>${esc(roleLabel(u.role))}</td><td>${u.active ? '<span class="status-pill status-confirmed">Active</span>' : '<span class="status-pill status-declined">Deactivated</span>'}</td><td>${isoDate(u.createdAt)}</td><td><button class="table-action" data-action="edit-staff" data-id="${esc(u.id)}">${svgIcon('edit')}Edit</button><button class="table-action" data-action="toggle-staff" data-id="${esc(u.id)}">${svgIcon('users')}${u.active ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('');
   return `<div class="settings-status-grid"><div class="settings-status-card"><span class="metric-icon">${svgIcon('shield')}</span><div><strong>Approval policy</strong><small>${policy === 'four-eyes' ? 'Strict 4-eyes · two different staff must approve every outbound email' : 'Single approver · one staff approval releases email'}</small></div><span class="status-dot ${policy === 'four-eyes' ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('partners')}</span><div><strong>Staff accounts</strong><small>${staff.filter(u => u.active).length} active · ${staff.filter(u => u.role === 'admin' && u.active).length} admin</small></div><span class="status-dot is-on"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('activity')}</span><div><strong>Audit ledger</strong><small>HMAC hash-chained · 365-day retention</small></div><button class="table-action" data-action="verify-audit">${svgIcon('shield')}Verify chain</button></div></div>
     <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('shield')}</span><div><h2>Outbound email approval</h2><p>Approvals are stamped with an HMAC digest of recipient, subject, body and attachment. Any edit voids the approval. In 4-eyes mode the second signature must come from a different Admin or Reviewer.</p></div></div><div class="policy-toggle"><button type="button" class="policy-option ${policy === 'single' ? 'active' : ''}" data-action="set-approval-policy" data-policy="single" ${isAdmin ? '' : 'disabled'}>${svgIcon('prospects')}<strong>1-person approval</strong><span>Small team · fast handoff</span></button><button type="button" class="policy-option ${policy === 'four-eyes' ? 'active' : ''}" data-action="set-approval-policy" data-policy="four-eyes" ${isAdmin ? '' : 'disabled'}>${svgIcon('shield')}<strong>Strict 4-eyes</strong><span>Drafter + independent countersignature</span></button></div>${isAdmin ? '' : '<span class="form-hint">Only administrators can change the policy.</span>'}</section>
+    <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('send')}</span><div><h2>Outreach style & guardrail</h2><p>Ladder: interest-based first touch (no link), one-page + meeting at step 2, two real slots at step 3, graceful close. The guardrail checks every approval for invented numbers, false urgency, scarcity and guilt framing.</p></div></div><div class="policy-toggle"><button type="button" class="policy-option ${(state.data.settings?.outreachStyle || 'ladder') === 'ladder' ? 'active' : ''}" data-action="set-outreach-style" data-style="ladder" ${isAdmin ? '' : 'disabled'}>${svgIcon('send')}<strong>CTA ladder</strong><span>Interest → page + meeting → slots → close</span></button><button type="button" class="policy-option ${state.data.settings?.outreachStyle === 'classic' ? 'active' : ''}" data-action="set-outreach-style" data-style="classic" ${isAdmin ? '' : 'disabled'}>${svgIcon('mail')}<strong>Classic</strong><span>Booking link in the first email</span></button></div><div class="policy-toggle" style="margin-top:10px"><button type="button" class="policy-option ${(state.data.settings?.guardrail || 'block') === 'block' ? 'active' : ''}" data-action="set-guardrail" data-mode="block" ${isAdmin ? '' : 'disabled'}>${svgIcon('shield')}<strong>Guardrail blocks</strong><span>Admin may override with a reason</span></button><button type="button" class="policy-option ${state.data.settings?.guardrail === 'warn' ? 'active' : ''}" data-action="set-guardrail" data-mode="warn" ${isAdmin ? '' : 'disabled'}>${svgIcon('eye')}<strong>Warn only</strong><span>Issues shown, approval proceeds</span></button></div></section>
     <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('partners')}</span><div><h2>Staff accounts & roles</h2><p>Admin: full control. Reviewer: read everything, approve/countersign/return drafts, no record edits. Relationship Owner: manage prospects, projects and briefings; first approvals only.</p></div></div>${isAdmin ? `<div class="lead-table-wrap"><table class="table"><thead><tr><th>Staff member</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5"><div class="panel-empty">No staff accounts yet.</div></td></tr>'}</tbody></table></div><div class="settings-card-actions"><button class="button button-primary" type="button" data-action="new-staff">${svgIcon('plus')} Add staff account</button></div>` : '<span class="form-hint">Staff management is restricted to administrators.</span>'}</section>
     ${isAdmin ? `<section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('info')}</span><div><h2>Demo data</h2><p>Remove the fictional demo prospects, candidates, partners and briefings in one step. The verified Chelo project catalog is retained.</p></div></div><div class="settings-card-actions"><button class="button button-secondary" type="button" data-action="clear-demo">${svgIcon('trash')}Clear demo records</button></div></section>` : ''}`;
 }

@@ -17,6 +17,7 @@ const createEmailVerifier = require('./lib/email-verify');
 const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
+const conversion = require('./lib/conversion');
 const relationships = require('./lib/relationships');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
@@ -240,6 +241,7 @@ function safeProject(body = {}) {
     sourceUrl,
     verifiedAt: verifiedAt || '',
     summary: clampText(body.summary, 1200),
+    picture: clampText(body.picture, 300),
     verifiedMetrics: parseVerifiedMetrics(metricsInput, { strict: typeof metricsInput === 'string' && metricsInput.trim().length > 0 })
   };
 }
@@ -613,8 +615,27 @@ function publicOrigin(req) {
 function outreachLinks(lead, origin) {
   return {
     booking: `${origin}/track/cta/${encodeURIComponent(lead.bookingToken)}`,
+    page: `${origin}/p/${encodeURIComponent(lead.bookingToken)}`,
     optOut: `${origin}/opt-out/${encodeURIComponent(lead.bookingToken)}`
   };
+}
+function outreachStyle() { return configStore.getGovernanceConfig().outreachStyle || 'ladder'; }
+function staffSignature(lead) {
+  const owner = String(lead?.owner || '').trim();
+  const user = owner ? configStore.listUsers().find(u => u.displayName === owner || u.username === owner) : null;
+  return { name: user?.displayName || owner || 'Chelo Partnerships', phone: '' };
+}
+// Ladder step 1: interest-based first touch, no booking link (page + meeting come at step 2). See lib/conversion.js.
+function makeLadderEmail(lead, origin) {
+  const project = db.projects.find(p => p.id === lead.projectId) || null;
+  return conversion.ladderStep({ step: 1, lead, project, links: outreachLinks(lead, origin), staff: staffSignature(lead), reason: researchAlignmentSentence(lead).trim().replace(/\.$/, '') });
+}
+function guardrailCheck(lead, text, step = 1) {
+  const project = db.projects.find(p => p.id === lead.projectId) || null;
+  const funding = project ? projectFunding(project) : null;
+  const result = conversion.lint(text, { project, lead, funding, step });
+  const mode = configStore.getGovernanceConfig().guardrail || 'block';
+  return { ...result, mode, blocked: mode === 'block' && !result.ok };
 }
 function ensurePrimaryBookingCta(body, links) {
   let cleaned = String(body || '').split(/\r?\n/)
@@ -742,9 +763,9 @@ async function generateFollowUpEmail(lead, input = {}, origin) {
   return { draft: { subject, body }, mode: 'openai', message: `Follow-up drafted with ${aiConfig.model} using aggregate outcome signals where available. Review and approve before sharing.` };
 }
 async function generateOutreachEmail(lead, input, origin) {
-  const fallback = makeOutreachEmail(lead, origin);
+  const fallback = outreachStyle() === 'ladder' ? makeLadderEmail(lead, origin) : makeOutreachEmail(lead, origin);
   const aiConfig = configStore.getAIConfig();
-  if (!aiConfig.apiKey) return { draft: fallback, mode: 'guided-preview', message: 'AI provider is not configured. This email uses a local guided template.' };
+  if (!aiConfig.apiKey) return { draft: fallback, mode: 'guided-preview', message: outreachStyle() === 'ladder' ? 'Ladder step 1: interest-based first touch (no link). The one-page + meeting ask follows at step 2.' : 'AI provider is not configured. This email uses a local guided template.' };
   const links = outreachLinks(lead, origin);
   const learning = outreachLearningSignals();
   const context = {
@@ -996,7 +1017,9 @@ function approvedFactsFor(lead) {
 }
 function buildLeadSequence(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
-  return sequences.buildPlan({ lead, links: outreachLinks(lead, origin), project, facts: approvedFactsFor(lead) });
+  const links = outreachLinks(lead, origin);
+  const ladder = outreachStyle() === 'ladder' ? step => conversion.ladderStep({ step, lead, project, links, slots: conversion.proposedSlots(new Date()), staff: staffSignature(lead) }) : null;
+  return sequences.buildPlan({ lead, links, project, facts: approvedFactsFor(lead), ladder });
 }
 function stopLeadSequence(lead, reason, actor = 'system') {
   const seq = lead.sequence; if (!seq || ['stopped', 'completed'].includes(seq.status)) return false;
@@ -1673,7 +1696,7 @@ function sendPdf(res, file, downloadName, disposition = 'attachment') {
   res.end(buf);
 }
 function serveStatic(req, res, pathname) {
-  let requested = pathname === '/' || pathname.startsWith('/book/') || pathname.startsWith('/opt-out/') ? '/index.html' : pathname;
+  let requested = pathname === '/' || pathname.startsWith('/book/') || pathname.startsWith('/p/') || pathname.startsWith('/opt-out/') ? '/index.html' : pathname;
   if (pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   requested = decodeURIComponent(requested.split('?')[0]);
   const filePath = path.resolve(PUBLIC_DIR, '.' + requested);
@@ -2274,6 +2297,21 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true, message: 'You will not receive further Chelo outreach at this address.' });
     }
 
+    const publicPage = pathname.match(/^\/api\/public\/page\/([^/]+)$/);
+    if (publicPage && method === 'GET') {
+      const lead = db.leads.find(l => l.bookingToken === publicPage[1]);
+      if (!lead) return sendJson(res, 404, { error: 'This page is not available.' });
+      const project = db.projects.find(p => p.id === lead.projectId) || null;
+      const model = conversion.pageModel({ lead, project, funding: project ? projectFunding(project) : null, origin: publicOrigin(req) });
+      if (!model.expired && !url.searchParams.get('preview')) {
+        const sourceMessage = db.messages.find(m => m.leadId === lead.id && m.sentAt && ['Sent', 'Confirmed by staff'].includes(m.status));
+        addEmailEvent(lead.id, 'page_view', sourceMessage?.id || null, 'partnership-page');
+        lead.pageViews = Number(lead.pageViews || 0) + 1; lead.lastPageViewAt = new Date().toISOString();
+        if (lead.pageViews === 1) configStore.recordAudit({ actor: 'recipient', action: 'page.viewed', entityType: 'lead', entityId: lead.id, summary: `Partnership page opened (${lead.company})` });
+        saveDbDeferred();
+      }
+      return sendJson(res, 200, { ...model, contactName: lead.contactName, email: lead.email, meetingDurationMinutes: INTRO_MEETING_MINUTES }, { 'Cache-Control': 'no-store' });
+    }
     const publicBooking = pathname.match(/^\/api\/public\/booking\/([^/]+)$/);
     if (publicBooking && method === 'GET') {
       const lead = db.leads.find(l => l.bookingToken === publicBooking[1]);
@@ -2743,6 +2781,13 @@ async function handleApi(req, res, url) {
         const contactGate = await requireContactReady(lead);
         if (!contactGate.ok) { saveDb(); return sendJson(res, 409, { error: contactGate.error, contactCheck: contactGate.contactCheck }); }
         const followUp = body.kind === 'follow-up';
+        if (body.confirmSecond !== true) {
+          const text = `${body.subject || lead[followUp ? 'followUpDraft' : 'emailDraft']?.subject || ''}\n${body.body || lead[followUp ? 'followUpDraft' : 'emailDraft']?.body || ''}`;
+          const guard = guardrailCheck(lead, text, followUp ? 2 : 1);
+          lead.guardrail = { checkedAt: new Date().toISOString(), ...guard };
+          if (guard.blocked && !(body.overrideGuardrail && roleAllows(req.authSession, ['admin']))) return sendJson(res, 422, { error: `Guardrail: ${guard.issues.filter(i => i.severity === 'block').map(i => `${i.type} ("${i.text}")`).join('; ')}`, guardrail: guard });
+          if (guard.blocked) configStore.recordAudit({ actor: actorName(), action: 'guardrail.overridden', entityType: 'lead', entityId: lead.id, summary: `Admin override: ${String(body.overrideGuardrail).slice(0, 160)} · ${guard.blocks} block(s)` });
+        }
         const policy = configStore.getGovernanceConfig().approvalPolicy;
         const statusKey = followUp ? 'followUpEmailStatus' : 'emailStatus';
         const draftKey = followUp ? 'followUpDraft' : 'emailDraft';
@@ -2855,6 +2900,7 @@ async function handleApi(req, res, url) {
           lead.emailDraft = { ...(lead.emailDraft || {}), subject: first.subject, body: first.body, updatedAt: new Date().toISOString() };
           lead.emailApproval = { digest: seq.approval.digest, firstApproverId: seq.approval.firstApproverId, firstApprover: seq.approval.firstApprover, firstApprovedAt: seq.approval.firstApprovedAt, secondApproverId: seq.approval.secondApproverId || null, secondApprover: seq.approval.secondApprover || null, secondApprovedAt: seq.approval.secondApprovedAt || null, policy, sequenceId: seq.id };
           lead.emailStatus = 'Approved'; lead.approvedAt = seq.approval.approvedAt;
+          lead.pageExpiresAt = conversion.pageExpiry({ sequence: seq, approvedAt: lead.approvedAt });
           try { queueSequenceStep(lead, first, { origin: publicOrigin(req), actor: approverLabel }); }
           catch (err) { seq.status = 'approved'; return { error: err.message, code: err.code }; }
           return null;
@@ -2872,6 +2918,13 @@ async function handleApi(req, res, url) {
         }
         if (!roleAllows(req.authSession, ['admin', 'reviewer', 'owner'])) return sendJson(res, 403, { error: 'Your role cannot approve outbound email.' });
         if (Array.isArray(body.steps)) { try { sequences.applyStepEdits(seq, body.steps); } catch (err) { return sendJson(res, 409, { error: err.message }); } }
+        {
+          const perStep = sequences.activeSteps(seq).map(st => ({ n: st.n, ...guardrailCheck(lead, `${st.subject}\n${st.body}`, st.n) }));
+          const blocked = perStep.filter(x => x.blocked);
+          lead.guardrail = { checkedAt: new Date().toISOString(), mode: perStep[0]?.mode, ok: !blocked.length, blocked: blocked.length > 0, blocks: perStep.reduce((n, x) => n + x.blocks, 0), warnings: perStep.reduce((n, x) => n + x.warnings, 0), issues: perStep.flatMap(x => x.issues.map(i => ({ ...i, step: x.n }))) };
+          if (blocked.length && !(body.overrideGuardrail && roleAllows(req.authSession, ['admin']))) return sendJson(res, 422, { error: `Guardrail: ${blocked.flatMap(x => x.issues.filter(i => i.severity === 'block').map(i => `step ${x.n}: ${i.type} ("${i.text}")`)).join('; ')}`, guardrail: lead.guardrail });
+          if (blocked.length) configStore.recordAudit({ actor: actorName(), action: 'guardrail.overridden', entityType: 'lead', entityId: lead.id, summary: `Admin override on sequence: ${String(body.overrideGuardrail).slice(0, 160)}` });
+        }
         const digest = sequences.planDigest(seq, lead);
         seq.approval = { digest, policy, firstApproverId: approverId, firstApprover: approverLabel, firstApprovedAt: new Date().toISOString(), secondApproverId: null, secondApprover: null, secondApprovedAt: null, approvedAt: null };
         if (policy === 'four-eyes') {

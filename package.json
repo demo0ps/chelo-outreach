@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning start.js",
     "test:smoke": "node tests/client-csv-smoke.js && node tests/email-first-touch-smoke.js",
-    "test": "node --test tests/platform-suite.test.js tests/funder-research.test.js tests/workbench-flow.test.js tests/deliverability.test.js tests/sequences.test.js tests/data-engine.test.js tests/signals.test.js tests/relationships.test.js tests/catalogue.test.js tests/mailbox-finder.test.js tests/remote-sync.test.js tests/observability.test.js tests/vercel-entry.test.js && npm run test:smoke"
+    "test": "node --test tests/platform-suite.test.js tests/funder-research.test.js tests/workbench-flow.test.js tests/deliverability.test.js tests/sequences.test.js tests/data-engine.test.js tests/signals.test.js tests/relationships.test.js tests/catalogue.test.js tests/mailbox-finder.test.js tests/remote-sync.test.js tests/observability.test.js tests/vercel-entry.test.js tests/conversion.test.js && npm run test:smoke"
   },
   "engines": {
     "node": ">=22.5.0"
