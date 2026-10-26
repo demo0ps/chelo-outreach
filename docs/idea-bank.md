@@ -72,7 +72,7 @@ update statuses every turn. I present candidates with scores; **you choose** wha
 | G3 | API-wide rate limiting (not only login) | security review | seed | 2/2/4/5 | |
 | G4 | Privacy notice text covering cross-border hosting (s72 POPIA) | security review | seed | 3/1/5/5 | Document, not code. |
 | G5 | Ops dashboard (shipped Batch 6) | | shipped | | |
-| G8 | **Mobile companion mode**: a reduced phone layout (not the full desktop workbench) for the day-to-day essentials — see replies & triage, approve/reject drafts and plans, view a lead/relationship, Ops glance, notifications. Desktop keeps the advanced flow. | user 2026-10-25 | shaping | 4/3/2/5 | Current state: desktop-first; sidebar/topbar lack phone layout; only panel-level breakpoints exist. Scope questions open. |
+| G8 | **Mobile companion mode** (phone ≤ 720px): bottom tab bar **Inbox · Approvals · Leads · More** (More = Relationships, notifications, sign out). Essentials only: triage replies, approve/reject drafts & sequence plans (4-eyes signature), look up lead/relationship, notifications. **No Ops** on phone. Desktop-only views (Workbench flow, Discover, Data, Deliverability, Signals, Ops, Settings) **hidden entirely** from phone nav. Plain responsive web (no PWA). Test device: **Android** (user screenshots). Desktop unchanged. | user 2026-10-25 | ready | 4/3/2/5 | Spec complete; awaiting go. |
 | G7 | Chelo logo as platform favicon / brand assets (`public/brand/chelo-mark.svg`, lockup PNG) | user 2026-10-25 | shipped | | Logo file supplied by user; mark rebuilt as crisp SVG. |
 | G6 | Self-host option on a R‑priced SA VPS (data residency, always-on worker, no cron limits) | deployment reality notes | seed | 3/3/3/5 | `npm start` already works; needs a one-page runbook. |
 
