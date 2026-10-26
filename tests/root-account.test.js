@@ -86,11 +86,18 @@ test('root account: technical surface is root-only; root is immutable to other a
   assert.equal((await root('GET', '/api/settings')).payload.smtpHost, '', 'smtpHost untouched');
   assert.equal((await root('GET', '/api/settings')).payload.approvalPolicy, 'four-eyes');
 
-  // …cannot demote, deactivate, rename or reset the root account
+  // …does not even see the root account: not in staff lists, not in init, audit actor neutralised, PUT → 404
+  const otherStaff = (await other('GET', '/api/staff')).payload;
+  assert.ok(!otherStaff.users.some(u => u.id === rootId || u.isRoot), 'root hidden from staff list');
+  assert.equal(otherStaff.rootUserId, null);
+  assert.ok(!init.staff.some(u => u.id === rootId), 'root hidden from init staff');
+  const otherAudit = (await other('GET', '/api/audit')).payload.entries;
+  assert.ok(otherAudit.length > 0 && !otherAudit.some(e => /founder/i.test(e.actor)), 'root actor masked in audit for others');
+  assert.ok(otherAudit.some(e => e.actor === 'Chelo system'));
+  assert.ok((await root('GET', '/api/audit')).payload.entries.some(e => /founder@cheloapp.com/.test(e.actor)), 'root sees real actors');
   for (const patch of [{ role: 'reviewer' }, { active: false }, { displayName: 'Hijacked' }, { password: 'brand-new-password-123' }]) {
     const r = await other('PUT', `/api/staff/${rootId}`, patch);
-    assert.equal(r.status, 400, `${JSON.stringify(patch)} → ${r.status} ${JSON.stringify(r.payload)}`);
-    assert.match(String(r.payload.error), /root account/i);
+    assert.equal(r.status, 404, `${JSON.stringify(patch)} → ${r.status} ${JSON.stringify(r.payload)}`);
   }
   const rootStill = (await root('GET', '/api/staff')).payload.users.find(u => u.id === rootId);
   assert.equal(rootStill.role, 'admin'); assert.equal(rootStill.active, true); assert.equal(rootStill.displayName, 'Founder');

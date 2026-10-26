@@ -1522,6 +1522,14 @@ function safeOriginRequest(req) {
     return parsed.host === requestHost;
   } catch { return false; }
 }
+// Non-root viewers never learn the root account exists: it is dropped from staff lists and its audit actor is neutralised.
+function visibleUsers(session) { const users = configStore.listUsers(); return isRootSession(session) ? users : users.filter(u => !u.isRoot); }
+function maskAuditForViewer(rows, session) {
+  if (isRootSession(session)) return rows;
+  const root = configStore.getRootUser(); if (!root) return rows;
+  const needle = root.username.toLowerCase();
+  return rows.map(r => (String(r.actor || '').toLowerCase().includes(needle) || String(r.actor || '') === root.displayName) ? { ...r, actor: 'Chelo system' } : r);
+}
 function isRootSession(session) {
   if (!session) return false;
   if (session.demoAccess || DEMO_OPEN_ACCESS) return true;
@@ -1964,7 +1972,7 @@ async function handleApi(req, res, url) {
     }
 
     // ---- Staff accounts & governance ----
-    if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: configStore.listUsers(), rootUserId: configStore.getRootUser()?.id || null, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
+    if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: visibleUsers(req.authSession), rootUserId: req.authSession.isRoot ? (configStore.getRootUser()?.id || null) : null, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
     if (method === 'POST' && pathname === '/api/staff') {
       const body = await readBody(req);
       const user = configStore.createUser({ username: body.username, displayName: body.displayName, role: body.role, password: body.password });
@@ -1974,6 +1982,7 @@ async function handleApi(req, res, url) {
     const staffRoute = pathname.match(/^\/api\/staff\/([^/]+)$/);
     if (staffRoute && method === 'PUT') {
       const body = await readBody(req);
+      if (!req.authSession.isRoot && configStore.isRootUser(staffRoute[1])) return sendJson(res, 404, { error: 'Staff account not found.' });
       const user = configStore.updateUser(staffRoute[1], body, { actorId: req.authSession.userId });
       if (body.active === false || body.password) store.deleteSessionsForUser(user.username);
       configStore.recordAudit({ actor: actorName(), action: 'staff.updated', entityType: 'user', entityId: user.id, summary: `Staff account updated: ${user.displayName} (${user.role}${user.active ? '' : ', deactivated'})` });
@@ -2016,7 +2025,7 @@ async function handleApi(req, res, url) {
       const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
       const leads = visibleLeads().map(clientLead);
       const settings = configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) });
-      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? configStore.listUsers() : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
+      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
     if (method === 'GET' && pathname === '/api/discovery/search') {
@@ -2273,7 +2282,7 @@ async function handleApi(req, res, url) {
     }
     if (method === 'GET' && pathname === '/api/audit') {
       const rows = configStore.getAuditLogs({ limit: url.searchParams.get('limit') || 300, action: url.searchParams.get('action') || '', from: url.searchParams.get('from') || '', to: url.searchParams.get('to') || '', query: url.searchParams.get('query') || '' });
-      return sendJson(res, 200, { entries: rows, retentionDays: 365 });
+      return sendJson(res, 200, { entries: maskAuditForViewer(rows, req.authSession), retentionDays: 365 });
     }
     if (method === 'GET' && pathname === '/api/audit/export.csv') {
       const rows = configStore.getAuditLogs({ limit: 50000, action: url.searchParams.get('action') || '', from: url.searchParams.get('from') || '', to: url.searchParams.get('to') || '', query: url.searchParams.get('query') || '' });

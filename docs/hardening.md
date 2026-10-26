@@ -36,3 +36,5 @@ The founding administrator — the account created at `/api/auth/setup` (on exis
 | Demo purge | `/api/demo/clear` |
 
 Non-root sessions receive a scoped settings object (`technicalHidden: true`, no hosts/ports/usernames/endpoints; only `*Configured` booleans so the workbench can still explain why a step is waiting). Other admins keep everything day-to-day: staff management of non-root accounts, approval policy, outreach style, guardrail, countersigning, leads, relationships. Tests: `tests/root-account.test.js`.
+
+**Invisible to others (2026-10-26).** Non-root sessions never see the root account: it is removed from `/api/staff` and `/api/init.staff` (so staff counts exclude it), `rootUserId` is withheld, `PUT /api/staff/<root>` answers 404, and audit entries authored by the root account are shown with actor **"Chelo system"** in the audit viewer. Root sees the real actors.
