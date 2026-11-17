@@ -137,4 +137,37 @@ test('root account: technical surface is root-only; root is immutable to other a
   const owner = await other('POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Owner', role: 'owner', password: 'owner-password-strong-1' });
   assert.equal(owner.status, 201);
   assert.equal((await other('PUT', `/api/staff/${owner.payload.id}`, { role: 'reviewer' })).status, 200);
+
+  // Co-root ("full access"): only the primary root can grant it; the peer then passes every root check but stays visible
+  const peer = await root('POST', '/api/staff', { username: 'partnerships@cheloapp.com', displayName: 'Partnerships', role: 'owner', password: 'partnerships-strong-pw' });
+  assert.equal(peer.status, 201);
+  const peerClient = client(base);
+  assert.equal((await peerClient('POST', '/api/auth/login', { username: 'partnerships@cheloapp.com', password: 'partnerships-strong-pw' })).status, 200);
+  assert.equal((await peerClient('GET', '/api/ops')).status, 403, 'not yet full access');
+  assert.equal((await other('PUT', `/api/staff/${peer.payload.id}`, { coRoot: true })).status, 400, 'ordinary admins cannot grant full access');
+  const grant = await root('PUT', `/api/staff/${peer.payload.id}`, { coRoot: true });
+  assert.equal(grant.status, 200, JSON.stringify(grant.payload)); assert.equal(grant.payload.coRoot, true); assert.equal(grant.payload.role, 'admin'); assert.equal(grant.payload.isRoot, false);
+  const peerStatus = (await peerClient('GET', '/api/auth/status')).payload;
+  assert.equal(peerStatus.isRoot, true); assert.equal(peerStatus.isPrimaryRoot, false);
+  assert.equal((await peerClient('GET', '/api/ops')).status, 200);
+  assert.equal((await peerClient('GET', '/api/deliverability')).status, 200);
+  assert.equal((await peerClient('GET', '/api/audit/export.csv')).status, 200);
+  assert.ok((await peerClient('GET', '/api/settings')).payload.smtpHost !== undefined, 'peer sees integration fields');
+  const peerStaff = (await peerClient('GET', '/api/staff')).payload;
+  assert.ok(peerStaff.users.some(u => u.id === rootId), 'peer sees the root account');
+  assert.ok(peerStaff.users.some(u => u.id === rootId && u.displayName === 'Founder (root)'), 'peer sees the root under its real name');
+  assert.ok(!(await peerClient('GET', '/api/init')).payload.leads.some(l => l.owner === 'Chelo system'), 'no masking for the peer');
+  // peer cannot grant/revoke itself or others
+  assert.equal((await peerClient('PUT', `/api/staff/${owner.payload.id}`, { coRoot: true })).status, 400);
+  // peer is protected from others but visible to staff under its real name
+  assert.equal((await other('PUT', `/api/staff/${peer.payload.id}`, { active: false })).status, 400);
+  assert.equal((await other('PUT', `/api/staff/${peer.payload.id}`, { role: 'owner' })).status, 400);
+  assert.equal((await other('PUT', `/api/staff/${peer.payload.id}`, { password: 'reset-by-someone-else' })).status, 400);
+  const seenByOther = (await other('GET', '/api/staff')).payload.users.find(u => u.id === peer.payload.id);
+  assert.ok(seenByOther && seenByOther.displayName === 'Partnerships' && seenByOther.coRoot === true, 'co-root visible to staff');
+  assert.ok(!(await other('GET', '/api/staff')).payload.users.some(u => u.id === rootId), 'primary root still hidden');
+  // revoke → back to an everyday admin
+  assert.equal((await root('PUT', `/api/staff/${peer.payload.id}`, { coRoot: false })).status, 200);
+  assert.equal((await peerClient('GET', '/api/ops')).status, 403);
+  assert.equal((await other('PUT', `/api/staff/${peer.payload.id}`, { role: 'owner' })).status, 200);
 });
