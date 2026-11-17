@@ -2172,3 +2172,23 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .wb-followup-note .icon-svg { width: 14px; height: 14px; flex: 0 0 auto; margin-top: 2px; }
 .wb-lead-page .wb-seq { margin-top: 4px; }
 @media (max-width: 720px) { .wb-card { padding: 14px 16px; } .wb-action-main .button { width: 100%; } }
+
+/* ---- Read before sending: full-width page (was a pop-up) ---- */
+.rv-page { display: flex; flex-direction: column; gap: 12px; min-height: calc(100vh - 140px); }
+.rv-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.rv-title h1 { margin: 0; font-size: 20px; letter-spacing: -.01em; }
+.rv-title .subtle { margin: 2px 0 0; font-size: 13px; }
+.rv-loading { color: var(--z-500); }
+.rv-page.is-loading .sp-layout { opacity: .75; transition: opacity .2s ease; }
+.rv-page .sp-layout { flex: 1; min-height: 520px; height: calc(100vh - 330px); grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr); }
+.rv-page .sp-frame, .rv-page .sp-pdf-frame { min-height: 420px; }
+.rv-footer { position: sticky; bottom: 0; z-index: 5; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 12px 16px; margin: 0 -4px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 -4px 16px rgba(0,0,0,.06); }
+.rv-footer-left { flex: 1; min-width: 0; }
+.rv-footer-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.rv-footer .button-primary { min-width: 180px; justify-content: center; }
+@media (max-width: 960px) { .rv-page .sp-layout { height: auto; grid-template-columns: 1fr; } .rv-page .sp-frame, .rv-page .sp-pdf-frame { min-height: 70vh; } .rv-footer { flex-direction: column; align-items: stretch; } .rv-footer .button { width: 100%; } }
+
+/* pool: tick boxes for "Add & run selected" */
+.candidate-pick { display: inline-flex; align-items: center; margin-right: 10px; }
+.candidate-pick input { width: 16px; height: 16px; margin: 0; accent-color: #5945e8; cursor: pointer; }
+.candidate-card.is-added { opacity: .72; }

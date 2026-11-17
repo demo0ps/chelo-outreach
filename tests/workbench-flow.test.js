@@ -118,6 +118,32 @@ test('workbench flow: create → auto verify/research/match/draft, dead email qu
   const dup = await api('POST', '/api/discovery/add', { name: 'Anglo Example' });
   assert.equal(dup.status, 409);
 
+  // 4b. Pool / CSV rows run the same workflow as "Add & run" — even without an email (Chelo looks for a published mailbox first)
+  const imp = await api('POST', '/api/import', { source: 'csv', candidates: [
+    { company: 'Pool Mining Co', contactName: 'Lindiwe N', email: 'lindiwe@github.com', sector: 'Mining', sourceName: 'CSV', sourceUrl: 'https://github.com' },
+    { company: 'Quiet Foundation', contactName: '', email: '', sector: 'Finance', sourceName: 'CSV', sourceUrl: 'https://github.com' }
+  ] });
+  assert.equal(imp.status, 201, JSON.stringify(imp.payload));
+  const pool = (await api('GET', '/api/candidates')).payload.filter(c => ['Pool Mining Co', 'Quiet Foundation'].includes(c.company));
+  assert.equal(pool.length, 2, 'both rows held in the pool');
+  const quiet = pool.find(c => c.company === 'Quiet Foundation');
+  const blocked = await api('POST', `/api/candidates/${quiet.id}/promote`, {});
+  assert.equal(blocked.status, 409, 'plain promote still refuses a row with no email');
+  const bulk = await api('POST', '/api/candidates/promote-run', { ids: pool.map(c => c.id) });
+  assert.equal(bulk.status, 202, JSON.stringify(bulk.payload));
+  assert.equal(bulk.payload.added.length, 2, 'no-email row is added anyway when running the workflow');
+  const quietLead = bulk.payload.added.find(l => l.company === 'Quiet Foundation');
+  for (let i = 0; i < 40; i += 1) { const f = await api('GET', `/api/leads/${quietLead.id}/flow`); if (f.payload.flow && f.payload.flow.status !== 'running' && !f.payload.running) break; await new Promise(r => setTimeout(r, 250)); }
+  const quietFlow = (await api('GET', `/api/leads/${quietLead.id}/flow`)).payload.flow;
+  assert.ok(quietFlow && quietFlow.status !== 'running', 'workflow ran for the no-email row');
+  assert.ok(['needs-email', 'accepted', 'verified'].includes(quietFlow.steps.verify.status), JSON.stringify(quietFlow.steps.verify));
+  if (quietFlow.steps.verify.status === 'needs-email') assert.match(quietFlow.steps.verify.detail, /could not find a published email/i);
+  const poolLead = bulk.payload.added.find(l => l.company === 'Pool Mining Co');
+  for (let i = 0; i < 40; i += 1) { const f = await api('GET', `/api/leads/${poolLead.id}/flow`); if (f.payload.flow && f.payload.flow.status !== 'running' && !f.payload.running) break; await new Promise(r => setTimeout(r, 250)); }
+  const poolFlow = (await api('GET', `/api/leads/${poolLead.id}/flow`)).payload;
+  assert.ok(poolFlow.flow.steps.research, 'research ran for the pool row, same as Add & run');
+  assert.equal((await api('GET', '/api/candidates')).payload.find(c => c.id === quiet.id).status, 'Added to pipeline');
+
   // 5. Audit trail records the automation
   const audit = await api('GET', '/api/audit');
   const actions = (audit.payload.entries || audit.payload || []).map(e => e.action);

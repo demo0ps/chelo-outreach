@@ -68,3 +68,13 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 
 - Sidebar locked to **deep indigo** `#2a2470 → #1f1a58` (subtle vertical gradient) — the favicon hue taken deep and quiet. Selected item: soft brand-purple tint `rgba(89,69,232,.48)`; hover: white 7%; captions and the user line in muted lavender `#b9b4e6`; menu text white. Counts: white chip with indigo text. `theme-color` = `#2a2470`. The `?sidebar=` trial switch and `sidebar-compare.html` were removed.
 - **Brand tile = the favicon.** Every brand tile (sidebar, login, booking / public pages, phone header) now shows `/brand/chelo-mark.svg` (purple tile with the ring-and-dot) instead of the generic target icon. Text beside it stays "Chelo · Communication Center"; the login screen now says the same. Outbound emails stay plain-text styled (no logo header) on purpose, for deliverability.
+
+## Pool / CSV run the same workflow · Read & send is a page (2026-11-17)
+
+**Problem:** "Add to pipeline" from the local pool or a CSV only created the funder — it never started the check → research → draft workflow that "Add & run" starts, and rows without an email were refused. So nothing was ever drafted for them.
+
+- Every pool/CSV row now has **Add & run** (`POST /api/candidates/:id/promote {run:true}`): the row becomes a funder and the full workflow starts immediately, same as adding by hand. The page jumps to that funder in To do and polls until Chelo is done.
+- **Tick boxes + "Add & run selected"** (`POST /api/candidates/promote-run {ids}` → 202): up to 50 rows; promoted at once, flows run two at a time in the background; duplicates are linked to the existing funder, dead addresses and do-not-contact rows are skipped with a plain reason in the toast.
+- **No email? Chelo looks first.** `runLeadFlow` now calls the mailbox finder when a funder has no address (published CSI/foundation/info mailbox, verified on the domain). Only if nothing is found does it stop with *"Chelo could not find a published email address for them. Add one…"*. Plain `promote` without `run` keeps the old 409 for API callers.
+- **Read before sending is a full-width page** (`state.view = 'review'`, `state.review = { id, step, cache }`) instead of a pop-up: Back button, email left / PDF right, checks + Send pinned at the bottom. Each step's preview is cached, so switching First email ↔ Follow-ups keeps the current content on screen until the new one is ready (no blank flash); background refreshes only re-render when something changed.
+- Tests: `tests/workbench-flow.test.js` covers CSV rows with and without email through `promote-run`; `tests/consolidation.test.js` covers the page. 71/0. Cache tag `v36`.

@@ -385,7 +385,7 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ workbench: 'To do', inbox: 'Inbox', ops: state.auth.isRoot ? 'Health' : 'Results', deliverability: 'Deliverability', data: 'Data quality', overview: 'Today', discover: 'To do', projects: 'Projects', prospects: 'Funders', pipeline: 'Funders', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Funders', analytics: 'Results', settings: 'Settings' })[state.view] || 'Today';
+  const label = ({ workbench: 'To do', review: 'Read & send', inbox: 'Inbox', ops: state.auth.isRoot ? 'Health' : 'Results', deliverability: 'Deliverability', data: 'Data quality', overview: 'Today', discover: 'To do', projects: 'Projects', prospects: 'Funders', pipeline: 'Funders', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Funders', analytics: 'Results', settings: 'Settings' })[state.view] || 'Today';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
@@ -547,14 +547,13 @@ function discoverPanel() {
     const sourceFreshness = verificationFreshness(c.sourceLastVerifiedAt, 'Source');
     const healthLabel = check.status === 'ready' ? 'Domain checked · mailbox not verified' : check.status === 'needs-clarification' ? `Needs clarification${check.issues?.length ? ` · ${check.issues.join(', ')}` : ''}` : check.status === 'retry-required' ? 'DNS check needs retry' : 'Contact check not run';
     const healthClass = check.status === 'ready' ? 'candidate-health-ready' : check.status === 'retry-required' ? 'candidate-health-retry' : 'candidate-health-pending';
-    const intakeAction = check.status === 'ready'
-      ? `<button class="button button-primary button-small" data-action="promote-candidate" data-id="${esc(c.id)}">${svgIcon('plus')}Add to pipeline</button>`
-      : check.status === 'retry-required' || check.status === 'unchecked'
-        ? `<button class="button button-secondary button-small" data-action="candidate-recheck" data-id="${esc(c.id)}">${svgIcon('refresh')}${check.status === 'unchecked' ? 'Run contact check' : 'Retry contact check'}</button>`
-        : `<button class="button button-secondary button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Complete details</button>`;
-    return `<article class="candidate-card"><div class="candidate-card-main"><div class="candidate-org"><span class="candidate-avatar">${initials(c.company)}</span><div><h3>${esc(c.company)}</h3><span class="candidate-contact">${esc(c.contactName || 'Contact to verify')} · ${esc(c.title || c.sector || 'Prospective funder')}</span></div></div><div class="candidate-badges"><span class="fit-score"><span class="fit-dot"></span>${Number(c.fitScore || 0)}% fit</span>${wasAdded ? `<span class="status-pill status-confirmed">${esc(c.status)}</span>` : `<span class="status-pill status-requested">Review needed</span>`}</div><span class="candidate-health ${healthClass}">${esc(healthLabel)}</span><div class="verification-row"><span class="freshness-tag ${contactFreshness.className}">${esc(contactFreshness.text)}</span><span class="freshness-tag ${sourceFreshness.className}">${esc(sourceFreshness.text)}</span></div><p class="candidate-summary">${esc(c.notes || 'Review the source and confirm fit before adding this organisation.')}</p>${c.relationshipContext ? `<div class="candidate-context"><strong>Warm introduction:</strong> ${esc(c.relationshipContext)}</div>` : ''}${c.partnerPriorities ? `<div class="candidate-context"><strong>Partner priorities:</strong> ${esc(c.partnerPriorities)}</div>` : ''}<div class="candidate-meta"><span>${svgIcon('grid')}${esc(c.sector || 'Sector not set')}</span><span>${svgIcon('target')}${esc(c.project || 'Project not selected')}</span><span>${svgIcon('building')}${esc(c.sourceName || 'Source not supplied')}</span></div></div><div class="candidate-card-side"><div><small>Suggested ask · staff to confirm</small><strong>${money(c.amount)}</strong></div><div class="candidate-links">${source ? `<a class="text-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">View source ${svgIcon('external')}</a>` : `<span class="subtle">No source URL provided</span>`}${c.email ? `<a class="text-link" href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ''}</div>${wasAdded && c.promotedLeadId ? `<button class="button button-secondary button-small" data-action="open-lead" data-id="${esc(c.promotedLeadId)}">${svgIcon('eye')}Open pipeline record</button>` : wasAdded ? `<span class="subtle">Already in pipeline</span>` : `<div class="candidate-card-actions"><button class="button button-ghost button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Edit details</button>${intakeAction}</div>`}</div></article>`;
+    const intakeAction = `<button class="button button-primary button-small" data-action="promote-candidate" data-id="${esc(c.id)}" title="${check.status === 'ready' ? 'Check the address, research and draft' : 'No usable email yet — Chelo will look for their published mailbox first'}">${svgIcon('spark')}Add & run</button>${check.status === 'ready' ? '' : `<button class="button button-ghost button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Add details</button>`}`;
+    const pick = wasAdded ? '' : `<label class="candidate-pick"><input type="checkbox" data-pool-pick="${esc(c.id)}" ${state.wb.poolPicks?.includes(c.id) ? 'checked' : ''} aria-label="Select ${esc(c.company)}" /></label>`;
+    return `<article class="candidate-card ${wasAdded ? 'is-added' : ''}"><div class="candidate-card-main"><div class="candidate-org">${pick}<span class="candidate-avatar">${initials(c.company)}</span><div><h3>${esc(c.company)}</h3><span class="candidate-contact">${esc(c.contactName || 'Contact to verify')} · ${esc(c.title || c.sector || 'Prospective funder')}</span></div></div><div class="candidate-badges"><span class="fit-score"><span class="fit-dot"></span>${Number(c.fitScore || 0)}% fit</span>${wasAdded ? `<span class="status-pill status-confirmed">${esc(c.status)}</span>` : `<span class="status-pill status-requested">Review needed</span>`}</div><span class="candidate-health ${healthClass}">${esc(healthLabel)}</span><div class="verification-row"><span class="freshness-tag ${contactFreshness.className}">${esc(contactFreshness.text)}</span><span class="freshness-tag ${sourceFreshness.className}">${esc(sourceFreshness.text)}</span></div><p class="candidate-summary">${esc(c.notes || 'Review the source and confirm fit before adding this organisation.')}</p>${c.relationshipContext ? `<div class="candidate-context"><strong>Warm introduction:</strong> ${esc(c.relationshipContext)}</div>` : ''}${c.partnerPriorities ? `<div class="candidate-context"><strong>Partner priorities:</strong> ${esc(c.partnerPriorities)}</div>` : ''}<div class="candidate-meta"><span>${svgIcon('grid')}${esc(c.sector || 'Sector not set')}</span><span>${svgIcon('target')}${esc(c.project || 'Project not selected')}</span><span>${svgIcon('building')}${esc(c.sourceName || 'Source not supplied')}</span></div></div><div class="candidate-card-side"><div><small>Suggested ask · staff to confirm</small><strong>${money(c.amount)}</strong></div><div class="candidate-links">${source ? `<a class="text-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">View source ${svgIcon('external')}</a>` : `<span class="subtle">No source URL provided</span>`}${c.email ? `<a class="text-link" href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ''}</div>${wasAdded && c.promotedLeadId ? `<button class="button button-secondary button-small" data-action="open-lead" data-id="${esc(c.promotedLeadId)}">${svgIcon('eye')}Open pipeline record</button>` : wasAdded ? `<span class="subtle">Already in pipeline</span>` : `<div class="candidate-card-actions"><button class="button button-ghost button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Edit details</button>${intakeAction}</div>`}</div></article>`;
   }).join('');
-  return `<div class="wb-pool-head"><p class="subtle">Chelo's local prospect pool and CSV imports. Each organisation is reviewed and added individually; CSV rows are held here until a person approves them.</p><div class="head-actions"><button class="button button-secondary button-small" data-action="candidate-import">${svgIcon('download')} Import CSV</button><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')} CSV template</a></div></div>
+  const picks = (state.wb.poolPicks || []).filter(id => candidates.some(c => c.id === id && !c.promotedLeadId && c.status === 'New candidate'));
+  const selectable = candidates.filter(c => !c.promotedLeadId && c.status === 'New candidate');
+  return `<div class="wb-pool-head"><p class="subtle">Organisations from Chelo's own list and your CSV files. <strong>Add & run</strong> works exactly like adding one by hand: Chelo checks the email address (or looks for their published mailbox), researches them and writes the first draft. Tick several and run them together.</p><div class="head-actions"><button class="button button-primary button-small" data-action="pool-run-selected" ${picks.length && !state.wb.busy.pool ? '' : 'disabled'}>${svgIcon('spark')}${state.wb.busy.pool ? 'Adding…' : `Add & run selected${picks.length ? ` (${picks.length})` : ''}`}</button><button class="button button-ghost button-small" data-action="pool-select-all" ${selectable.length ? '' : 'disabled'}>${svgIcon('check')}${picks.length && picks.length === selectable.length ? 'Clear selection' : `Select all shown (${selectable.length})`}</button><button class="button button-secondary button-small" data-action="candidate-import">${svgIcon('download')} Import CSV</button><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')} CSV template</a></div></div>
     ${cataloguePanel()}
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="candidate-search" type="search" placeholder="Search candidates, contacts, projects…" value="${esc(state.query)}" /></label><select class="select-control" id="candidate-filter"><option value="All candidates" ${state.candidateFilter === 'All candidates' ? 'selected' : ''}>All candidates (${state.data.candidates.length})</option><option value="New candidate" ${state.candidateFilter === 'New candidate' ? 'selected' : ''}>Awaiting review (${pending})</option><option value="Added to pipeline" ${state.candidateFilter === 'Added to pipeline' ? 'selected' : ''}>Added (${added})</option></select></div></div>
     <div class="candidate-list">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('globe')}</div><strong>No candidates found</strong><p>Import a CSV or add records to the local candidate database.</p></div>`}</div>
@@ -698,6 +697,7 @@ function authGateView() {
 function renderView() {
   switch (state.view) {
     case 'workbench': return workbenchView();
+    case 'review': return reviewView();
     case 'inbox': return typeof window.inboxView === 'function' ? window.inboxView() : '';
     case 'ops': return opsView();
     case 'projects': return projectsView();
@@ -730,7 +730,6 @@ function renderModal() {
   if (type === 'research') return researchModal(getLead(id));
   if (type === 'staff-form') return staffFormModal(state.data.staff.find(u => u.id === id));
   if (type === 'booking-edit') return bookingEditModal(getBooking(id));
-  if (type === 'send-preview') return sendPreviewModal(getLead(id));
   return '';
 }
 function modalFrame(title, subtitle, body, footer = '', centered = false, extraClass = '') {
@@ -1134,7 +1133,7 @@ function toast(message, error = false) {
 }
 function renderAuthGate() { $('#app').innerHTML = authGateView(); $('#modal-root').innerHTML = ''; }
 async function refresh() {
-  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.modal?.type === 'send-preview' && !state.modal.loading) openSendPreview(state.modal.id, Number(state.modal.step || 0)); }
+  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.view === 'review' && state.review && !state.review.loading) openSendPreview(state.review.id, Number(state.review.step || 0)); }
   catch (error) {
     if (error.status === 401) { state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false })); renderAuthGate(); return; }
     throw error;
@@ -1284,12 +1283,35 @@ async function dispatchAction(button) {
       return toast(result.message || 'Contact check updated.', result.candidate?.contactCheck?.status !== 'ready');
     }
     if (action === 'promote-candidate') {
-      const result = await API(`/api/candidates/${encodeURIComponent(id)}/promote`, { method: 'POST', body: '{}' });
-      if (result.deleted) { await refresh(); return toast(result.error || 'Candidate was removed after its contact check.'); }
-      if (!result.lead) { await refresh(); return toast('Candidate was already added; no new pipeline record was created.'); }
-      state.view = 'prospects'; state.query = ''; await refresh();
-      if (result.alreadyAdded) toast('This organisation already exists in the pipeline.');
-      else { openModal('lead-detail', result.lead.id); toast('Candidate added to the pipeline. Choose a project, amount and notes before generating outreach.'); }
+      button.disabled = true;
+      let result;
+      try { result = await API(`/api/candidates/${encodeURIComponent(id)}/promote`, { method: 'POST', body: JSON.stringify({ run: true }) }); }
+      catch (err) { button.disabled = false; return toast(err.message, true); }
+      if (result.deleted) { await refresh(); return toast(result.error || 'That email address does not work, so the row was removed.', true); }
+      if (!result.lead) { await refresh(); return toast('Already added earlier.'); }
+      state.view = 'workbench'; state.wb.intake = 'add'; state.wb.filter = 'all'; state.wb.selectedId = result.lead.id; state.query = '';
+      await refresh();
+      toast(result.alreadyAdded ? `${result.lead.company} is already in To do.` : `${result.lead.company} added — Chelo is checking the address, researching and drafting.`);
+      if (!result.alreadyAdded) wbPollFlow(result.lead.id);
+      return;
+    }
+    if (action === 'pool-select-all') {
+      const q = state.query.trim().toLowerCase();
+      const shown = state.data.candidates.filter(c => !c.promotedLeadId && c.status === 'New candidate' && (state.candidateFilter === 'All candidates' || c.status === state.candidateFilter) && (!q || [c.company, c.contactName, c.email, c.sector].join(' ').toLowerCase().includes(q))).map(c => c.id);
+      const all = shown.every(id => (state.wb.poolPicks || []).includes(id));
+      state.wb.poolPicks = all ? [] : shown; renderApp(); return;
+    }
+    if (action === 'pool-run-selected') {
+      const ids = (state.wb.poolPicks || []).slice(); if (!ids.length) return;
+      state.wb.busy.pool = true; renderApp();
+      try {
+        const r = await API('/api/candidates/promote-run', { method: 'POST', body: JSON.stringify({ ids }) });
+        state.wb.poolPicks = []; state.wb.intake = 'add'; state.wb.filter = 'all'; if (r.added?.length) state.wb.selectedId = r.added[0].id;
+        await refresh();
+        toast(`${r.added.length} added — Chelo is working through them.${r.skipped.length ? ` ${r.skipped.length} skipped: ${r.skipped.map(x => `${x.company || x.id} (${x.reason})`).join('; ')}` : ''}`, Boolean(r.skipped.length && !r.added.length));
+        r.added.forEach(l => wbPollFlow(l.id));
+      } catch (err) { toast(err.message, true); }
+      finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
     if (action === 'edit-lead') return openModal('lead-form', id);
@@ -1351,6 +1373,7 @@ async function dispatchAction(button) {
     if (action === 'open-copilot') { state.copilot = { target: button.dataset.target || 'lead-form', text: '', result: null, error: '' }; const returnTo = state.modal; const leadFormDraft = $('#lead-form') ? formDataObject($('#lead-form')) : null; return openModal('copilot', null, { returnTo, leadFormDraft }); }
     if (action === 'send-preview') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
     if (action === 'send-preview-step') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
+    if (action === 'send-preview-close') { closeSendPreview(); return; }
     if (action === 'send-preview-edit') { state.modal = null; state.view = 'workbench'; state.wb.selectedId = button.dataset.id; state.wb.openStep = 'draft'; renderApp(); setTimeout(() => $('#email-body')?.focus(), 60); return; }
     if (action === 'prospects-mode') { state.prospectsMode = button.dataset.mode === 'board' ? 'board' : 'table'; renderApp(); return; }
     if (action === 'wb-intake') { state.wb.intake = button.dataset.intake === 'pool' ? 'pool' : 'add'; if (state.wb.intake === 'pool') loadCatalogue(); renderApp(); return; }
@@ -2450,42 +2473,55 @@ function wbSequencePanel(lead) {
 // order the recipient experiences it (from/to/subject → body → links → attachment).
 // ---------------------------------------------------------------------
 async function openSendPreview(leadId, step = 0) {
-  state.modal = { type: 'send-preview', id: leadId, step, data: null, error: '', loading: true }; renderApp();
-  try { state.modal.data = await API(`/api/leads/${encodeURIComponent(leadId)}/preview${step ? `?step=${step}` : ''}`); }
-  catch (err) { state.modal.error = err.message || 'Could not build the preview.'; }
-  if (state.modal?.type === 'send-preview') { state.modal.loading = false; renderApp(); }
+  // Full-width page (not a pop-up). Cached per step so switching First email ↔ Follow-ups never blanks the screen.
+  const rv = state.review && state.review.id === leadId ? state.review : { id: leadId, cache: {}, error: '', returnView: state.view === 'review' ? 'workbench' : state.view };
+  if (state.view !== 'review') rv.returnView = state.view;
+  rv.step = Number(step) || 0; rv.error = ''; rv.loading = !rv.cache[rv.step];
+  state.review = rv; state.modal = null; state.view = 'review'; renderApp(); window.scrollTo({ top: 0 });
+  try {
+    const fresh = await API(`/api/leads/${encodeURIComponent(leadId)}/preview${rv.step ? `?step=${rv.step}` : ''}`);
+    const changed = JSON.stringify(fresh) !== JSON.stringify(rv.cache[rv.step] || null);
+    rv.cache[rv.step] = fresh;
+    if (state.review === rv && state.view === 'review' && (changed || rv.loading)) { rv.loading = false; renderApp(); }
+    else rv.loading = false;
+  } catch (err) { rv.error = err.message || 'Could not build the preview.'; rv.loading = false; if (state.review === rv && state.view === 'review') renderApp(); }
 }
-function sendPreviewModal(lead) {
-  if (!lead) return '';
-  const m = state.modal; const d = m.data;
-  const frame = (body, footer) => modalFrame('Preview before send', `${lead.company} · exactly what ${lead.contactName || 'the funder'} will receive`, body, footer, true, 'send-preview-modal');
-  if (m.loading) return frame('<div class="panel-empty">Building the preview…</div>', '');
-  if (m.error || !d) return frame(`<div class="panel-empty">${esc(m.error || 'No preview.')}</div>`, `<div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">Close</button></div>`);
-  const seqTabs = d.steps.length ? `<div class="sp-steps" role="tablist">${[{ n: 0, label: 'First touch' }, ...d.steps.filter(x => x.n > 1).map(x => ({ n: x.n, label: `Follow-up ${x.n - 1}`, status: x.status }))].map(t => `<button type="button" role="tab" class="sp-step ${Number(m.step) === t.n ? 'is-active' : ''}" data-action="send-preview-step" data-id="${esc(lead.id)}" data-step="${t.n}" aria-selected="${Number(m.step) === t.n}">${esc(t.label)}${t.status && !['planned', 'draft'].includes(t.status) ? ` <small>${esc(t.status)}</small>` : ''}</button>`).join('')}</div>` : '';
+function closeSendPreview() {
+  const rv = state.review; const back = rv?.returnView && rv.returnView !== 'review' ? rv.returnView : 'workbench';
+  if (back === 'workbench' && rv) { state.wb.selectedId = rv.id; state.wb.filter = 'all'; }
+  state.view = back; renderApp(); window.scrollTo({ top: 0 });
+}
+function reviewView() {
+  const rv = state.review; const lead = rv ? getLead(rv.id) : null;
+  if (!rv || !lead) return `<div class="panel empty-state"><p>Nothing to read yet.</p><button type="button" class="button button-secondary" data-action="send-preview-close">Back</button></div>`;
+  const d = rv.cache[rv.step];
+  const head = `<div class="rv-head"><button type="button" class="button button-ghost button-small" data-action="send-preview-close">${svgIcon('back')}Back to ${esc(lead.company)}</button><div class="rv-title"><h1>Read before sending</h1><p class="subtle">Exactly what ${esc(lead.contactName || 'the funder')} at ${esc(lead.company)} will receive.${rv.loading ? ' <span class="rv-loading">Updating…</span>' : ''}</p></div></div>`;
+  if (!d) return `<div class="rv-page">${head}<div class="panel panel-empty">${rv.error ? `<p class="form-error">${esc(rv.error)}</p><button type="button" class="button button-secondary" data-action="send-preview" data-id="${esc(lead.id)}" data-step="${rv.step}">Try again</button>` : 'Building the preview…'}</div></div>`;
+  const seqTabs = d.steps.length ? `<div class="sp-steps" role="tablist">${[{ n: 0, label: 'First email' }, ...d.steps.filter(x => x.n > 1).map(x => ({ n: x.n, label: `Follow-up ${x.n - 1}`, status: x.status }))].map(t => `<button type="button" role="tab" class="sp-step ${Number(rv.step) === t.n ? 'is-active' : ''}" data-action="send-preview-step" data-id="${esc(lead.id)}" data-step="${t.n}" aria-selected="${Number(rv.step) === t.n}">${esc(t.label)}${t.status && !['planned', 'draft'].includes(t.status) ? ` <small>${esc(t.status)}</small>` : ''}</button>`).join('')}</div>` : '';
   const srcdoc = esc(String(d.html || '').replace('<body', '<base target="_blank" rel="noopener"><body'));
   const emailPane = `<section class="sp-email">
-    <div class="sp-head"><div class="sp-row"><span>From</span><strong>${d.from ? `${esc(d.from.name || '')} &lt;${esc(d.from.email)}&gt;` : '<em class="form-error">no active mailbox</em>'}</strong></div>
+    <div class="sp-head"><div class="sp-row"><span>From</span><strong>${d.from ? `${esc(d.from.name || '')} &lt;${esc(d.from.email)}&gt;` : '<em class="form-error">no sending mailbox yet — add one in Settings</em>'}</strong></div>
       <div class="sp-row"><span>To</span><strong>${esc(d.to.name || '')} &lt;${esc(d.to.email || 'no email')}&gt;</strong></div>
       <div class="sp-row"><span>Subject</span><strong>${esc(d.subject || '(empty)')}</strong></div>
-      ${d.attachments.length ? `<div class="sp-row"><span>Attached</span><strong>${d.attachments.map(a => `<a class="sp-attachment" href="${esc(a.url)}" target="_blank" rel="noopener">${svgIcon('paperclip')}${esc(a.name)} · ${a.sizeKb} KB</a>`).join('')}</strong></div>` : ''}</div>
+      ${d.attachments.length ? `<div class="sp-row"><span>Attached</span><strong>${d.attachments.map(a => `<a class="sp-attachment" href="${esc(a.url)}" target="_blank" rel="noopener">${svgIcon('paperclip')}${esc(a.name)} · ${a.sizeKb} KB</a>`).join('')}</strong></div>` : (rv.step === 0 ? `<div class="sp-row"><span>Attached</span><strong>${svgIcon('paperclip')}Chelo proposal PDF <small class="subtle">(made when you press Send)</small></strong></div>` : '')}</div>
     <iframe class="sp-frame" title="Email as the funder sees it" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}"></iframe>
     ${d.links.length ? `<div class="sp-links"><span class="subtle">Links in this email</span>${d.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="sp-link sp-link-${esc(l.kind)}">${svgIcon(l.kind === 'cta' ? 'calendar' : l.kind === 'page' ? 'external' : 'link')}${esc(l.kind === 'cta' ? 'Yes — book a briefing (one click)' : l.kind === 'page' ? 'Co-branded project page' : l.kind === 'opt-out' ? 'Opt-out' : l.url.replace(/^https?:\/\//, '').slice(0, 60))}</a>`).join('')}</div>` : ''}
   </section>`;
-  const pdfPane = d.proposal ? `<section class="sp-pdf"><div class="sp-pdf-head"><strong>${svgIcon('proposals')}Proposal PDF</strong><span>${d.attachments.length ? 'attached to this email' : 'linked from the email — not attached'}</span><a class="button button-ghost button-small" href="${esc(d.proposal.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open full size</a><a class="button button-ghost button-small" href="${esc(d.proposal.download)}" download>${svgIcon('download')}Download</a></div><iframe class="sp-pdf-frame" title="Proposal PDF" src="${esc(d.proposal.url)}#toolbar=1&view=FitH"></iframe></section>`
+  const pdfPane = d.proposal ? `<section class="sp-pdf"><div class="sp-pdf-head"><strong>${svgIcon('proposals')}Proposal PDF</strong><span>${d.attachments.length ? 'attached to this email' : rv.step > 0 ? 'sent with the first email' : 'will be attached'}</span><a class="button button-ghost button-small" href="${esc(d.proposal.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open full size</a><a class="button button-ghost button-small" href="${esc(d.proposal.download)}" download>${svgIcon('download')}Download</a></div><iframe class="sp-pdf-frame" title="Proposal PDF" src="${esc(d.proposal.url)}#toolbar=1&view=FitH"></iframe></section>`
     : `<section class="sp-pdf sp-pdf-empty"><strong>${svgIcon('proposals')}No proposal PDF yet</strong><p class="subtle">Chelo makes the PDF from the chosen project when you press Send. Make it now if you want to read it first.</p><button type="button" class="button button-secondary button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Make the PDF now</button></section>`;
   const checks = `<ul class="sp-checks">${d.checks.map(c => `<li class="${c.ok ? 'is-ok' : 'is-bad'}">${svgIcon(c.ok ? 'checkCircle' : 'xCircle')}<span><strong>${esc(c.label)}</strong><small>${esc(c.detail)}</small></span></li>`).join('')}</ul>`;
   const st = d.status; const seq = lead.sequence; const emailStatus = st.email;
   let primary = '';
   if (seq && seq.status === 'draft') primary = `<button type="button" class="button button-primary" data-action="seq-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('send')}${st.approvalPolicy === 'four-eyes' ? 'Approve (1 of 2)' : 'Send & follow up'}</button>`;
-  else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person & start sending</button>`;
+  else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person & send</button>`;
   else if (seq && ['running', 'approved'].includes(seq.status)) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sending — Chelo follows up for you</span>`;
   else if (['Draft', 'None'].includes(emailStatus)) primary = `<button type="button" class="button button-primary" data-action="email-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve this email</button>`;
   else if (emailStatus === 'Pending second approval') primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person</button>`;
   else if (emailStatus === 'Approved') primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button>`;
-  else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Queued — sends in the next free slot</span>`;
+  else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Scheduled — sends in the next free slot</span>`;
   else if (String(emailStatus).startsWith('Sent')) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sent</span>`;
-  const footer = `<div class="modal-footer-left">${checks}</div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="send-preview-edit" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit email</button>${primary}</div>`;
-  return frame(`${seqTabs}<div class="sp-layout">${emailPane}${pdfPane}</div>`, footer);
+  const footer = `<div class="rv-footer"><div class="rv-footer-left">${checks}</div><div class="rv-footer-right"><button type="button" class="button button-secondary" data-action="send-preview-edit" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit email</button>${primary}</div></div>`;
+  return `<div class="rv-page ${rv.loading ? 'is-loading' : ''}">${head}${seqTabs}<div class="sp-layout">${emailPane}${pdfPane}</div>${footer}</div>`;
 }
 function wbReplyPointer(lead) {
   const t = lead.triage; if (!t) return '';
@@ -2876,6 +2912,16 @@ async function wbRunFlow(id, { force = false, redraft = false } = {}) {
   catch (err) { toast(err.message, true); }
   finally { delete state.wb.busy[id]; await refresh(); }
 }
+// After a background run starts (pool / CSV), poll until the engine finishes so the row flips from Working to Your turn by itself.
+const flowPolls = new Set();
+function wbPollFlow(id, attempt = 0) {
+  if (flowPolls.has(id) && attempt === 0) return; flowPolls.add(id);
+  setTimeout(async () => {
+    try { const r = await API(`/api/leads/${encodeURIComponent(id)}/flow`); if (r.running || r.flow?.status === 'running') { if (attempt < 60) return wbPollFlow(id, attempt + 1); } }
+    catch { /* lead may have been removed */ }
+    flowPolls.delete(id); await refresh();
+  }, attempt === 0 ? 2500 : 4000);
+}
 async function wbRunPending() {
   if (state.wb.pendingRan) return; state.wb.pendingRan = true;
   try { const r = await API('/api/flow/run-pending', { method: 'POST', body: JSON.stringify({ limit: 3 }) }); if (r.ran.length) { await refresh(); if (r.remaining > 0) { state.wb.pendingRan = false; wbRunPending(); } } }
@@ -2934,6 +2980,8 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const pick = event.target.closest('[data-pool-pick]');
+  if (pick) { const id = pick.dataset.poolPick; const set = new Set(state.wb.poolPicks || []); if (pick.checked) set.add(id); else set.delete(id); state.wb.poolPicks = Array.from(set); renderApp(); return; }
   const fye = event.target.closest('[data-wb-fye]');
   if (fye) { try { await API(`/api/leads/${encodeURIComponent(fye.dataset.wbFye)}`, { method: 'PATCH', body: JSON.stringify({ financialYearEnd: fye.value ? Number(fye.value) : null }) }); toast(fye.value ? `Financial year-end set to ${FYE_MONTHS[Number(fye.value) - 1]} — approach window updated.` : 'Financial year-end cleared.'); await refresh(); } catch (err) { toast(err.message, true); } return; }
   const sel = event.target.closest('[data-wb-project]');

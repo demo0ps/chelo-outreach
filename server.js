@@ -977,7 +977,11 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
       // 1 · Verify
       flowStep(lead, 'verify', { status: 'running' });
       if (lead.doNotContact || isSuppressedEmail(lead.email)) { flowStep(lead, 'verify', { status: 'blocked', detail: 'On the do-not-contact list.' }); lead.flow.status = 'blocked'; return lead.flow; }
-      if (!normalizeEmail(lead.email)) { flowStep(lead, 'verify', { status: 'needs-email', detail: 'No email address yet. Add a work email from a public page or your own records to continue.' }); lead.flow.status = 'blocked'; return lead.flow; }
+      if (!normalizeEmail(lead.email) && (lead.website || lead.sourceUrl || lead.company)) {
+        flowStep(lead, 'verify', { status: 'running', detail: 'No email yet — looking for their published mailbox.' });
+        try { await findLeadMailbox(lead, actor); } catch (err) { flowStep(lead, 'verify', { status: 'running', detail: `Mailbox search failed: ${String(err.message || err).slice(0, 120)}` }); }
+      }
+      if (!normalizeEmail(lead.email)) { flowStep(lead, 'verify', { status: 'needs-email', detail: 'Chelo could not find a published email address for them. Add one from their website or your own records, then press Run again.' }); lead.flow.status = 'blocked'; return lead.flow; }
       const contact = await inspectContactRecord(lead);
       lead.contactCheck = contact;
       if (contact.status === 'invalid') { flowStep(lead, 'verify', { status: 'dead', detail: contact.reason }); lead.flow.status = 'dead'; lead.mailboxCheck = { status: 'invalid', reason: contact.reason, checkedAt: now() }; configStore.recordAudit({ actor, action: 'flow.dead-email', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${contact.reason}` }); return lead.flow; }
@@ -2578,6 +2582,36 @@ async function handleApi(req, res, url) {
       const issues = rowResults.filter(result => result.status !== 'ready').map(({ row, status, reason, code, duplicateOn, duplicateOf }) => ({ row, status, reason, ...(code ? { code } : {}), ...(duplicateOn ? { duplicateOn } : {}), ...(duplicateOf ? { duplicateOf } : {}) }));
       return sendJson(res, 201, { imported, invalidDeleted, duplicates, suppressed, needsClarification, retryRequired, missingOrganisation, needsCorrection, issues, candidates: db.candidates });
     }
+    // Bulk "Add & run": promote several pool/CSV rows and run the full workflow on each, a couple at a time in the background.
+    if (method === 'POST' && pathname === '/api/candidates/promote-run') {
+      const body = await readBody(req);
+      const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 50) : [];
+      if (!ids.length) return sendJson(res, 400, { error: 'Tick at least one organisation.' });
+      const origin = publicOrigin(req); const actor = actorName();
+      const added = []; const skipped = [];
+      for (const cid of ids) {
+        const candidate = db.candidates.find(c => c.id === cid);
+        if (!candidate) { skipped.push({ id: cid, reason: 'not found' }); continue; }
+        if (candidate.promotedLeadId) { const existing = findLead(candidate.promotedLeadId); if (existing) added.push(existing); else skipped.push({ id: cid, company: candidate.company, reason: 'already added' }); continue; }
+        const email = normalizeEmail(candidate.email);
+        if (email && isSuppressedEmail(email)) { skipped.push({ id: cid, company: candidate.company, reason: 'on the do-not-contact list' }); continue; }
+        const duplicate = db.leads.find(l => (email && normalizeEmail(l.email) === email) || normCompany(l.company) === normCompany(candidate.company));
+        if (duplicate) { candidate.status = 'Already in pipeline'; candidate.promotedLeadId = duplicate.id; added.push(duplicate); continue; }
+        const check = await inspectContactRecord(candidate);
+        if (check.status === 'invalid') { skipped.push({ id: cid, company: candidate.company, reason: 'email address does not work' }); continue; }
+        candidate.contactCheck = check;
+        const lead = safeLead(candidate, check);
+        db.leads.unshift(lead);
+        candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
+        added.push(lead);
+      }
+      if (added.length) addActivity(`${added.length} organisation${added.length === 1 ? '' : 's'} added from the pool — Chelo is checking, researching and drafting`, 'lead', actor);
+      saveDb();
+      const queue = added.filter(l => !flowRuns.has(l.id) && !['Sent', 'Approved'].includes(l.emailStatus));
+      queue.forEach(l => { l.flow = { ...(l.flow || {}), status: 'running', steps: (l.flow || {}).steps || {} }; });
+      (async () => { const workers = Array.from({ length: Math.min(2, queue.length) }, async () => { while (queue.length) { const l = queue.shift(); try { await runLeadFlow(l, { actor, origin }); } catch { /* recorded on the lead */ } } }); await Promise.all(workers); })();
+      return sendJson(res, 202, { added: added.map(clientLead), skipped, running: added.length });
+    }
     const candidateRoute = pathname.match(/^\/api\/candidates\/([^/]+)(?:\/(.*))?$/);
     if (candidateRoute) {
       const candidate = db.candidates.find(c => c.id === candidateRoute[1]);
@@ -2666,12 +2700,15 @@ async function handleApi(req, res, url) {
           return sendJson(res, 200, { deleted: true, error: 'The email syntax/domain check failed definitively. The candidate record was removed.' });
         }
         candidate.contactCheck = check;
-        if (check.status !== 'ready') {
+        const promoteBody = await readBody(req).catch(() => ({}));
+        const runFlow = promoteBody.run === true;
+        if (check.status !== 'ready' && !runFlow) {
           saveDb();
           return sendJson(res, 409, { error: `Complete intake checks before promotion. ${(check.issues || []).join(', ') || check.status}`, contactCheck: check });
         }
         const lead = safeLead(candidate, check);
         db.leads.unshift(lead);
+        if (runFlow) { const origin = publicOrigin(req); setTimeout(() => runLeadFlow(lead, { actor: actorName(), origin }).catch(() => {}), 0); }
         queueLikelyDuplicates(lead, 'leads', checkDuplicates(lead, { excludeId: lead.id }).matches.filter(x => x.id !== candidate.id), actorName());
         candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
         addActivity(`${candidate.company} added to the pipeline`, 'lead', actorName());

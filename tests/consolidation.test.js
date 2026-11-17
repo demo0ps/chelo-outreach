@@ -109,15 +109,15 @@ test('Preview before send: workbench and approvals open one screen with email + 
   t.state.view = 'workbench'; t.state.wb.selectedId = 'l-draft'; t.renderApp();
   assert.match(html.app, /data-action="wb-send-all" data-id="l-draft"/, 'the one button opens the preview');
   assert.match(html.app, /Who they are/); assert.match(html.app, /What we.{1,6}ll send/); assert.doesNotMatch(html.app, /class="wb-step /, 'no stepper');
-  // simulate the API answer and render the modal
-  t.state.modal = { type: 'send-preview', id: 'l-draft', step: 0, loading: false, error: '', data: { leadId: 'l-draft', step: 0, from: { name: 'Nandi', email: 'n@cheloapp.com' }, to: { name: 'Naledi', email: 'n@x.co' }, subject: 'Bolt + Literacy', text: 'Hi', html: '<!doctype html><html><body><p>Hi</p></body></html>', links: [{ url: 'https://x/track/cta/abc', kind: 'cta' }], attachments: [], proposal: null, steps: [], status: { email: 'Draft', sequence: null, approvalPolicy: 'single' }, checks: [{ id: 'to', ok: true, label: 'Recipient', detail: 'n@x.co' }, { id: 'cta', ok: true, label: 'Reply button present', detail: '' }], ready: true } };
+  // simulate the API answer and render the full-width review page
+  t.state.view = 'review'; t.state.review = { id: 'l-draft', step: 0, loading: false, error: '', returnView: 'workbench', cache: {} }; t.state.review.cache[0] = { leadId: 'l-draft', step: 0, from: { name: 'Nandi', email: 'n@cheloapp.com' }, to: { name: 'Naledi', email: 'n@x.co' }, subject: 'Bolt + Literacy', text: 'Hi', html: '<!doctype html><html><body><p>Hi</p></body></html>', links: [{ url: 'https://x/track/cta/abc', kind: 'cta' }], attachments: [], proposal: null, steps: [], status: { email: 'Draft', sequence: null, approvalPolicy: 'single' }, checks: [{ id: 'to', ok: true, label: 'Recipient', detail: 'n@x.co' }, { id: 'cta', ok: true, label: 'Reply button present', detail: '' }], ready: true };
   t.renderApp();
-  assert.match(html.modal, /Preview before send/); assert.match(html.modal, /class="sp-frame"/); assert.match(html.modal, /srcdoc="/);
-  assert.match(html.modal, /No proposal PDF yet/); assert.match(html.modal, /class="sp-checks"/);
-  assert.match(html.modal, /data-action="email-approve" data-id="l-draft"/, 'single primary action for a draft');
-  assert.doesNotMatch(html.modal, /data-action="send-smtp"/);
-  t.state.modal.data.status.email = 'Approved'; t.renderApp();
-  assert.match(html.modal, /data-action="send-smtp"/); assert.doesNotMatch(html.modal, /data-action="email-approve"/);
-  t.state.modal.data.proposal = { url: '/api/leads/l-draft/proposal/preview', download: '/api/leads/l-draft/proposal/download' }; t.renderApp();
-  assert.match(html.modal, /class="sp-pdf-frame"[^>]*src="\/api\/leads\/l-draft\/proposal\/preview/);
+  assert.match(html.app, /Read before sending/); assert.match(html.app, /class="sp-frame"/); assert.match(html.app, /srcdoc="/);
+  assert.match(html.app, /No proposal PDF yet/); assert.match(html.app, /class="sp-checks"/);
+  assert.match(html.app, /data-action="email-approve" data-id="l-draft"/, 'single primary action for a draft');
+  assert.doesNotMatch(html.app, /data-action="send-smtp"/);
+  t.state.review.cache[0].status.email = 'Approved'; t.renderApp();
+  assert.match(html.app, /data-action="send-smtp"/); assert.doesNotMatch(html.app, /data-action="email-approve"/);
+  t.state.review.cache[0].proposal = { url: '/api/leads/l-draft/proposal/preview', download: '/api/leads/l-draft/proposal/download' }; t.renderApp();
+  assert.match(html.app, /class="sp-pdf-frame"[^>]*src="\/api\/leads\/l-draft\/proposal\/preview/);
 });
