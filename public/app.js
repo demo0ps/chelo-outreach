@@ -16,7 +16,7 @@ const state = {
   rel: { summary: null, loading: false, error: '', busy: false, view: null, viewId: null, tab: 'timeline' },
   cat: { status: null, loading: false, busy: false, task: '', progress: '', storage: null },
   ops: { data: null, loading: false, error: '', area: 'all', tab: 'health' },
-  wb: { selectedId: null, sort: 'fit', filter: 'all', intake: 'add', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
+  wb: { selectedId: null, sort: 'fit', filter: 'your-turn', intake: 'add', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
   view: 'workbench', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
@@ -292,12 +292,12 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['inbox', 'Inbox — conversations & approvals', 'reply'], ['workbench', 'Outreach workbench (add, local pool, CSV)', 'wand'], ['overview', 'Overview', 'overview'], ['projects', 'Verified projects', 'grid'],
-  ['prospects', 'Prospects — table or board', 'prospects'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Relationships', 'partners'],
-  ['proposals', 'Proposals', 'proposals'], ['ops', 'Ops — health, deliverability, analytics, data quality', 'activity'], ['settings', 'Settings', 'settings']
+  ['inbox', 'Inbox — replies and approvals', 'reply'], ['workbench', 'To do — funders that need you', 'wand'], ['overview', 'Today', 'overview'], ['projects', 'Projects', 'grid'],
+  ['prospects', 'Funders — everyone we are talking to', 'prospects'], ['briefings', 'Briefings — who agreed to talk', 'briefings'], ['sent', 'Sent', 'mail'], ['partners', 'Partners — who already funds us', 'partners'],
+  ['ops', 'Health — is the engine OK (root only)', 'activity'], ['settings', 'Settings', 'settings']
 ];
 function paletteItems(query) {
-  const viewMeta = VIEW_META.map(([v, label, icon]) => v === 'ops' && !isRoot() ? [v, 'Analytics', 'analytics'] : [v, label, icon]);
+  const viewMeta = VIEW_META.map(([v, label, icon]) => v === 'ops' && !isRoot() ? [v, 'Results', 'analytics'] : [v, label, icon]);
   const q = (query || '').trim().toLowerCase();
   const match = text => !q || text.toLowerCase().includes(q);
   const groups = [];
@@ -384,7 +384,7 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ workbench: 'Workbench', deliverability: 'Deliverability', data: 'Data quality', overview: 'Overview', discover: 'Discover', projects: 'Verified Projects', prospects: 'Prospects', pipeline: 'Pipeline', briefings: 'Briefings', sent: 'Sent', partners: 'Relationships', proposals: 'Proposals', analytics: 'Analytics', settings: 'Settings' })[state.view] || 'Overview';
+  const label = ({ workbench: 'To do', inbox: 'Inbox', ops: state.auth.isRoot ? 'Health' : 'Results', deliverability: 'Deliverability', data: 'Data quality', overview: 'Today', discover: 'To do', projects: 'Projects', prospects: 'Funders', pipeline: 'Funders', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Funders', analytics: 'Results', settings: 'Settings' })[state.view] || 'Today';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
@@ -404,17 +404,16 @@ function shellSidebar() {
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
       ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
-      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['replied', 'needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length + state.data.candidates.filter(c => c.status === 'New candidate').length)}
-      ${navItem('overview', 'Overview', 'overview')}
+      ${navItem('workbench', 'To do', 'wand', state.data.leads.filter(l => simpleStatusOf(l) === 'your-turn' && wbStatusOf(l) !== 'new').length + state.data.candidates.filter(c => c.status === 'New candidate').length)}
+      ${navItem('overview', 'Today', 'overview')}
       ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
-      ${navItem('prospects', 'Prospects', 'prospects')}
+      ${navItem('prospects', 'Funders', 'prospects')}
       ${navItem('briefings', 'Briefings', 'briefings', pending)}
       ${navItem('sent', 'Sent', 'mail')}
-      ${navItem('partners', 'Relationships', 'partners')}
-      ${navItem('proposals', 'Proposals', 'proposals')}
-      ${navItem('ops', isRoot() ? 'Ops' : 'Analytics', 'activity', ((state.ops.data ? (state.ops.data.counts.critical + state.ops.data.counts.warn) : 0) + (state.data.mailboxes || []).filter(m => m.status === 'paused').length + (state.dq.data ? (state.dq.data.openMergeReviews || 0) : 0)) || null)}
+      ${navItem('partners', 'Partners', 'partners')}
+      ${navItem('ops', isRoot() ? 'Health' : 'Results', 'activity', ((state.ops.data ? (state.ops.data.counts.critical + state.ops.data.counts.warn) : 0) + (state.data.mailboxes || []).filter(m => m.status === 'paused').length + (state.dq.data ? (state.dq.data.openMergeReviews || 0) : 0)) || null)}
       ${navItem('settings', 'Settings', 'settings')}
-      <button type="button" class="nav-item mobile-more-button ${['projects','prospects','briefings','sent','partners','proposals','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
+      <button type="button" class="nav-item mobile-more-button ${['projects','prospects','briefings','sent','partners','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
     </nav>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-card"><span class="tiny-label">Outreach workflow</span><strong>Source · personalise · connect</strong><p>Review local and CSV candidates, keep source details, then build considered partnerships.</p><div class="sidebar-progress"><span></span></div></div>
@@ -426,7 +425,7 @@ function renderMobileMoreMenu() {
   const items = [
     ['projects', 'Projects', 'grid'], ['prospects', 'Prospects', 'prospects'], ['pipeline', 'Pipeline', 'pipeline'],
     ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent', 'mail'],
-    ['partners', 'Relationships', 'partners'], ['proposals', 'Proposals', 'proposals'],
+    ['partners', 'Partners', 'partners'],
     ['settings', 'Settings', 'settings']
   ];
   return `<div class="mobile-more-backdrop" id="mobile-more-backdrop"><section class="mobile-more-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-more-title"><div class="mobile-more-heading"><div><span class="eyebrow">Workspace</span><h2 id="mobile-more-title">More sections</h2></div><button type="button" class="close-button" data-action="mobile-more-close" aria-label="Close navigation">${svgIcon('close')}</button></div><div class="mobile-more-grid">${items.map(([view, label, icon]) => `<button type="button" class="mobile-more-link ${state.view === view ? 'active' : ''}" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ''}><span class="mobile-more-icon">${svgIcon(icon)}</span><span>${label}</span>${state.view === view ? '<span class="mobile-more-current">Current</span>' : ''}</button>`).join('')}</div></section></div>`;
@@ -485,7 +484,7 @@ function overviewView() {
   }).join('');
   const followupRows = followUps.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('mail')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>Follow-up ${Number(l.followUpStep || 1)} of 2 · ${isoDate(l.followUpAt)}</span></div><button type="button" class="panel-action" data-action="follow-up" data-id="${esc(l.id)}">${svgIcon('send')}Draft</button></div>`).join('');
   const today = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
-  return `${pageHead('Partnerships workspace', 'Overview', today, `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add organisation</button>`, 'overview')}
+  return `${pageHead('Today', 'Today', today, `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add a funder</button>`, 'overview')}
     ${state.dismissDemo ? '' : demoBanner()}
     <section class="dashboard-grid">
       <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('clock')}Follow-up queue</h2></div><button class="panel-action" data-view="prospects">${svgIcon('prospects')}View prospects</button></div><div class="shortcut-list">${followupRows || `<div class="panel-empty"><strong>You're up to date</strong>No follow-up tasks are due yet.</div>`}</div></div>
@@ -530,7 +529,7 @@ function prospectsView() {
   const mode = state.prospectsMode === 'board' ? 'board' : 'table';
   const toggle = `<div class="view-toggle" role="tablist" aria-label="Layout"><button type="button" role="tab" class="view-toggle-btn ${mode === 'table' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="table" aria-selected="${mode === 'table'}">${svgIcon('listCheck')} Table</button><button type="button" role="tab" class="view-toggle-btn ${mode === 'board' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="board" aria-selected="${mode === 'board'}">${svgIcon('kanban')} Board</button></div>`;
   const body = mode === 'board' ? pipelineBoard() : `<div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects match.</strong><p>Adjust the filters or add an organisation in the Workbench.</p></div></td></tr>`}</tbody></table></div></div>`;
-  return `${pageHead('Donor development', 'Prospects', '', `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add organisation</button>`)}
+  return `${pageHead('Funders', 'Funders', 'Everyone we are talking to.', `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add a funder</button>`)}
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search organisation, contact, project…" value="${esc(state.query)}" /></label>${mode === 'table' ? `<select class="select-control" id="stage-filter">${stages.map(s => `<option value="${esc(s)}" ${state.stageFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>` : ''}</div><div class="control-right">${toggle}</div></div>
     ${body}`;
 }
@@ -579,7 +578,7 @@ function sentView() {
   const openRate = trackedInitial ? `${Math.round(openedMessages / trackedInitial * 100)}%` : 'Unavailable';
   const pct = n => total ? `${Math.round(n / total * 100)}%` : '0%';
   const rows = [...recipients].map(id => ({ lead: getLead(id), first: initial.filter(m => m.leadId === id).sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt))[0] })).filter(x => x.lead).sort((a, b) => new Date(b.first.sentAt) - new Date(a.first.sentAt));
-  return `${pageHead('Outreach activity', 'Sent', 'Replies are handled in the Inbox; this is the send log.', `<button class="button button-secondary" data-view="prospects">${svgIcon('prospects')} Open prospects</button>`)}
+  return `${pageHead('Sent', 'Sent', 'Every email that went out. Replies are in the Inbox.', `<button class="button button-secondary" data-view="prospects">${svgIcon('prospects')} Open prospects</button>`)}
     <div class="provider-notice"><span class="provider-notice-icon">${svgIcon('info')}</span><div><strong>${state.data.settings?.smtpConfigured ? 'SMTP sending is available after approval' : 'SMTP is not configured yet'}</strong><p>${smtpSent} messages were accepted by SMTP; ${manualHandoffs} were confirmed as manual handoffs. Open counts use an approximate tracking pixel when a public HTTPS URL is configured; image blockers, caching and privacy proxies affect accuracy. “Yes — choose…” clicks are first-party CTA hits, and replies remain manually recorded.</p></div></div>
     <section class="metric-grid sent-metrics">${metricCard('Recipients', String(total), 'initial outreach confirmed', 'mail')}${metricCard('SMTP accepted', String(smtpSent), `${manualHandoffs} manual handoffs`, 'send')}${metricCard('Estimated open rate', openRate, `${openedMessages} unique tracked opens`, 'eye')}${metricCard('Yes CTA click rate', pct(clicks), `${clicks} recipients clicked “Yes — choose…”`, 'target')}${metricCard('Response rate', pct(replies), `${replies} replies recorded`, 'checkCircle')}${metricCard('Briefing rate', pct(bookings), `${bookings} briefing requests`, 'calendar')}</section>
     <div class="panel sent-panel"><div class="panel-header"><div><h2>Outreach history</h2><p>One row per recipient, with follow-up status and engagement events.</p></div><span class="subtle">${rows.length} recipient${rows.length === 1 ? '' : 's'}</span></div>${rows.length ? `<div class="lead-table-wrap"><table class="table sent-table"><thead><tr><th>Recipient</th><th>First handoff</th><th>Emails</th><th>Clicks</th><th>Reply</th><th>Briefing</th><th>Next follow-up</th><th>Actions</th></tr></thead><tbody>${rows.map(({ lead, first }) => {
@@ -612,7 +611,7 @@ function bookingsView() {
     const parts = dateParts(b.date);
     return `<article class="briefing-card"><div class="briefing-main"><div class="briefing-head"><div><h3>${esc(b.organization)}</h3><span class="contact-small">${esc(b.contactName)} · ${esc(b.email)}</span></div>${statusPill(b.status)}</div><div class="briefing-details"><span>${svgIcon('phone')}${esc(b.phone || 'No phone added')}</span><span>${svgIcon('grid')}${esc(lead?.project || 'Education impact partnership')}</span><span>${svgIcon('clock')}${Number(b.durationMinutes || INTRO_MEETING_MINUTES)} min intro</span><span>${svgIcon('building')}${esc(lead?.owner || 'Chelo team')}</span><span>${svgIcon('external')}${esc(platformLabel(b.videoPlatform))}${b.meetingUrl ? ` · <a href="${esc(safeUrl(b.meetingUrl))}" target="_blank" rel="noopener noreferrer">join link</a>` : ' · link pending'}</span>${b.confirmationStatus ? `<span>${svgIcon('mail')}Invite: ${esc(b.confirmationStatus)}</span>` : ''}</div>${b.note ? `<div class="detail-note" style="margin-top:11px">${esc(b.note)}</div>` : ''}</div><div class="briefing-side"><div class="briefing-time"><strong>${parts.day} ${esc(parts.month)}</strong>${esc(b.time)} · SAST</div><div class="briefing-actions">${lead ? `<button class="button button-ghost button-small" data-action="open-lead" data-id="${esc(lead.id)}">${svgIcon('eye')}Prospect</button>` : ''}<button class="button button-ghost button-small" data-action="edit-booking" data-id="${esc(b.id)}">${svgIcon('edit')} Link & time</button>${b.status === 'Requested' ? `<button class="button button-primary button-small" data-action="confirm-booking" data-id="${esc(b.id)}">${svgIcon('checkCircle')}Confirm & send invite</button><button class="button button-ghost button-small" data-action="decline-booking" data-id="${esc(b.id)}">${svgIcon('xCircle')}Decline</button>` : b.status === 'Confirmed' ? `<a class="button button-ghost button-small" href="/api/bookings/${encodeURIComponent(b.id)}/invite.ics" download>${svgIcon('download')} .ics</a><button class="button button-secondary button-small" data-action="resend-invite" data-id="${esc(b.id)}">${svgIcon('send')} Resend invite</button><button class="button button-secondary button-small" data-action="complete-booking" data-id="${esc(b.id)}">${svgIcon('check')}Complete</button>` : ''}</div></div></article>`;
   }).join('');
-  return `${pageHead('Donor conversations', 'Briefings', 'A “Yes” from a prospect becomes a time preference for Chelo to review and confirm.', '')}
+  return `${pageHead('Briefings', 'Briefings', 'Funders who said yes to a call. Confirm a time, or suggest another.', '')}
     <div class="booking-grid"><div><div class="metric-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));max-width:480px">${metricCard('Awaiting confirmation', String(requested), 'date/time requests', 'clock', requested ? 'Review now' : 'All clear', Boolean(requested))}${metricCard('Confirmed briefings', String(confirmed), 'on the calendar manually', 'calendar', 'Calendar sync later', false)}</div><div class="booking-cards">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('calendar')}</div><strong>No briefing requests yet</strong><p>When a donor follows the booking link in an approved email, their preferred date and time will be added here.</p></div>`}</div></div>
     <aside class="briefing-aside"><div class="aside-card dark"><h3 class="h-icon">${svgIcon('bell')}Booking requests</h3><p>The prospect chooses a preferred slot and leaves a phone number. Your team confirms the actual meeting time.</p><span class="aside-number">${requested}</span><p>need a team response</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('calendar')}Calendar invites</h3><p>Confirming a request emails an RFC 5545 .ics invite (Africa/Johannesburg) with the Google Meet, Microsoft Teams or Zoom link. Set default room links under Settings → Briefings.</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('video')}Default platform</h3><p>${esc(platformLabel(state.data.settings?.defaultPlatform))}${state.data.settings?.smtpConfigured ? ' · SMTP ready' : ' · SMTP not configured: download .ics and send manually'}</p></div></aside></div>`;
 }
@@ -685,7 +684,7 @@ function settingsView() {
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
   const sectionContent = state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
   const tabs = `<div class="settings-tabs" role="tablist">${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button><button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
-  return `${pageHead('Workspace controls', 'Settings', '', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
+  return `${pageHead('Settings', 'Settings', '', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
 }
 function authGateView() {
   const setup = Boolean(state.auth.setupRequired);
@@ -705,7 +704,6 @@ function renderView() {
     case 'briefings': return bookingsView();
     case 'sent': return sentView();
     case 'partners': return relationshipsView();
-    case 'proposals': return proposalsView();
     case 'settings': return settingsView();
     default: return overviewView();
   }
@@ -1104,7 +1102,7 @@ function emailModal(lead, followUp) {
     ${emailReadinessCard(lead, saved?.subject || draft.subject, draft.body, followUp, attachProposal)}
     <div class="email-cta-preview"><span>PRIMARY EMAIL CTA</span><a href="${esc(bookingPageLink(lead))}" target="_blank" rel="noopener noreferrer">Yes — choose a time ${svgIcon('arrow')}</a><small>Opens the booking form for a ${INTRO_MEETING_MINUTES}-minute introductory video chat. Contact details are prefilled; Chelo manually confirms a requested time.</small></div>
     ${proposalCard}
-    ${approval ? `<div class="approval-trail"><span class="approval-trail-title">${svgIcon('shield')} Approval trail${fourEyes ? ' · 4-eyes policy' : ''}</span><span>1st · ${esc(approval.firstApprover || '—')} · ${approval.firstApprovedAt ? isoDate(approval.firstApprovedAt) : ''}</span>${approval.secondApprover ? `<span>2nd · ${esc(approval.secondApprover)} · ${isoDate(approval.secondApprovedAt)}</span>` : pendingSecond ? `<span class="approval-pending">Awaiting countersignature by a different Admin or Reviewer</span>` : ''}<small>Digest ${esc(String(approval.digest || '').slice(0, 20))}… · content is locked; any edit voids approval.</small></div>` : ''}
+    ${approval ? `<div class="approval-trail"><span class="approval-trail-title">${svgIcon('shield')} Who approved${fourEyes ? ' · two people must approve' : ''}</span><span>1st · ${esc(approval.firstApprover || '—')} · ${approval.firstApprovedAt ? isoDate(approval.firstApprovedAt) : ''}</span>${approval.secondApprover ? `<span>2nd · ${esc(approval.secondApprover)} · ${isoDate(approval.secondApprovedAt)}</span>` : pendingSecond ? `<span class="approval-pending">Awaiting countersignature by a different Admin or Reviewer</span>` : ''}<small>Digest ${esc(String(approval.digest || '').slice(0, 20))}… · content is locked; any edit voids approval.</small></div>` : ''}
     ${lead.doNotContact ? `<div class="form-error">This contact is on the do-not-contact list. Outreach is disabled.</div>` : ''}${noEmail ? `<div class="form-error">Add the contact’s email address before approving this message.</div>` : ''}`;
   let rightButtons = '';
   if (pendingSecond) {
@@ -1168,7 +1166,8 @@ const VIEW_ALIASES = {
   analytics: () => { state.ops.tab = 'analytics'; return 'ops'; },
   deliverability: () => { state.ops.tab = 'deliverability'; return 'ops'; },
   data: () => { state.ops.tab = 'data'; return 'ops'; },
-  partners: () => 'partners'
+  partners: () => 'partners',
+  proposals: () => 'prospects' // proposals now live on each funder's page (PDF always travels with the email)
 };
 function resolveView(view) { return VIEW_ALIASES[view] ? VIEW_ALIASES[view]() : view; }
 function setView(view) {
@@ -1439,7 +1438,7 @@ async function dispatchAction(button) {
     if (action === 'set-guardrail') { await API('/api/settings', { method: 'PUT', body: JSON.stringify({ guardrail: button.dataset.mode }) }); await refresh(); toast(button.dataset.mode === 'block' ? 'Guardrail will block approvals with issues.' : 'Guardrail set to warn only.'); return; }
     if (action === 'set-approval-policy') {
       await API('/api/settings', { method: 'PUT', body: JSON.stringify({ approvalPolicy: button.dataset.policy }) });
-      state.auth = await API('/api/auth/status'); await refresh(); toast(button.dataset.policy === 'four-eyes' ? 'Strict 4-eyes approval enabled for all outbound email.' : 'Single-approver policy enabled.'); return;
+      state.auth = await API('/api/auth/status'); await refresh(); toast(button.dataset.policy === 'four-eyes' ? 'From now on two people must approve each email.' : 'From now on one person approves and sends.'); return;
     }
     if (action === 'clear-demo') {
       if (!confirm('Remove all demo prospects, candidates, partners and briefings? Verified Chelo projects are kept.')) return;
@@ -1509,12 +1508,12 @@ async function dispatchAction(button) {
       await refresh();
       const updated = getLead(id);
       const status = followUp ? updated?.followUpEmailStatus : updated?.emailStatus;
-      toast(status === 'Pending second approval' ? 'First approval recorded. A different Admin or Reviewer must countersign before handoff.' : 'Email approved. Open it in your email client when ready.'); return;
+      toast(status === 'Pending second approval' ? 'Approved by you. A second person must approve before it can be sent.' : 'Email approved. Open it in your email client when ready.'); return;
     }
     if (action === 'email-countersign') {
       const followUp = button.dataset.followUp === 'true';
       await API(`/api/leads/${encodeURIComponent(id)}/approve-email`, { method: 'POST', body: JSON.stringify({ kind: followUp ? 'follow-up' : 'initial', confirmSecond: true }) });
-      await refresh(); toast('Countersigned. The email is now approved for handoff.'); return;
+      await refresh(); toast('Approved by a second person. The email can be sent now.'); return;
     }
     if (action === 'email-return') {
       const followUp = button.dataset.followUp === 'true';
@@ -1983,7 +1982,7 @@ function projectsView() {
   const totalPipeline = projects.reduce((s, p) => s + Number(p.funding?.pipelineAmount || 0), 0);
   const canEdit = state.auth.role !== 'reviewer';
   const cards = projects.map(p => `<article class="project-card"><div class="project-card-head"><div><span class="project-sector">${esc(p.sector || 'Education')}</span><h3>${esc(p.name)}</h3><p class="project-recipient">${svgIcon('building')} ${esc(p.recipientName)}${p.recipientType ? ` · ${esc(p.recipientType)}` : ''}</p></div><span class="stage-pill pill-interested">${esc(p.province || 'National')}</span></div><p class="project-summary">${esc(p.summary || '')}</p>${fundingBar(p.funding, p.targetAmount)}<div class="project-meta"><span>${svgIcon('clock')}${esc(p.grantCycleWindow || 'Rolling')}</span><span>${svgIcon('check')}Verified ${esc(dateOnly(p.verifiedAt) || '—')}</span><span>${svgIcon('prospects')}${p.linkedProspects} prospect${p.linkedProspects === 1 ? '' : 's'} · ${shortMoney(p.funding?.pipelineAmount || 0)} in pipeline</span></div><div class="project-metrics">${(p.verifiedMetrics || []).map(m => `<div class="project-metric"><strong>${esc(m.label)}</strong><span>${esc(String(m.baselineValue))} → <b>${esc(String(m.currentValue))}</b> ${esc(m.unit)}</span><small>${esc(m.period)} · ${esc(m.source)}</small></div>`).join('') || '<small class="subtle">No verified metrics yet.</small>'}</div><div class="project-actions"><button class="button button-secondary button-small" data-action="open-project" data-id="${esc(p.id)}">${svgIcon('grid')}Details</button>${canEdit ? `<button class="button button-ghost button-small" data-action="edit-project" data-id="${esc(p.id)}">${svgIcon('edit')} Edit</button>` : ''}</div></article>`).join('');
-  return `${pageHead('Verified impact catalog', 'Verified Projects', 'School, NGO and community projects verified by Chelo, with live funding gaps fed by the pipeline.', canEdit ? `<input type="file" id="project-csv-input" accept=".csv,text/csv" hidden /><a class="button button-ghost" href="/sample-projects.csv" download>${svgIcon('download')}CSV template</a><button class="button button-secondary" data-action="import-projects">${svgIcon('upload')} Import CSV</button><button class="button button-primary" data-action="new-project">${svgIcon('plus')} Add project</button>` : '')}
+  return `${pageHead('Projects', 'Projects', 'What we are raising money for. Each one is verified by Chelo.', canEdit ? `<input type="file" id="project-csv-input" accept=".csv,text/csv" hidden /><a class="button button-ghost" href="/sample-projects.csv" download>${svgIcon('download')}CSV template</a><button class="button button-secondary" data-action="import-projects">${svgIcon('upload')} Import CSV</button><button class="button button-primary" data-action="new-project">${svgIcon('plus')} Add project</button>` : '')}
     <div class="metric-grid">${metricCard('Catalog target', shortMoney(totalTarget), `${projects.length} verified project${projects.length === 1 ? '' : 's'}`, 'target')}${metricCard('Open funding gap', shortMoney(totalGap), 'after committed + won', 'trend', totalGap ? 'Seeking partners' : 'Fully funded', Boolean(totalGap))}${metricCard('Pipeline coverage', shortMoney(totalPipeline), 'active prospects linked', 'send', totalGap ? `${Math.min(999, Math.round((totalPipeline / Math.max(1, totalGap)) * 100))}% of gap` : '', false)}${metricCard('Provinces', String(new Set(projects.map(p => p.province)).size), 'with verified recipients', 'calendar')}</div>
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="project-search" type="search" placeholder="Search project, recipient, sector…" value="${esc(state.query)}" /></label><select class="select-control" id="project-province-filter">${provinces.map(p => `<option ${state.projectFilter === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div><div class="control-right"><span class="subtle">${projects.length} shown</span></div></div>
     <div class="project-grid">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('grid')}</div><strong>No projects match</strong><p>Add a verified project or import the CSV template.</p></div>`}</div>`;
@@ -2196,7 +2195,14 @@ function researchModal(lead) {
 // =====================================================================
 // Outreach Workbench — one screen: add/discover → verify → research → match → draft → review & send → track
 // =====================================================================
-const WB_FILTERS = [['all', 'All'], ['replied', 'Replied · triage'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['queued', 'Queued'], ['sequence', 'In sequence'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
+// What a person sees: three states (plus Stopped). The engine's precise status stays on hover and in Health.
+const WB_FILTERS = [['all', 'All'], ['your-turn', 'Your turn'], ['working', 'Working'], ['waiting', 'Waiting on them'], ['stopped', 'Stopped']];
+const SIMPLE_OF = { replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
+const SIMPLE_META = { 'your-turn': ['Your turn', 'pill-interested'], working: ['Working', 'pill-researched'], waiting: ['Waiting on them', 'pill-new'], stopped: ['Stopped', 'pill-not-proceeding'] };
+// One line that says what "your turn" means for this funder.
+const NEXT_STEP = { replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
+function simpleStatusOf(lead) { return SIMPLE_OF[wbStatusOf(lead)] || 'your-turn'; }
+function nextStepOf(lead) { return NEXT_STEP[wbStatusOf(lead)] || ''; }
 function approvalItems() {
   const items = [];
   for (const l of state.data.leads) {
@@ -2211,7 +2217,7 @@ function approvalItems() {
   for (const b of state.data.bookings.filter(b => b.status === 'Requested')) { const lead = state.data.leads.find(l => l.id === b.leadId); if (lead) items.push({ kind: 'booking', lead, booking: b, at: b.createdAt }); }
   return items.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
 }
-const APPROVAL_KIND_META = { 'countersign-plan': ['Sequence plan needs countersign', 'shield', 'tone-warn'], plan: ['Sequence plan to approve', 'send', 'tone-info'], 'countersign-email': ['Email needs countersign', 'shield', 'tone-warn'], draft: ['First-touch draft to approve', 'mail', 'tone-info'], research: ['Research brief to review', 'search', 'tone-info'], booking: ['Briefing request to confirm', 'calendar', 'tone-info'] };
+const APPROVAL_KIND_META = { 'countersign-plan': ['Needs a second person to approve', 'shield', 'tone-warn'], plan: ['Email ready — read and send', 'send', 'tone-info'], 'countersign-email': ['Needs a second person to approve', 'shield', 'tone-warn'], draft: ['Email ready — read and send', 'mail', 'tone-info'], research: ['Check what we found about them', 'search', 'tone-info'], booking: ['Confirm a briefing time', 'calendar', 'tone-info'] };
 function wbStatusOf(lead) {
   if (lead.flowStatus) return lead.flowStatus;
   const f = lead.flow; if (!f) return 'new';
@@ -2227,18 +2233,18 @@ function wbStatusOf(lead) {
   return f.status || 'new';
 }
 const WB_STATUS_META = { replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
-function wbPill(status) { const [label, cls] = WB_STATUS_META[status] || [status, 'pill-new']; return `<span class="stage-pill ${cls}">${esc(label)}</span>`; }
+function wbPill(status) { const simple = SIMPLE_OF[status] || 'your-turn'; const [label, cls] = SIMPLE_META[simple]; const [detail] = WB_STATUS_META[status] || [status]; return `<span class="stage-pill ${cls}" title="${esc(detail)}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
 function workbenchView() {
   const leads = state.data.leads.filter(l => !l.isDemo || state.auth.demoAccess || true);
-  const counts = leads.reduce((acc, l) => { const s = wbStatusOf(l); acc[s] = (acc[s] || 0) + 1; acc.all += 1; return acc; }, { all: 0 });
+  const counts = leads.reduce((acc, l) => { const s = simpleStatusOf(l); acc[s] = (acc[s] || 0) + 1; acc.all += 1; return acc; }, { all: 0 });
   const q = state.query.trim().toLowerCase();
-  const visible = leads.filter(l => (state.wb.filter === 'all' ? wbStatusOf(l) !== 'dead' : wbStatusOf(l) === state.wb.filter) && (!q || `${l.company} ${l.contactName} ${l.email} ${l.project || ''}`.toLowerCase().includes(q)));
+  const visible = leads.filter(l => (state.wb.filter === 'all' ? simpleStatusOf(l) !== 'stopped' : simpleStatusOf(l) === state.wb.filter) && (!q || `${l.company} ${l.contactName} ${l.email} ${l.project || ''}`.toLowerCase().includes(q)));
   if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
-  return `${pageHead('Outreach workbench', 'Workbench', 'Add → verify → research → draft → approve → send, in one place.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  return `${pageHead('To do', 'To do', 'Funders that need you. Chelo checks the email address, researches them and writes the first draft — you read it and press Send.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
   ${wbIntakeBar()}
   <div class="wb-layout">
     <section class="panel wb-list-panel">
@@ -2356,7 +2362,7 @@ function wbStepper(lead) {
   const singleSendBody = d ? `<div class="wb-preview"><div class="wb-preview-head"><span>To</span><strong>${esc(lead.contactName || '')} &lt;${esc(lead.email || '')}&gt;</strong></div><div class="wb-preview-head"><span>Subject</span><strong>${esc(d.subject || '')}</strong></div><pre class="wb-preview-body">${esc(d.body || '')}</pre></div>
       <div class="wb-step-actions">
         ${emailStatus === 'Draft' || emailStatus === 'None' ? `<button type="button" class="button button-primary button-small" data-action="email-approve" data-id="${esc(lead.id)}">${svgIcon('checkCircle')}Approve</button>` : ''}
-        ${approvalPending ? `<button type="button" class="button button-primary button-small" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>` : ''}
+        ${approvalPending ? `<button type="button" class="button button-primary button-small" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person</button>` : ''}
         ${emailStatus === 'Approved' ? `<button type="button" class="button button-primary button-small" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Queue & send</button><button type="button" class="button button-secondary button-small" data-action="email-open" data-id="${esc(lead.id)}">${svgIcon('mail')}Open in email client</button><button type="button" class="button button-ghost button-small" data-action="mark-sent" data-id="${esc(lead.id)}">${svgIcon('check')}Mark as sent</button>` : ''}
         ${['Approved', 'Pending second approval'].includes(emailStatus) ? `<button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
         ${emailStatus === 'Sent' ? `<span class="stage-pill pill-won">${svgIcon('check')}Sent ${isoDate(lead.sentAt || lead.updatedAt)}</span>` : ''}
@@ -2391,7 +2397,7 @@ function wbStepper(lead) {
 }
 
 const SEQ_STEP_META = { planned: ['Planned', 'pill-new'], queued: ['Queued', 'pill-researched'], sent: ['Sent', 'pill-won'], skipped: ['Skipped', 'pill-new'], cancelled: ['Cancelled', 'pill-not-proceeding'], failed: ['Failed', 'pill-not-proceeding'] };
-const SEQ_STATUS_META = { draft: ['Draft plan', 'pill-new'], 'pending-approval': ['Awaiting countersign', 'pill-pending'], approved: ['Approved', 'pill-won'], running: ['Running', 'pill-researched'], stopped: ['Stopped', 'pill-not-proceeding'], completed: ['Completed', 'pill-won'] };
+const SEQ_STATUS_META = { draft: ['Not sent yet', 'pill-new'], 'pending-approval': ['Waiting for a second approval', 'pill-pending'], approved: ['Approved', 'pill-won'], running: ['Chelo is following up', 'pill-researched'], stopped: ['Stopped', 'pill-not-proceeding'], completed: ['All follow-ups sent', 'pill-won'] };
 const TRIAGE_META = { interested: ['Interested', 'trophy', 'Reply personally and offer briefing times'], 'not-now': ['Not now', 'clock', 'Pause and resurface on a date'], 'wrong-person': ['Wrong person', 'users', 'Capture the redirect as a new contact'], 'opt-out': ['Opt-out', 'ban', 'Suppress workspace-wide'], automatic: ['Automatic', 'activity', 'Ignore — not engagement'], unclassified: ['Needs a human look', 'info', 'Read and categorise'] };
 function wbTriageLabel(cat) { return (TRIAGE_META[cat] || [cat])[0]; }
 function wbSequenceStepStatus(lead, emailStatus) {
@@ -2434,7 +2440,7 @@ function wbSequencePanel(lead) {
   const approval = seq.approval || {};
   const actions = [];
   if (editable) actions.push(`<button type="button" class="button button-secondary button-small" data-action="seq-save" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('save')}Save plan edits</button>`, `<button type="button" class="button button-primary button-small" data-action="seq-approve" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('checkCircle')}Approve plan & start</button>`, `<button type="button" class="button button-ghost button-small" data-action="seq-build" data-force="true" data-id="${esc(lead.id)}">${svgIcon('refresh')}Rebuild from draft</button>`);
-  if (seq.status === 'pending-approval') actions.push(`<span class="subtle">First approval by ${esc(approval.firstApprover || 'staff')} · a different reviewer must countersign</span>`, `<button type="button" class="button button-primary button-small" data-action="seq-countersign" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('shield')}Countersign (4-eyes)</button>`);
+  if (seq.status === 'pending-approval') actions.push(`<span class="subtle">Approved by ${esc(approval.firstApprover || 'a teammate')} · a second person must approve</span>`, `<button type="button" class="button button-primary button-small" data-action="seq-countersign" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('shield')}Approve as second person</button>`);
   if (['running', 'approved', 'pending-approval'].includes(seq.status)) actions.push(`<button type="button" class="button button-danger button-small" data-action="seq-stop" data-id="${esc(lead.id)}">${svgIcon('xCircle')}Stop sequence</button>`);
   if (['stopped', 'completed'].includes(seq.status) && !lead.doNotContact && !(lead.triage && !lead.triage.handled)) actions.push(`<button type="button" class="button button-ghost button-small" data-action="seq-build" data-force="true" data-id="${esc(lead.id)}">${svgIcon('refresh')}Plan a new sequence</button>`);
   return `<div class="wb-seq">
@@ -2476,10 +2482,10 @@ function sendPreviewModal(lead) {
   const st = d.status; const seq = lead.sequence; const emailStatus = st.email;
   let primary = '';
   if (seq && seq.status === 'draft') primary = `<button type="button" class="button button-primary" data-action="seq-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve whole plan${st.approvalPolicy === 'four-eyes' ? ' (1 of 2)' : ' & start sending'}</button>`;
-  else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign & start sending</button>`;
+  else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person & start sending</button>`;
   else if (seq && ['running', 'approved'].includes(seq.status)) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Plan approved — sending on schedule</span>`;
   else if (['Draft', 'None'].includes(emailStatus)) primary = `<button type="button" class="button button-primary" data-action="email-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve this email</button>`;
-  else if (emailStatus === 'Pending second approval') primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>`;
+  else if (emailStatus === 'Pending second approval') primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person</button>`;
   else if (emailStatus === 'Approved') primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button>`;
   else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Queued — sends in the next free slot</span>`;
   else if (String(emailStatus).startsWith('Sent')) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sent</span>`;
@@ -2525,7 +2531,7 @@ async function wbSequenceAction(action, button) {
   if (action === 'seq-build') { await run(() => API(url('sequence/build'), { method: 'POST', body: JSON.stringify({ force: button.dataset.force === 'true' }) }), 'Sequence plan built — review each step, then approve once.'); return true; }
   if (action === 'seq-save') { await run(() => API(url('sequence'), { method: 'PATCH', body: JSON.stringify({ steps: wbCollectSequenceEdits() }) }), 'Plan saved.'); return true; }
   if (action === 'seq-approve') { const steps = wbCollectSequenceEdits(); await run(() => API(url('sequence/approve'), { method: 'POST', body: JSON.stringify({ steps }) }), r => r.sequence.status === 'running' ? 'Plan approved — step 1 is queued; follow-ups will send themselves unless they reply.' : 'First approval recorded — a second reviewer must countersign.'); return true; }
-  if (action === 'seq-countersign') { await run(() => API(url('sequence/approve'), { method: 'POST', body: JSON.stringify({ confirmSecond: true }) }), 'Countersigned — the sequence is running.'); return true; }
+  if (action === 'seq-countersign') { await run(() => API(url('sequence/approve'), { method: 'POST', body: JSON.stringify({ confirmSecond: true }) }), 'Approved by a second person — Chelo will send it and follow up.'); return true; }
   if (action === 'seq-stop') { if (!confirm('Stop this sequence? Remaining follow-ups will be cancelled.')) return true; await run(() => API(url('sequence/stop'), { method: 'POST', body: '{}' }), 'Sequence stopped.'); return true; }
   if (action === 'triage-apply') {
     const body = { category: button.dataset.category, redirectName: $('#triage-redirect-name')?.value || '', redirectTitle: $('#triage-redirect-title')?.value || '', resumeOn: $('#triage-resume-on')?.value || '', note: $('#triage-note')?.value || '' };
@@ -2646,7 +2652,7 @@ async function openRelationship(id, tab = 'timeline') {
 }
 function relationshipsView() {
   const r = state.rel.summary;
-  const head = pageHead('Relationship memory', 'Relationships', 'Every won partner with its people, pledges, last touch and next due — plus stewardship cadences that run on a calendar, not on memory.', `<button type="button" class="button button-secondary" data-action="rel-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-primary" data-action="rel-tick" ${state.rel.busy ? 'disabled' : ''}>${svgIcon('calendar')}${state.rel.busy ? 'Scheduling…' : 'Schedule stewardship'}</button>`);
+  const head = pageHead('Partners', 'Partners', 'Who already funds us — their people, pledges and when to be in touch next.', `<button type="button" class="button button-secondary" data-action="rel-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-primary" data-action="rel-tick" ${state.rel.busy ? 'disabled' : ''}>${svgIcon('calendar')}${state.rel.busy ? 'Scheduling…' : 'Schedule stewardship'}</button>`);
   if (!r) { loadRelationships(); return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('partners')}</div><p>${state.rel.error ? esc(state.rel.error) : 'Loading relationships…'}</p></div>`; }
   const q = state.query.trim().toLowerCase();
   const partners = r.partners.filter(p => !q || [p.company, p.owner, p.introducer].join(' ').toLowerCase().includes(q));
@@ -2798,7 +2804,7 @@ function opsCheck(c) {
   return `<li class="ops-check ${cls}"><span class="ops-dot" aria-hidden="true"></span><div class="ops-check-body"><strong>${esc(c.title)}</strong>${c.detail ? `<p>${esc(c.detail)}</p>` : ''}<p class="ops-fix">${svgIcon('wand')}<span><b>Fix:</b> ${esc(c.fix)}</span></p></div>${c.view ? `<button type="button" class="button button-ghost button-small" data-view="${esc(c.view)}">${svgIcon('arrow')}Open</button>` : ''}</li>`;
 }
 function opsKpi(label, value, sub = '', tone = '') { return `<div class="ops-kpi ${tone}"><small>${esc(label)}</small><strong>${value}</strong>${sub ? `<span class="subtle">${esc(sub)}</span>` : ''}</div>`; }
-const OPS_TABS = [['health', 'Health', 'activity'], ['deliverability', 'Deliverability', 'shield'], ['analytics', 'Analytics', 'analytics'], ['data', 'Data quality', 'database']];
+const OPS_TABS = [['health', 'Health', 'activity'], ['deliverability', 'Email delivery', 'shield'], ['analytics', 'Results', 'analytics'], ['data', 'Data quality', 'database']];
 function opsVisibleTabs() { return OPS_TABS.filter(([k]) => isRoot() || !ROOT_ONLY_OPS_TABS.includes(k)); }
 function opsCurrentTab() { const allowed = opsVisibleTabs(); const t = allowed.some(([k]) => k === state.ops.tab) ? state.ops.tab : allowed[0][0]; state.ops.tab = t; return t; }
 function opsTabs() {
@@ -2808,7 +2814,7 @@ function opsTabs() {
 }
 function opsView() {
   const tab = opsCurrentTab();
-  const head = pageHead('Observability', isRoot() ? 'Ops' : 'Analytics', '', tab === 'health' ? `<button type="button" class="button button-secondary" data-action="ops-refresh">${svgIcon('refresh')} Refresh</button>` : '') + (opsVisibleTabs().length > 1 ? opsTabs() : '');
+  const head = pageHead('Health', isRoot() ? 'Health' : 'Results', isRoot() ? 'Is the engine OK? Problems first, then numbers.' : 'How the outreach is doing.', tab === 'health' ? `<button type="button" class="button button-secondary" data-action="ops-refresh">${svgIcon('refresh')} Refresh</button>` : '') + (opsVisibleTabs().length > 1 ? opsTabs() : '');
   if (tab === 'deliverability') return head + deliverabilityView(true);
   if (tab === 'analytics') return head + analyticsView(true);
   if (tab === 'data') return head + dataQualityView(true);

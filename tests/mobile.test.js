@@ -46,7 +46,7 @@ const click = (t, action, data = {}) => t.dispatchAction({ dataset: { action, ..
 test('mobile: phone mode renders Inbox with replies, failed sends and briefing requests; desktop chrome absent', async () => {
   const { t, html } = boot(); fixtures(t);
   t.renderApp();
-  assert.match(html.app, /<h1>Approvals<\/h1>/, 'lands on Approvals');
+  assert.match(html.app, /<h1>Your turn<\/h1>/, 'lands on Your turn');
   await click(t, 'm-tab', { tab: 'inbox' });
   assert.match(html.app, /class="m-shell"/); assert.match(html.app, /class="m-tabs"/);
   assert.doesNotMatch(html.app, /class="sidebar"|class="app-shell"|data-view="ops"|Deliverability|Data quality/);
@@ -67,8 +67,8 @@ test('mobile: phone mode renders Inbox with replies, failed sends and briefing r
 test('mobile: Approvals lists plan, draft and countersign items; lead detail exposes approve/countersign/reject and triage; sequence panel reused', async () => {
   const { t, html } = boot(); fixtures(t);
   await click(t, 'm-tab', { tab: 'approvals' });
-  assert.match(html.app, /Thembi Mining[\s\S]*Sequence plan/); assert.match(html.app, /Bolt South Africa[\s\S]*First-touch draft/); assert.match(html.app, /SAB Foundation[\s\S]*Countersign email \(4-eyes\)/);
-  assert.match(html.app, /strict 4-eyes/);
+  assert.match(html.app, /Thembi Mining[\s\S]*Email ready/); assert.match(html.app, /Bolt South Africa[\s\S]*Email ready — read and send/); assert.match(html.app, /SAB Foundation[\s\S]*Needs a second person to approve/);
+  assert.match(html.app, /two people must approve/);
   await click(t, 'm-open-lead', { id: 'l-draft' });
   assert.match(html.app, /data-action="email-approve" data-id="l-draft"/); assert.match(html.app, /more than one question/);
   assert.match(html.app, /Picture the first day of term/);
@@ -92,14 +92,14 @@ test('mobile: Leads search + detail facts; More → notifications and relationsh
   assert.match(html.app, /Briefing requested/); assert.match(html.app, /data-action="confirm-booking" data-id="bk1"/);
   assert.match(html.app, /<dt>Fit<\/dt><dd>78 · budgeting/);
   await click(t, 'm-tab', { tab: 'more' });
-  assert.match(html.app, /Notifications/); assert.match(html.app, /Relationships/); assert.match(html.app, /data-action="logout"/); assert.match(html.app, /Build .* · phone layout/);
+  assert.match(html.app, /Notifications/); assert.match(html.app, /Partners/); assert.match(html.app, /data-action="logout"/); assert.match(html.app, /Build .* · phone layout/);
   await click(t, 'm-section', { section: 'overview' });
-  assert.match(html.app, /<h1>Overview<\/h1>/); assert.match(html.app, /Open prospects/); assert.match(html.app, /Pipeline pulse/); assert.match(html.app, /Sequences running/);
-  await click(t, 'm-back'); assert.match(html.app, /Reviewer · strict 4-eyes/);
+  assert.match(html.app, /<h1>Today<\/h1>/); assert.match(html.app, /Funders in play/); assert.match(html.app, /Where funders are/); assert.match(html.app, /Chelo following up/);
+  await click(t, 'm-back'); assert.match(html.app, /Reviewer · two people approve each email/);
   assert.match(html.app, /desktop-only/);
   await click(t, 'm-section', { section: 'notifications' });
   assert.match(html.app, /past the response SLA/); assert.match(html.app, /countersignature/); assert.match(html.app, /circuit breaker/); assert.match(html.app, /stewardship touch/);
-  await click(t, 'm-goto', { tab: 'approvals' }); assert.match(html.app, /<h1>Approvals<\/h1>/);
+  await click(t, 'm-goto', { tab: 'approvals' }); assert.match(html.app, /<h1>Your turn<\/h1>/);
   await click(t, 'm-tab', { tab: 'more' }); await click(t, 'm-section', { section: 'relationships' });
   assert.match(html.app, /1 won partner/); assert.match(html.app, /Quiet Ltd/);
   await click(t, 'm-open-partner', { id: 'pt1' });

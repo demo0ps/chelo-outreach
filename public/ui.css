@@ -1982,18 +1982,18 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 /* ===== Section D · de-slop treatment (2026-10-26) =====
    Rules applied: flat solid sidebar with 1px border and monochrome icons; no glass, gradients, glows or transform hovers;
    no eyebrow labels; tables/lists sit on the page instead of inside nested cards; caps only for true category labels. */
-:root { --sidebar: #1e1a4f; --sidebar-fg: rgba(236,233,255,.74); --sidebar-border: rgba(255,255,255,.10); --shadow-md: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.10); --glow-accent: none; }
+:root { --sidebar: #3f2fc0; /* darker shade of the favicon purple #5945e8 */ --sidebar-fg: rgba(255,255,255,.82); --sidebar-border: rgba(255,255,255,.16); --shadow-md: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.10); --glow-accent: none; }
 
 /* sidebar */
 .sidebar { background: var(--sidebar); border-right: 1px solid var(--sidebar-border); box-shadow: none; padding: 16px 12px 14px; }
-.brand-symbol { background: #fff; color: var(--sidebar); border-radius: 8px; box-shadow: none; }
+.brand-symbol { background: #5945e8; color: #fff; border-radius: 9px; box-shadow: 0 0 0 1px rgba(255,255,255,.18); } /* same as the favicon */
 .brand-symbol::before, .brand-symbol::after { display: none; }
 .brand-symbol svg, .brand-symbol .icon-svg { filter: none; }
-.nav-caption { font-size: 11.5px; letter-spacing: 0; text-transform: none; color: rgba(236,233,255,.45); padding: 12px 10px 6px; }
+.nav-caption { font-size: 11.5px; letter-spacing: 0; text-transform: none; color: rgba(255,255,255,.55); padding: 12px 10px 6px; }
 .nav-item { min-height: 36px; border-radius: 6px; padding: 0 10px; gap: 10px; font-size: 13.5px; border: 0; transition: background .15s ease, color .15s ease; }
-.nav-item:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nav-item:hover { background: rgba(255,255,255,.10); color: #fff; }
 .nav-item:active { transform: none; }
-.nav-item.active, .nav-item.active:hover { background: rgba(255,255,255,.10); color: #fff; border: 0; box-shadow: none; font-weight: 600; }
+.nav-item.active, .nav-item.active:hover { background: rgba(255,255,255,.18); color: #fff; border: 0; box-shadow: none; font-weight: 600; }
 .nav-item .nav-icon, .nav-item:hover .nav-icon, .nav-item.active .nav-icon,
 .nav-item[data-view] .nav-icon, .nav-item.mobile-more-button .nav-icon { width: 18px; height: 18px; flex: 0 0 18px; border-radius: 0; background: none; box-shadow: none; border: 0; transform: none; filter: none; overflow: visible; color: currentColor; }
 .nav-item .nav-icon::before, .nav-item .nav-icon::after, .nav-item.active .nav-icon::after { display: none; content: none; }
@@ -2001,9 +2001,9 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .nav-item .nav-icon .icon-svg .icon-line { stroke-width: 1.8; }
 .nav-item .nav-icon .icon-svg .icon-tint { fill: currentColor; opacity: .14; }
 .nav-item .nav-icon .icon-svg .icon-accent { fill: currentColor; filter: none; opacity: .9; }
-.nav-item .nav-count { background: rgba(255,255,255,.12); box-shadow: none; border-radius: 4px; height: 18px; min-width: 18px; padding: 0 5px; }
+.nav-item .nav-count { background: #fff; color: #3f2fc0; box-shadow: none; border-radius: 4px; height: 18px; min-width: 18px; padding: 0 5px; }
 .user-mini { border-top: 1px solid var(--sidebar-border); }
-.user-mini .avatar { background: rgba(255,255,255,.14); box-shadow: none; border-radius: 6px; }
+.user-mini .avatar { background: rgba(255,255,255,.18); box-shadow: none; border-radius: 6px; }
 .mobile-more-sheet { background: var(--sidebar); border-top: 1px solid var(--sidebar-border); }
 /* monochrome icons everywhere: the shared SVG paint defs were decorative */
 .icon-svg .icon-accent { fill: currentColor; filter: none; opacity: .9; transition: none; }
@@ -2126,3 +2126,6 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .wb-preview-cta { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--a-200); background: var(--a-50); border-radius: 8px; margin-bottom: 12px; }
 .wb-preview-cta p { margin: 2px 0 0; }
 @media (max-width: 960px) { .sp-layout { grid-template-columns: 1fr; overflow: auto; } .sp-frame, .sp-pdf-frame { min-height: 360px; } .sp-checks { grid-template-columns: 1fr 1fr; } }
+/* sidebar on the favicon purple: lift secondary text for contrast (≥4.5:1 on #3f2fc0) */
+.brand-tag, .user-mini small { color: rgba(255,255,255,.72); }
+.mobile-more-sheet .mobile-more-heading { color: rgba(255,255,255,.72); }

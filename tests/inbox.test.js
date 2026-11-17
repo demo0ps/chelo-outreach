@@ -173,9 +173,9 @@ test('inbox UI: desktop three-pane renders folders, list, thread, lead panel and
     { id: 'm3', kind: 'outbound', author: 'Root', text: 'Yes — Tuesday?', status: 'awaiting-countersign', firstApproverId: 'u1', createdAt: now },
     { id: 'm4', kind: 'event', author: 'Root', text: 'Marked pending', createdAt: now }] };
   t.renderApp();
-  assert.match(html.app, /class="ix-msg is-inbound/); assert.match(html.app, /class="ix-msg is-note is-mentioned/); assert.match(html.app, /awaiting countersignature/);
-  assert.match(html.app, /A different teammate must countersign/, 'author cannot countersign own reply');
-  assert.match(html.app, /Triage this reply/); assert.match(html.app, /data-action="ix-triage" data-category="interested"/);
+  assert.match(html.app, /class="ix-msg is-inbound/); assert.match(html.app, /class="ix-msg is-note is-mentioned/); assert.match(html.app, /waiting for a second approval/);
+  assert.match(html.app, /A different teammate must approve this/, 'author cannot countersign own reply');
+  assert.match(html.app, /What kind of reply is this/); assert.match(html.app, /data-action="ix-triage" data-category="interested"/);
   assert.match(html.app, /id="ix-assignee"/); assert.match(html.app, /data-action="ix-status" data-status="resolved"/);
   assert.match(html.app, /id="ix-reply"/, 'reply composer');
   t.state.ix.members = { mb1: ['u2'] }; t.renderApp();

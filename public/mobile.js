@@ -40,7 +40,7 @@
   }
 
   // ---- shell -----------------------------------------------------------------------------------
-  const TABS = [['inbox', 'Inbox', 'mail'], ['approvals', 'Approvals', 'checkCircle'], ['leads', 'Leads', 'prospects'], ['more', 'More', 'dots']];
+  const TABS = [['inbox', 'Inbox', 'mail'], ['approvals', 'Your turn', 'checkCircle'], ['leads', 'Funders', 'prospects'], ['more', 'More', 'dots']];
   function tabBar() {
     const counts = { inbox: (typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0) + inboxItems().filter(i => i.kind !== 'reply').length, approvals: approvalItemsPhone().length, leads: 0, more: notifications().filter(n => n.tone === 'danger').length };
     return `<nav class="m-tabs" aria-label="Sections">${TABS.map(([id, label, icon]) => `<button type="button" class="m-tab ${state.m.tab === id ? 'is-active' : ''}" data-action="m-tab" data-tab="${id}" aria-current="${state.m.tab === id ? 'page' : 'false'}"><span class="m-tab-icon">${svgIcon(icon)}${counts[id] ? `<span class="m-badge">${counts[id] > 99 ? '99+' : counts[id]}</span>` : ''}</span><span>${label}</span></button>`).join('')}</nav>`;
@@ -70,19 +70,19 @@
   }
 
   // ---- Approvals -------------------------------------------------------------------------------
-  const KIND_META = { plan: ['Sequence plan', 'send', 'tone-accent'], 'countersign-plan': ['Countersign plan (4-eyes)', 'shield', 'tone-warn'], draft: ['First-touch draft', 'mail', 'tone-accent'], 'countersign-email': ['Countersign email (4-eyes)', 'shield', 'tone-warn'], research: ['Research brief to review', 'search', 'tone-info'] };
+  const KIND_META = { plan: ['Email ready — read and send', 'send', 'tone-accent'], 'countersign-plan': ['Needs a second person to approve', 'shield', 'tone-warn'], draft: ['Email ready — read and send', 'mail', 'tone-accent'], 'countersign-email': ['Needs a second person to approve', 'shield', 'tone-warn'], research: ['Check what we found about them', 'search', 'tone-info'] };
   function approvalsView() {
     const items = approvalItemsPhone();
     const rows = items.map(i => { const [label, icon, tone] = KIND_META[i.kind]; const l = i.lead; return `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(l.id)}"><span class="m-row-icon ${tone}">${svgIcon(icon)}</span><span class="m-row-main"><strong>${esc(l.company)}</strong><span>${esc(label)}</span><em>${esc(l.emailDraft?.subject || l.project || '')}</em></span><small>${when(i.at)}</small></button>`; }).join('');
     const policy = state.auth.approvalPolicy || state.data.settings?.approvalPolicy || 'single';
-    return `${header('Approvals', { sub: `${items.length} waiting · ${policy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}` })}<section class="m-list">${rows || empty('checkCircle', 'Nothing to approve. New drafts and plans appear here the moment the engine prepares them.')}</section>`;
+    return `${header('Your turn', { sub: `${items.length} waiting${policy === 'four-eyes' ? ' · two people must approve each email' : ''}` })}<section class="m-list">${rows || empty('checkCircle', 'Nothing to approve. New drafts and plans appear here the moment the engine prepares them.')}</section>`;
   }
 
   // ---- Leads -----------------------------------------------------------------------------------
   function leadsView() {
     const q = state.m.q.trim().toLowerCase();
     const list = leadsSorted().filter(l => !q || [l.company, l.contactName, l.sector, l.province, l.project, l.stage].join(' ').toLowerCase().includes(q)).slice(0, 80);
-    const rows = list.map(l => `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(l.id)}"><span class="m-row-avatar">${initials(l.company)}</span><span class="m-row-main"><strong>${esc(l.company)}</strong><span>${esc(leadMeta(l))}</span><em>${esc((WB_STATUS_META[wbStatusOf(l)] || [l.emailStatus || ''])[0])}${l.fit?.score != null ? ` · fit ${Math.round(l.fit.score * 100)}` : ''}</em></span>${stagePill(l.stage || 'New')}</button>`).join('');
+    const rows = list.map(l => `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(l.id)}"><span class="m-row-avatar">${initials(l.company)}</span><span class="m-row-main"><strong>${esc(l.company)}</strong><span>${esc(leadMeta(l))}</span><em>${esc(SIMPLE_META[simpleStatusOf(l)][0])} · ${esc(nextStepOf(l))}</em></span>${stagePill(l.stage || 'New')}</button>`).join('');
     return `${header('Leads', { sub: `${state.data.leads.length} in the workspace` })}<div class="m-search">${svgIcon('search')}<input type="search" id="m-search" placeholder="Company, person, sector, province…" value="${esc(state.m.q)}" autocomplete="off" /></div><section class="m-list">${rows || empty('search', 'No leads match.')}</section>`;
   }
   function leadDetail(l) {
@@ -95,7 +95,7 @@
     const triageCard = l.triage && !l.triage.handled ? `<section class="m-card m-triage">${wbTriageCard(l)}</section>` : '';
     const acts = (state.data.activities || []).filter(a => a.text.toLowerCase().includes(String(l.company || '').toLowerCase())).slice(0, 8);
     const timeline = acts.length ? `<section class="m-card"><h3>${svgIcon('clock')}Recent</h3><ul class="m-timeline">${acts.map(a => `<li><span>${when(a.createdAt)}</span>${esc(a.text)}</li>`).join('')}</ul></section>` : '';
-    const facts = [['Stage', l.stage || 'New'], ['Status', (WB_STATUS_META[wbStatusOf(l)] || [l.emailStatus || '—'])[0]], ['Owner', l.owner || 'unassigned'], ['Project', l.project || state.data.projects.find(p => p.id === l.projectId)?.name || '—'], ['Ask', l.amount ? money(l.amount) : '—'], ['Fit', l.fit?.score != null ? `${Math.round(l.fit.score * 100)} · ${l.fit.window?.label || ''}` : '—'], ['FYE', l.financialYearEnd || '—'], ['Email', l.email || 'awaiting contact'], ['Last touch', l.lastContactedAt ? when(l.lastContactedAt) : 'never']];
+    const facts = [['Stage', l.stage || 'New'], ['Status', `${SIMPLE_META[simpleStatusOf(l)][0]} — ${nextStepOf(l)}`], ['Owner', l.owner || 'unassigned'], ['Project', l.project || state.data.projects.find(p => p.id === l.projectId)?.name || '—'], ['Ask', l.amount ? money(l.amount) : '—'], ['Fit', l.fit?.score != null ? `${Math.round(l.fit.score * 100)} · ${l.fit.window?.label || ''}` : '—'], ['FYE', l.financialYearEnd || '—'], ['Email', l.email || 'awaiting contact'], ['Last touch', l.lastContactedAt ? when(l.lastContactedAt) : 'never']];
     return `${header(l.company, { back: true, sub: leadMeta(l) })}
       ${l.doNotContact ? '<div class="m-banner danger">Do not contact — suppressed workspace-wide.</div>' : ''}
       ${triageCard}${bookingCard}${seqCard}${draftCard}${research}
@@ -108,12 +108,12 @@
   function overviewLite() {
     const leads = state.data.leads; const active = getActiveLeads(); const partners = state.data.partners || [];
     const requests = state.data.bookings.filter(b => b.status === 'Requested').length;
-    const cards = [['Open prospects', String(active.length), `${leads.length} total`, 'prospects'], ['Potential pipeline', money(getPipelineValue()), 'estimated ask value', 'trend'], ['Briefing requests', String(requests), requests ? 'awaiting confirmation' : 'none pending', 'calendar'], ['Active partners', String(partners.length), `${money(partners.reduce((n, p) => n + Number(p.amount || 0), 0))} won`, 'partners']];
-    const stages = [['Prospects', leads.filter(l => !['Won', 'Not proceeding'].includes(l.stage)).length], ['In conversation', leads.filter(l => ['Contacted', 'Interested'].includes(l.stage)).length], ['Proposals out', leads.filter(l => l.stage === 'Proposal sent').length], ['Briefings', state.data.bookings.filter(b => ['Requested', 'Confirmed'].includes(b.status)).length], ['Sequences running', leads.filter(l => l.sequence?.status === 'running').length], ['Won', leads.filter(l => l.stage === 'Won').length]];
+    const cards = [['Funders in play', String(active.length), `${leads.length} in total`, 'prospects'], ['Possible funding', money(getPipelineValue()), 'if every ask came through', 'trend'], ['Briefings to confirm', String(requests), requests ? 'waiting for you' : 'none waiting', 'calendar'], ['Partners', String(partners.length), `${money(partners.reduce((n, p) => n + Number(p.amount || 0), 0))} won`, 'partners']];
+    const stages = [['Funders in play', leads.filter(l => !['Won', 'Not proceeding'].includes(l.stage)).length], ['Talking to us', leads.filter(l => ['Contacted', 'Interested'].includes(l.stage)).length], ['Proposal sent', leads.filter(l => l.stage === 'Proposal sent').length], ['Briefings', state.data.bookings.filter(b => ['Requested', 'Confirmed'].includes(b.status)).length], ['Chelo following up', leads.filter(l => l.sequence?.status === 'running').length], ['Won', leads.filter(l => l.stage === 'Won').length]];
     const max = Math.max(1, ...stages.map(x => x[1]));
-    return `${header('Overview', { back: true, sub: 'Snapshot · full analytics on desktop' })}
+    return `${header('Today', { back: true, sub: 'A quick look · full results on desktop' })}
       <div class="m-kpis">${cards.map(([k, v, f, i]) => `<div class="m-kpi"><span class="m-kpi-icon">${svgIcon(i)}</span><span class="m-kpi-label">${esc(k)}</span><strong>${esc(v)}</strong><small>${esc(f)}</small></div>`).join('')}</div>
-      <section class="m-card"><h3>${svgIcon('pipeline')}Pipeline pulse</h3><ul class="m-bars">${stages.map(([k, v]) => `<li><span>${esc(k)}</span><i style="width:${Math.round(v / max * 100)}%"></i><strong>${v}</strong></li>`).join('')}</ul></section>`;
+      <section class="m-card"><h3>${svgIcon('pipeline')}Where funders are</h3><ul class="m-bars">${stages.map(([k, v]) => `<li><span>${esc(k)}</span><i style="width:${Math.round(v / max * 100)}%"></i><strong>${v}</strong></li>`).join('')}</ul></section>`;
   }
   function moreView() {
     if (state.m.section === 'overview') return overviewLite();
@@ -123,10 +123,10 @@
     const row = (section, icon, title, sub, badge = '') => `<button type="button" class="m-row" data-action="m-section" data-section="${section}"><span class="m-row-icon tone-info">${svgIcon(icon)}</span><span class="m-row-main"><strong>${esc(title)}</strong><span>${esc(sub)}</span></span>${badge}</button>`;
     return `${header('More')}<section class="m-list">
       ${row('notifications', 'bell', 'Notifications', n.length ? `${n.length} signal${n.length === 1 ? '' : 's'}` : 'All quiet', danger ? `<span class="m-badge is-inline">${danger}</span>` : '')}
-      ${row('relationships', 'partners', 'Relationships', 'Won partners · last touch · next due')}
-      ${row('overview', 'overview', 'Overview', 'Prospects · pipeline · briefings · partners')}
+      ${row('relationships', 'partners', 'Partners', 'Who already funds us · when to be in touch next')}
+      ${row('overview', 'overview', 'Today', 'What happened and what needs you')}
     </section>
-    <section class="m-card"><h3>${svgIcon('prospects')}${esc(state.auth.displayName || state.auth.username || '')}</h3><p class="subtle">${esc(roleLabel(state.auth.role))} · ${state.auth.approvalPolicy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}</p><div class="m-actions"><button type="button" class="button button-secondary" data-action="m-refresh">${svgIcon('refresh')}Refresh</button>${state.auth.openAccessDemo ? '' : `<button type="button" class="button button-ghost" data-action="logout">${svgIcon('logout')}Sign out</button>`}</div></section>
+    <section class="m-card"><h3>${svgIcon('prospects')}${esc(state.auth.displayName || state.auth.username || '')}</h3><p class="subtle">${esc(roleLabel(state.auth.role))} · ${state.auth.approvalPolicy === 'four-eyes' ? 'two people approve each email' : 'you approve and send'}</p><div class="m-actions"><button type="button" class="button button-secondary" data-action="m-refresh">${svgIcon('refresh')}Refresh</button>${state.auth.openAccessDemo ? '' : `<button type="button" class="button button-ghost" data-action="logout">${svgIcon('logout')}Sign out</button>`}</div></section>
     <p class="m-foot-note">Ops, deliverability, data quality, analytics, discovery and settings are desktop-only.<br>Build ${esc(BUILD)} · phone layout</p>`;
   }
   function notificationsView() {
@@ -135,7 +135,7 @@
   }
   function relationshipsLite() {
     const r = state.rel.summary;
-    if (!r) { loadRelationships(); return `${header('Relationships', { back: true })}${empty('partners', state.rel.error || 'Loading…')}`; }
+    if (!r) { loadRelationships(); return `${header('Partners', { back: true })}${empty('partners', state.rel.error || 'Loading…')}`; }
     if (state.m.partnerId) {
       const p = r.partners.find(x => x.id === state.m.partnerId);
       if (!p) { state.m.partnerId = null; return relationshipsLite(); }
@@ -147,7 +147,7 @@
     }
     const q = state.m.q.trim().toLowerCase();
     const partners = r.partners.filter(p => !q || [p.company, p.owner, p.introducer].join(' ').toLowerCase().includes(q));
-    return `${header('Relationships', { back: true, sub: `${r.partners.length} won partner${r.partners.length === 1 ? '' : 's'}` })}<div class="m-search">${svgIcon('search')}<input type="search" id="m-search" placeholder="Partner, owner, introducer…" value="${esc(state.m.q)}" autocomplete="off" /></div><section class="m-list">${partners.length ? partners.map(p => `<button type="button" class="m-row" data-action="m-open-partner" data-id="${esc(p.id)}"><span class="m-row-avatar">${initials(p.company)}</span><span class="m-row-main"><strong>${esc(p.company)}</strong><span>Last touch ${p.lastTouch ? when(p.lastTouch.at) : 'never'}${p.nextDue ? ` · next ${esc(relDate(p.nextDue))}` : ''}</span></span>${p.nextDue && Date.parse(p.nextDue) < Date.now() ? '<span class="m-badge is-inline">due</span>' : `<span class="stage-pill ${p.health?.status === 'warm' ? 'pill-won' : p.health?.status === 'at-risk' ? 'pill-not-proceeding' : 'pill-new'}">${esc(p.health?.status || '')}</span>`}</button>`).join('') : empty('partners', 'No won partners yet.')}</section>`;
+    return `${header('Partners', { back: true, sub: `${r.partners.length} won partner${r.partners.length === 1 ? '' : 's'}` })}<div class="m-search">${svgIcon('search')}<input type="search" id="m-search" placeholder="Partner, owner, introducer…" value="${esc(state.m.q)}" autocomplete="off" /></div><section class="m-list">${partners.length ? partners.map(p => `<button type="button" class="m-row" data-action="m-open-partner" data-id="${esc(p.id)}"><span class="m-row-avatar">${initials(p.company)}</span><span class="m-row-main"><strong>${esc(p.company)}</strong><span>Last touch ${p.lastTouch ? when(p.lastTouch.at) : 'never'}${p.nextDue ? ` · next ${esc(relDate(p.nextDue))}` : ''}</span></span>${p.nextDue && Date.parse(p.nextDue) < Date.now() ? '<span class="m-badge is-inline">due</span>' : `<span class="stage-pill ${p.health?.status === 'warm' ? 'pill-won' : p.health?.status === 'at-risk' ? 'pill-not-proceeding' : 'pill-new'}">${esc(p.health?.status || '')}</span>`}</button>`).join('') : empty('partners', 'No won partners yet.')}</section>`;
   }
 
   // ---- render + actions ------------------------------------------------------------------------

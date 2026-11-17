@@ -33,3 +33,17 @@ What shipped:
 - `GET /api/leads/:id/preview[?step=N]` returns the message exactly as the send engine will build it — `from` (picked mailbox), `to`, `subject`, `text`, `html` (same `emailHtml()` used for the MIME), every link classified (booking CTA / co-branded page / opt-out), the attachment (when the PDF is attached) or the proposal link, sequence steps, and a pre-flight checklist (recipient, sending mailbox, subject, unfilled placeholders, clear ask, suppression, PDF present).
 - **Preview before send** screen (Workbench step 4/5, Inbox → Approvals): email rendered in a sandboxed iframe on the left, the proposal PDF in a viewer on the right (open full size / download), links listed under the email, the checklist along the bottom, and exactly one primary button for the current state — Approve this email / Countersign / Send now / Approve whole plan / Countersign & start sending. Red checks disable approval. "Edit email" jumps to the draft editor.
 - Framing policy changed from `DENY` / `frame-ancestors 'none'` to `SAMEORIGIN` / `frame-ancestors 'self'` so the app can frame its own PDF; third-party framing is still blocked.
+
+## Simplify — Release 1 (2026-11-17)
+
+Goal: anyone can see what does what. No engine behaviour changed; only names, statuses and words.
+
+- **Sidebar names:** Inbox · To do (was Workbench) · Today (was Overview) · Funders (was Prospects) · Projects · Briefings · Sent · Partners (was Relationships) · Health (root; "Results" for staff — was Ops) · Settings. **Proposals removed** (`proposals` redirects to Funders; proposals still live on each funder).
+- **Three person-facing statuses** everywhere a funder is listed: **Your turn / Working / Waiting on them** (+ Stopped). The engine status stays on hover (`title`) and in Health. `SIMPLE_OF` maps engine → simple; `NEXT_STEP` gives a one-line "what to do now".
+- **To do filters:** All · Your turn (default) · Working · Waiting on them · Stopped.
+- **4-eyes wording hidden** unless the policy is four-eyes; where it does show it reads "two people must approve" / "Approve as second person". Policy toggle stays in Settings.
+- **Plain words:** sequence → "Chelo follows up automatically"; countersign → second approval; triage → "What kind of reply is this?"; error rows say what failed and what to do.
+- **Sidebar colour:** `#3f2fc0`, a darker shade of the favicon purple `#5945e8`; brand mark is the favicon colour; secondary text lifted for contrast.
+- Tests updated to the new words (71/0). Cache tag `20261026-v32`.
+
+Release 2 (next, after go): funder page becomes three cards — Who they are · What we'll send · one Send button; stepper and plan editor removed; PDF always attached to the first email.

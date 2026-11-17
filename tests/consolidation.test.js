@@ -37,22 +37,23 @@ function fixtures(t) {
   t.state.ix.data = { me: 'u1', staff: [], mailboxes: [], unrouted: { open: 0, unread: 0 }, folders: { mine: 0, mineUnread: 0, unassigned: 0, all: 1 }, statuses: { open: 1 }, mentions: [], conversations: [{ id: 'cv1', leadId: 'l-replied', company: 'Umoya Holdings', subject: 'Re: Umoya', status: 'open', unread: false, lastActivityAt: now }] };
 }
 
-test('sidebar has the ten surviving sections and none of the retired ones', () => {
+test('sidebar has the surviving sections and none of the retired ones', () => {
   const { t, html } = boot(); fixtures(t); t.renderApp();
-  for (const v of ['inbox', 'workbench', 'overview', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'proposals', 'ops', 'settings']) assert.match(html.app, new RegExp(`data-view="${v}"`), `nav has ${v}`);
-  for (const v of ['discover', 'pipeline', 'analytics', 'deliverability', 'data']) assert.doesNotMatch(html.app, new RegExp(`class="nav-item[^"]*" data-view="${v}"`), `nav lacks ${v}`);
+  for (const v of ['inbox', 'workbench', 'overview', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'ops', 'settings']) assert.match(html.app, new RegExp(`data-view="${v}"`), `nav has ${v}`);
+  for (const v of ['discover', 'pipeline', 'analytics', 'deliverability', 'data', 'proposals']) assert.doesNotMatch(html.app, new RegExp(`class="nav-item[^"]*" data-view="${v}"`), `nav lacks ${v}`);
 });
 
 test('retired view names redirect to their merged home', () => {
   const { t } = boot(); fixtures(t);
   t.setView('discover'); assert.equal(t.state.view, 'workbench'); assert.equal(t.state.wb.intake, 'pool');
   t.setView('pipeline'); assert.equal(t.state.view, 'prospects'); assert.equal(t.state.prospectsMode, 'board');
+  t.setView('proposals'); assert.equal(t.state.view, 'prospects');
   for (const [old, tab] of [['analytics', 'analytics'], ['deliverability', 'deliverability'], ['data', 'data']]) { t.setView(old); assert.equal(t.state.view, 'ops'); assert.equal(t.state.ops.tab, tab); }
 });
 
 test('every surviving desktop view renders without throwing', () => {
   const { t, html } = boot(); fixtures(t);
-  for (const v of ['overview', 'workbench', 'inbox', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'proposals', 'ops', 'settings']) {
+  for (const v of ['overview', 'workbench', 'inbox', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'ops', 'settings']) {
     t.state.view = v; t.renderApp();
     assert.ok(html.app.length > 500, `${v} rendered`);
     assert.doesNotMatch(html.app, /class="eyebrow"/, `${v} has no eyebrow`);
@@ -88,7 +89,7 @@ test('Ops: Health / Deliverability / Analytics / Data quality tabs', async () =>
   t.state.auth.isRoot = false; t.setView('deliverability');
   assert.equal(t.state.view, 'ops'); assert.equal(t.state.ops.tab, 'analytics');
   assert.doesNotMatch(html.app, /data-tab="health"|data-tab="deliverability"|data-tab="data"/);
-  assert.match(html.app, /<h1>Analytics<\/h1>/);
+  assert.match(html.app, /<h1>Results<\/h1>/);
 });
 
 test('Inbox: Approvals tab is the desktop twin of the phone tab and includes briefing requests', async () => {
@@ -98,7 +99,7 @@ test('Inbox: Approvals tab is the desktop twin of the phone tab and includes bri
   t.state.view = 'inbox'; t.renderApp();
   assert.match(html.app, /data-action="ix-mode" data-mode="approvals"/);
   await t.dispatchAction({ dataset: { action: 'ix-mode', mode: 'approvals' } });
-  assert.match(html.app, /Bolt South Africa/); assert.match(html.app, /Briefing request to confirm/);
+  assert.match(html.app, /Bolt South Africa/); assert.match(html.app, /Confirm a briefing time/);
   await t.dispatchAction({ dataset: { action: 'ix-goto-workbench', id: 'l-draft' } });
   assert.equal(t.state.view, 'workbench'); assert.equal(t.state.wb.selectedId, 'l-draft');
 });
