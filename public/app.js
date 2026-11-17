@@ -1,3 +1,5 @@
+// Sidebar shade trial: ?sidebar=a|b|c picks a shade and remembers it (see ui.css). Default A.
+(() => { try { const q = new URLSearchParams(location.search).get('sidebar'); const v = ['a', 'b', 'c'].includes(q) ? q : (localStorage.getItem('chelo.sidebar') || 'a'); if (q) localStorage.setItem('chelo.sidebar', v); document.documentElement.dataset.sidebar = v; } catch { /* no storage */ } })();
 const API = async (url, options = {}) => {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
