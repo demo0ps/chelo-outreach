@@ -1809,8 +1809,9 @@ function renderPublicPage() {
   const done = state.pageBooked;
   const slots = (m.slots || []).map(sl => `<button type="button" class="pp-slot" data-action="pp-book" data-date="${esc(sl.date)}" data-time="${esc(sl.time)}">${svgIcon('calendar')}<strong>${esc(sl.label)}</strong><span>${m.meetingDurationMinutes || 15} min · video</span></button>`).join('');
   root.innerHTML = `<main class="pp"><section class="pp-card">
-    <div class="pp-hero pp-hero-${esc(m.template)}" style="background-image:url('${esc(m.image)}')"><div class="pp-hero-text">${brand}<span class="pp-kicker">${esc(m.company)} ×</span><h1>${esc(m.project?.recipient || m.project?.name || 'A verified school')}</h1><p>${esc(m.picture)}</p></div></div>
+    <div class="pp-hero pp-hero-${esc(m.template)}" style="background-image:url('${esc(m.image)}')"><div class="pp-hero-text">${brand}<span class="pp-kicker">${esc(m.company)} × Chelo</span><h1>${esc(m.project?.name || m.project?.recipient || 'A verified school')}</h1>${m.project && (m.project.recipient || m.project.province) ? `<p class="pp-place">${esc([m.project.recipient, m.project.province].filter(Boolean).join(' · '))}</p>` : ''}</div></div>
     <div class="pp-body">
+      <p class="pp-lead">${esc(m.picture)}</p>
       <div class="pp-numbers">${m.numbers.map(n => `<div class="pp-num"><strong>${esc(n.value)}</strong><span>${esc(n.label)}</span></div>`).join('')}</div>
       ${m.project ? `<div class="pp-project"><span class="pp-badge">${svgIcon('shield')} ${esc(m.project.status || 'Verified')}${m.project.verifiedAt ? ` · ${esc(String(m.project.verifiedAt).slice(0, 10))}` : ''}</span><h2>${esc(m.project.name)}</h2><p>${esc(m.project.summary || '')}</p></div>` : ''}
       <div class="pp-receive"><h3>What ${esc(m.company)} receives</h3><ul>${m.receive.map(r => `<li>${svgIcon('check')}${esc(r)}</li>`).join('')}</ul></div>

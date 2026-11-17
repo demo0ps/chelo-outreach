@@ -78,3 +78,19 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - **No email? Chelo looks first.** `runLeadFlow` now calls the mailbox finder when a funder has no address (published CSI/foundation/info mailbox, verified on the domain). Only if nothing is found does it stop with *"Chelo could not find a published email address for them. Add one…"*. Plain `promote` without `run` keeps the old 409 for API callers.
 - **Read before sending is a full-width page** (`state.view = 'review'`, `state.review = { id, step, cache }`) instead of a pop-up: Back button, email left / PDF right, checks + Send pinned at the bottom. Each step's preview is cached, so switching First email ↔ Follow-ups keeps the current content on screen until the new one is ready (no blank flash); background refreshes only re-render when something changed.
 - Tests: `tests/workbench-flow.test.js` covers CSV rows with and without email through `promote-run`; `tests/consolidation.test.js` covers the page. 71/0. Cache tag `v36`.
+
+
+## Co-branded photo cover · PDF that is always there (v37)
+
+- **One photo per project type**, used on both the hosted page hero and page 1 of the proposal PDF: `literacy` (reading under a tree),
+  `construction` (laughing in the school yard), `ict` (solar roof & garden), `classroom` (running past the mural). Files live in
+  `public/brand/templates/<name>.jpg` (web, 1400 px) and `<name>-cover.jpg` (PDF, 900 px). `lib/conversion.js templateFor()` picks.
+- **Legibility rule:** words sit on a navy fade from the left and the bottom (`.pp-hero::after`; PDF: alpha strips via ExtGState),
+  always white, top-left logo. Only short words go on the picture — *Funder × Chelo*, project name, place. The longer
+  "picture the first day of term…" sentence is normal text under the photo.
+- **Why "create PDF" looked like it did nothing in production:** the PDF was written to the serverless instance's `/tmp`, which is not
+  part of the Supabase snapshot (only the database is). The next request landed on another instance → "could not be found" → no
+  attachment. Fix: `proposalPdfPath()` rebuilds the file from the saved `proposalData` whenever it is missing, and queued send jobs
+  carry the PDF **bytes** (base64 in the job payload), not a path. First email always attaches; the preview's "Proposal PDF attached"
+  check now reflects the real file.
+- Read & send footer is a normal block at the end of the page (no longer pinned).

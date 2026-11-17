@@ -589,10 +589,41 @@ function researchAlignmentSentence(lead) {
   return point ? ` ${point.replace(/\s+$/, '').replace(/\.$/, '')}.` : '';
 }
 /** Simplify R2 rule: the first email to a funder always carries the proposal PDF. Follow-ups attach only when asked. */
+// The PDF file lives on local disk, which on serverless hosting is per-instance and ephemeral (only the database is
+// synced). So a lead can legitimately have proposalFile set while the bytes are missing here: rebuild it from the saved
+// proposalData instead of reporting "could not be found" — that was why "create PDF" looked like it did nothing.
 function proposalPdfPath(lead) {
   if (!lead || !lead.proposalFile) return '';
   const p = path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile));
-  return fs.existsSync(p) ? p : '';
+  if (fs.existsSync(p)) return p;
+  try {
+    fs.writeFileSync(p, makeProposalPdf(lead, { ...(lead.proposalData || {}), ...proposalContext(lead) }));
+    return p;
+  } catch (err) { console.warn(`[proposal] could not rebuild the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return ''; }
+}
+/** Nodemailer attachment carrying the bytes (not a path) so the queued job can be sent from any instance. */
+function proposalAttachment(lead) {
+  const p = proposalPdfPath(lead);
+  if (!p) return null;
+  return { filename: 'Chelo-Partnership-Proposal.pdf', content: fs.readFileSync(p).toString('base64'), encoding: 'base64', contentType: 'application/pdf' };
+}
+/** Linked-project fields plus the co-branded cover photo (same photo the hosted page uses, chosen by project type). */
+function proposalContext(lead) {
+  const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
+  const out = {};
+  if (linkedProject) Object.assign(out, { recipientName: linkedProject.recipientName, province: linkedProject.province });
+  const template = conversion.templateFor(linkedProject || { name: lead.project || '' });
+  const file = path.join(PUBLIC_DIR, 'brand', 'templates', `${template}-cover.jpg`);
+  if (fs.existsSync(file)) {
+    out.cover = {
+      image: fs.readFileSync(file), funder: lead.company,
+      projectName: linkedProject?.name || lead.project || 'A verified school project',
+      place: [linkedProject?.recipientName, linkedProject?.province].filter(Boolean).join(' · ')
+    };
+  }
+  const alignment = approvedAlignmentForPdf(lead);
+  if (alignment) out.alignment = alignment;
+  return out;
 }
 function shouldAttachProposal(lead, followUp, draft) {
   if (!proposalPdfPath(lead)) return false;
@@ -606,9 +637,8 @@ function ensureProposalPdf(lead, actor = 'staff') {
 }
 function createProposal(lead, proposal, actor = 'staff') {
   const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
-  if (linkedProject) proposal = { ...proposal, recipientName: linkedProject.recipientName, province: linkedProject.province, verifiedMetrics: proposal.verifiedMetrics || linkedProject.verifiedMetrics };
-  const alignment = approvedAlignmentForPdf(lead);
-  if (alignment) proposal = { ...proposal, alignment };
+  if (linkedProject) proposal = { ...proposal, verifiedMetrics: proposal.verifiedMetrics || linkedProject.verifiedMetrics };
+  proposal = { ...proposal, ...proposalContext(lead) };
   const buffer = makeProposalPdf(lead, proposal);
   const filename = `chelo-proposal-${lead.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${Date.now()}.pdf`;
   fs.writeFileSync(path.join(PROPOSAL_DIR, filename), buffer);
@@ -1069,12 +1099,13 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   const origin_ = origin || configStore.getPublicBaseUrl() || `http://localhost:${PORT}`;
   const headers = { 'List-Unsubscribe': `<${origin_}/opt-out/${encodeURIComponent(lead.bookingToken)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click', 'X-Chelo-Lead': lead.id, 'X-Chelo-Sequence': `${seq.id}:${step.n}` };
   if (step.n > 1 && seq.threadMessageId) { headers['In-Reply-To'] = seq.threadMessageId; headers.References = seq.threadMessageId; }
-  const pdfPath = step.n === 1 ? proposalPdfPath(lead) : '';
-  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdfPath)) : step.body;
+  if (step.n === 1) ensureProposalPdf(lead, actor); // the first email always carries the PDF
+  const pdf = step.n === 1 ? proposalAttachment(lead) : null;
+  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdf)) : step.body;
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
-    attachments: pdfPath ? [{ filename: 'Chelo-Partnership-Proposal.pdf', path: pdfPath, contentType: 'application/pdf' }] : [],
-    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdfPath), actor, company: lead.company, openToken: null }
+    attachments: pdf ? [pdf] : [],
+    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor, company: lead.company, openToken: null }
   });
   step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
   if (step.n === 1) { lead.emailStatus = 'Queued'; lead.sendJobId = job.id; } else { lead.followUpEmailStatus = 'Queued'; lead.followUpAt = job.scheduledAt; lead.followUpStep = step.n - 1; }
@@ -2494,7 +2525,7 @@ async function handleApi(req, res, url) {
     if (proposalShare && method === 'GET') {
       const lead = db.leads.find(l => l.proposalToken === proposalShare[1] && l.proposalFile);
       if (!lead) return sendJson(res, 404, { error: 'Proposal link not found.' });
-      return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `${lead.company}-Chelo-proposal.pdf`, 'inline');
+      return sendPdf(res, proposalPdfPath(lead), `${lead.company}-Chelo-proposal.pdf`, 'inline');
     }
 
     if (method === 'POST' && pathname === '/api/leads') {
@@ -2907,7 +2938,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'GET' && action === 'proposal/download') {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
-        return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal-${lead.id}.pdf`, 'attachment');
+        return sendPdf(res, proposalPdfPath(lead), `Chelo-proposal-${lead.id}.pdf`, 'attachment');
       }
       // "What the funder will receive": one JSON the review screen renders verbatim — from, to, subject, the exact HTML/text,
       // every link, the attachment, and a pre-flight checklist. ?step=N previews a sequence step; default is the first touch.
@@ -2923,8 +2954,8 @@ async function handleApi(req, res, url) {
         const origin = publicOrigin(req);
         const links = [...new Set((text.match(/https?:\/\/[^\s<)]+/g) || []).map(u => u.replace(/[),.;!?]+$/, '')))].map(u => ({ url: u, kind: /\/track\/cta\//.test(u) ? 'cta' : /\/p\/|\/proposal\//.test(u) ? 'page' : /opt-out/.test(u) ? 'opt-out' : 'link' }));
         const placeholders = text.match(/\{\{[^}]*\}\}|\[(?:name|company|project|amount|insert[^\]]*)\]/gi) || [];
-        const pdfPath = lead.proposalFile ? path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)) : '';
-        const pdfOk = Boolean(pdfPath && fs.existsSync(pdfPath));
+        const pdfPath = proposalPdfPath(lead); // rebuilds the file if this instance does not have it
+        const pdfOk = Boolean(pdfPath);
         const checks = [
           { id: 'to', ok: Boolean(lead.email) && lead.contactCheck?.emailStatus !== 'invalid' && !['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status), label: 'Recipient', detail: lead.email ? `${lead.email} · mailbox ${lead.mailboxCheck?.status || 'not probed'}` : 'No email address' },
           { id: 'from', ok: Boolean(mailbox), label: 'Sending mailbox', detail: mailbox ? `${mailbox.fromName || ''} <${mailbox.fromEmail}>${mailbox.status === 'paused' ? ' · paused' : ''}` : 'No active mailbox — add one under Ops → Deliverability' },
@@ -2948,7 +2979,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'GET' && action === 'proposal/preview') {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
-        return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal-${lead.id}.pdf`, 'inline');
+        return sendPdf(res, proposalPdfPath(lead), `Chelo-proposal-${lead.id}.pdf`, 'inline');
       }
       if (method === 'GET' && action === 'email/eml') {
         if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
@@ -2963,8 +2994,8 @@ async function handleApi(req, res, url) {
         const attachProposal = shouldAttachProposal(lead, followUp, draft);
         let pdfBuffer = null;
         if (attachProposal) {
-          const pdfPath = path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile));
-          if (!fs.existsSync(pdfPath)) return sendJson(res, 404, { error: 'The prepared proposal PDF could not be found.' });
+          const pdfPath = proposalPdfPath(lead);
+          if (!pdfPath) return sendJson(res, 404, { error: 'The proposal PDF could not be made. Open the lead and press Create PDF first.' });
           pdfBuffer = fs.readFileSync(pdfPath);
         }
         try {
@@ -3200,9 +3231,10 @@ async function handleApi(req, res, url) {
         const approved = followUp ? lead.followUpEmailStatus === 'Approved' && Boolean(lead.followUpApprovedAt) : lead.emailStatus === 'Approved' && Boolean(lead.approvedAt);
         if (!draft || !approved) return sendJson(res, 409, { error: `Approve the ${followUp ? 'follow-up' : 'message'} before sending.` });
         if (['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status)) return sendJson(res, 409, { error: `Mailbox verification says this address is ${lead.mailboxCheck.status}; fix the address before sending.` });
+        if (!followUp) ensureProposalPdf(lead, actorName());
         const attachProposal = shouldAttachProposal(lead, followUp, draft);
-        const pdfPath = attachProposal ? proposalPdfPath(lead) : '';
-        if (attachProposal && !fs.existsSync(pdfPath)) return sendJson(res, 409, { error: 'The prepared proposal PDF could not be found.' });
+        const pdfAttachment = attachProposal ? proposalAttachment(lead) : null;
+        if (attachProposal && !pdfAttachment) return sendJson(res, 409, { error: 'The proposal PDF could not be made. Open the lead and press Create PDF, then send again.' });
         const to = String(lead.email || '').trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return sendJson(res, 400, { error: 'Add a valid recipient email before sending.' });
         const pending = sendEngine.jobsForLead(lead.id).find(j => j.kind === (followUp ? 'follow-up' : 'initial') && ['queued', 'sending', 'held'].includes(j.status));
@@ -3221,7 +3253,7 @@ async function handleApi(req, res, url) {
           };
           const job = sendEngine.enqueue({
             leadId: lead.id, kind: followUp ? 'follow-up' : 'initial', to, subject, text: emailBody, html: emailHtml(emailBody, pixelUrl), headers,
-            attachments: attachProposal ? [{ filename: 'Chelo-Partnership-Proposal.pdf', path: pdfPath, contentType: 'application/pdf' }] : [],
+            attachments: pdfAttachment ? [pdfAttachment] : [],
             mailboxId: body.mailboxId || '', requestedBy: actorName(), sendAt: body.sendNow === true ? new Date().toISOString() : null,
             meta: { openToken, followUp, attachProposal, actor: actorName(), company: lead.company }
           });

@@ -110,9 +110,10 @@ const generationRoute = sliceFunction(serverSource, "      if (method === 'POST'
 assert.match(generationRoute, /generateOutreachEmail\(/);
 assert.doesNotMatch(generationRoute, /generateProposalDraft\(|createProposal\(/, 'Intro-email generation must not create a proposal PDF.');
 const approvalRoute = sliceFunction(serverSource, "      if (method === 'POST' && action === 'approve-email') {", "      if (method === 'POST' && action === 'send-email') {");
-assert.match(approvalRoute, /Boolean\(followUp && body\.attachProposal && lead\.proposalFile\)/);
+assert.match(approvalRoute, /shouldAttachProposal\(lead, followUp, \{ attachProposal: body\.attachProposal \}\)/, 'first email always attaches; follow-ups only when asked');
+assert.match(approvalRoute, /if \(!followUp\) ensureProposalPdf\(lead/, 'the PDF is made before the first email is approved');
 const sendRoute = sliceFunction(serverSource, "      if (method === 'POST' && action === 'send-email') {", "      if (method === 'POST' && action === 'mark-sent') {");
-assert.match(sendRoute, /Boolean\(followUp && draft\?\.attachProposal && lead\.proposalFile\)/);
-assert.match(sendRoute, /attachments: attachProposal \?/);
+assert.match(sendRoute, /shouldAttachProposal\(lead, followUp, draft\)/);
+assert.match(sendRoute, /attachments: pdfAttachment \? \[pdfAttachment\]/, 'the PDF bytes travel with the queued job, not a file path');
 
 console.log('First-touch email, booking-button and optional-PDF handoff smoke passed.');

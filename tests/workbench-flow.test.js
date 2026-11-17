@@ -92,6 +92,23 @@ test('workbench flow: create → auto verify/research/match/draft, dead email qu
   assert.equal(after.payload.lead.research.status, 'approved');
   if (after.payload.lead.projectId) { assert.equal(after.payload.lead.flowStatus, 'ready'); assert.equal(after.payload.flow.steps.draft.usedApprovedResearch, true); }
 
+  // 1c. Proposal PDF: co-branded photo cover, and rebuilt on demand when the file is missing (serverless /tmp is per instance)
+  if (after.payload.lead.projectId) {
+    const made = await api('POST', `/api/leads/${lead.id}/proposal`, {});
+    assert.equal(made.status, 201, JSON.stringify(made.payload));
+    const file = path.join(dir, 'proposals', made.payload.filename);
+    const first = fs.readFileSync(file);
+    assert.match(first.toString('latin1'), /\/Subtype \/Image[^>]*\/Filter \/DCTDecode/, 'cover photo embedded as JPEG');
+    assert.match(first.toString('latin1'), /\/ExtGState/, 'fade uses alpha states');
+    fs.unlinkSync(file);
+    const dl = await fetch(`${base}/api/leads/${lead.id}/proposal/download`, { headers: { Cookie: jar.cookie } });
+    assert.equal(dl.status, 200, 'download rebuilds a missing PDF instead of 404');
+    assert.equal(dl.headers.get('content-type'), 'application/pdf');
+    assert.ok(fs.existsSync(file), 'rebuilt file written back');
+    const preview = await api('GET', `/api/leads/${lead.id}/preview`);
+    if (preview.status === 200) assert.ok(preview.payload.attachments.length === 1 && preview.payload.attachments[0].sizeKb > 20, JSON.stringify(preview.payload.attachments));
+  }
+
   // 2. Dead email (no MX) is rejected at intake; dead mailbox is quarantined by the flow
   const dead = await api('POST', '/api/leads', { company: 'Ghost Mining', contactName: 'Nobody', email: 'x@no-such-domain-zz-123456.co.za', sourceName: 's' });
   assert.equal(dead.status, 400);

@@ -18,6 +18,8 @@ test('conversion: template auto-pick follows cheloapp categories', () => {
   assert.equal(conversion.templateFor({ name: 'Solar + e-learning lab', summary: 'tablets and screens' }), 'ict');
   assert.equal(conversion.templateFor({ name: 'Ablution block', summary: 'build 6 toilets and a borehole' }), 'construction');
   assert.equal(conversion.templateFor(null), 'classroom');
+  assert.equal(conversion.templateFor({ name: 'Early literacy network', summary: 'Foundation Phase reading corners' }), 'literacy');
+  for (const t of conversion.TEMPLATES) { assert.ok(fs.existsSync(path.join(ROOT, 'public/brand/templates', `${t}.jpg`)), `${t}.jpg`); assert.ok(fs.existsSync(path.join(ROOT, 'public/brand/templates', `${t}-cover.jpg`)), `${t}-cover.jpg`); }
 });
 
 test('conversion: picture puts the funder in the frame, custom picture wins', () => {
