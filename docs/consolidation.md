@@ -47,3 +47,19 @@ Goal: anyone can see what does what. No engine behaviour changed; only names, st
 - Tests updated to the new words (71/0). Cache tag `20261026-v32`.
 
 Release 2 (next, after go): funder page becomes three cards — Who they are · What we'll send · one Send button; stepper and plan editor removed; PDF always attached to the first email.
+
+## Simplify — Release 2 (2026-11-17)
+
+The funder page in **To do** is now three cards; the six-step stepper and the editable plan are gone.
+
+1. **Status + one button** (top): the simple status, a one-line "what to do now", and a single button that fits the moment — *Start*, *Looks right — write the email*, *Read & send*, *Approve as second person & send* (4-eyes only), *Send now*, *Stop follow-ups*, *Read their reply in the Inbox*. Small links underneath: *They said yes → Partners*, *Do not contact*.
+2. **Who they are**: 3–5 short facts with tick boxes (top 3 findings, 2 alignment points, up to 2 public CSI names), "Where this came from" links, and the project picker. Untick anything wrong → *Looks right — write the email*. Before research exists the card shows the email-address check and, only when something is blocked, the fix buttons.
+3. **What we'll send**: To, *Attached: Chelo proposal PDF*, subject and body (editable until sent), one line explaining that Chelo follows up in the same thread and stops when they reply. Once running, the follow-ups show as a read-only list.
+
+`Read & send` builds the follow-up plan if needed and opens the existing *Preview before send* screen; its primary button reads **Send & follow up**.
+
+**PDF always attached (server):** `shouldAttachProposal()` — the first email (single send, approve, countersign, `.eml`, preview and sequence step 1) always carries the proposal PDF; follow-ups only when asked. `ensureProposalPdf()` makes the PDF at approval time if it does not exist yet (needs a chosen project). Pre-flight check reads *Proposal PDF will be attached* when it is not made yet. Covered in `tests/sequences.test.js`.
+
+Follow-up count unchanged (the conversion ladder: first email + 3 follow-ups); the copy states the real number from the plan.
+
+Mobile: the email card shows *Send & follow up* when a plan is drafted; wording updated. Cache tag `20261026-v33`. Tests 71/0.

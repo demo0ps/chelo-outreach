@@ -105,6 +105,11 @@ test('sequence API: build → edit → approve once → step 1 queued; human rep
   assert.equal(running.approval.policy, 'single');
   assert.equal(running.steps[0].status === 'queued' || running.steps[0].status === 'sent' || running.steps[0].status === 'failed', true, JSON.stringify(running.steps[0]));
   assert.ok(running.steps[0].jobId);
+  // Simplify R2: the first email always carries the proposal PDF — made automatically at approval, attached to step 1.
+  assert.ok(approved.payload.lead.proposalFile, 'PDF auto-generated at approval');
+  const dlv = await api('GET', '/api/deliverability');
+  const job1 = dlv.payload.jobs.find(j => j.id === running.steps[0].jobId);
+  assert.ok(job1, 'step 1 job visible'); assert.equal(job1.meta.attachProposal, true, 'PDF attached to the first email');
   assert.equal(running.steps[1].status, 'planned', 'follow-ups wait for step 1 to actually send');
   assert.equal((await api('POST', `/api/leads/${lead.id}/sequence/build`, {})).status, 409, 'cannot rebuild while running');
   assert.equal((await api('PATCH', `/api/leads/${lead.id}/sequence`, { steps: [{ n: 2, body: 'x' }] })).status, 409, 'approved plans are frozen');

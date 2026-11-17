@@ -75,7 +75,7 @@ test('mobile: Approvals lists plan, draft and countersign items; lead detail exp
   await click(t, 'm-back'); await click(t, 'm-open-lead', { id: 'l-cs' });
   assert.match(html.app, /data-action="email-countersign"/); assert.match(html.app, /data-action="email-return"/);
   await click(t, 'm-back'); await click(t, 'm-open-lead', { id: 'l-plan' });
-  assert.match(html.app, /data-action="seq-approve" data-id="l-plan"/); assert.match(html.app, /Follow-up sequence/);
+  assert.match(html.app, /data-action="seq-approve" data-id="l-plan"/); assert.match(html.app, /Send & follow up/);
   await click(t, 'm-back'); await click(t, 'm-open-lead', { id: 'l-replied' });
   assert.match(html.app, /data-action="triage-apply" data-id="l-replied" data-category="wrong-person"/); assert.match(html.app, /Naledi Mokoena/);
   assert.match(html.app, /Umoya Holdings replied — sequence stopped/, 'timeline shown');

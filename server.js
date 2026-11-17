@@ -588,6 +588,22 @@ function researchAlignmentSentence(lead) {
   const point = ctx.alignmentWithChelo[0]?.point || ctx.citedFunderFacts[0]?.fact || ctx.funderMissionSummary;
   return point ? ` ${point.replace(/\s+$/, '').replace(/\.$/, '')}.` : '';
 }
+/** Simplify R2 rule: the first email to a funder always carries the proposal PDF. Follow-ups attach only when asked. */
+function proposalPdfPath(lead) {
+  if (!lead || !lead.proposalFile) return '';
+  const p = path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile));
+  return fs.existsSync(p) ? p : '';
+}
+function shouldAttachProposal(lead, followUp, draft) {
+  if (!proposalPdfPath(lead)) return false;
+  return followUp ? Boolean(draft && draft.attachProposal) : true;
+}
+/** Make sure the PDF exists before the first email is approved; never throws — a missing PDF just means no attachment. */
+function ensureProposalPdf(lead, actor = 'staff') {
+  if (proposalPdfPath(lead)) return true;
+  try { createProposal(lead, {}, actor); return Boolean(proposalPdfPath(lead)); }
+  catch (err) { console.warn(`[proposal] could not auto-generate the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return false; }
+}
 function createProposal(lead, proposal, actor = 'staff') {
   const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
   if (linkedProject) proposal = { ...proposal, recipientName: linkedProject.recipientName, province: linkedProject.province, verifiedMetrics: proposal.verifiedMetrics || linkedProject.verifiedMetrics };
@@ -1049,10 +1065,12 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   const origin_ = origin || configStore.getPublicBaseUrl() || `http://localhost:${PORT}`;
   const headers = { 'List-Unsubscribe': `<${origin_}/opt-out/${encodeURIComponent(lead.bookingToken)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click', 'X-Chelo-Lead': lead.id, 'X-Chelo-Sequence': `${seq.id}:${step.n}` };
   if (step.n > 1 && seq.threadMessageId) { headers['In-Reply-To'] = seq.threadMessageId; headers.References = seq.threadMessageId; }
-  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, false) : step.body;
+  const pdfPath = step.n === 1 ? proposalPdfPath(lead) : '';
+  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdfPath)) : step.body;
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
-    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, actor, company: lead.company, openToken: null }
+    attachments: pdfPath ? [{ filename: 'Chelo-Partnership-Proposal.pdf', path: pdfPath, contentType: 'application/pdf' }] : [],
+    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdfPath), actor, company: lead.company, openToken: null }
   });
   step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
   if (step.n === 1) { lead.emailStatus = 'Queued'; lead.sendJobId = job.id; } else { lead.followUpEmailStatus = 'Queued'; lead.followUpAt = job.scheduledAt; lead.followUpStep = step.n - 1; }
@@ -2861,7 +2879,7 @@ async function handleApi(req, res, url) {
         const seq = lead.sequence; const seqStep = seq && stepN ? seq.steps.find(x => x.n === stepN) : null;
         const draft = seqStep ? { subject: seqStep.subject, body: seqStep.body } : lead.emailDraft;
         if (!draft) return sendJson(res, 404, { error: 'There is no draft to preview yet. Run the Workbench flow or write one in step 4.' });
-        const attachProposal = Boolean(!seqStep && lead.proposalFile && (lead.emailDraft?.attachProposal ?? false));
+        const attachProposal = (!seqStep || seqStep.n === 1) ? shouldAttachProposal(lead, false) : false;
         const text = (!seqStep || seqStep.n === 1) ? cleanApprovedEmailBody(draft, attachProposal) : String(draft.body || '');
         const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
         const mailbox = (() => { try { return sendEngine.pickMailbox(lead.mailboxId || ''); } catch { return null; } })();
@@ -2877,7 +2895,7 @@ async function handleApi(req, res, url) {
           { id: 'placeholders', ok: placeholders.length === 0, label: 'No unfilled placeholders', detail: placeholders.length ? placeholders.join(', ') : 'Every merge field is filled' },
           { id: 'ask', ok: links.some(l => l.kind === 'cta') || /\?\s*$/m.test(text.replace(/\n\s*To stop further outreach:.*$/s, '').trim()), label: 'Clear ask', detail: links.some(l => l.kind === 'cta') ? 'One-click "Yes" button leads to the booking page' : /\?\s*$/m.test(text) ? 'Ends with a question the funder can answer by replying (meeting link comes at step 2)' : 'No question or booking link — the funder has nothing to say yes to' },
           { id: 'suppression', ok: !lead.doNotContact, label: 'Not suppressed', detail: lead.doNotContact ? 'Contact is on the do-not-contact list' : 'Not opted out, no hard bounce' },
-          ...(attachProposal || lead.proposalFile ? [{ id: 'pdf', ok: pdfOk, label: attachProposal ? 'Proposal PDF attached' : 'Proposal PDF ready (linked, not attached)', detail: pdfOk ? `${Math.round(fs.statSync(pdfPath).size / 1024)} KB · ${lead.proposalFile}` : 'PDF file missing — generate it again' }] : [])
+          ...(!seqStep || seqStep.n === 1 ? [{ id: 'pdf', ok: pdfOk || Boolean(lead.projectId), label: pdfOk ? 'Proposal PDF attached' : lead.projectId ? 'Proposal PDF will be attached' : 'No proposal PDF yet', detail: pdfOk ? `${Math.round(fs.statSync(pdfPath).size / 1024)} KB · ${lead.proposalFile}` : lead.projectId ? 'Chelo makes it from the chosen project when you press Send' : 'Choose a project first — the PDF needs its numbers' }] : [])
         ];
         return sendJson(res, 200, {
           leadId: lead.id, step: seqStep ? seqStep.n : 0,
@@ -2905,7 +2923,7 @@ async function handleApi(req, res, url) {
           ? lead.followUpEmailStatus === 'Approved' && Boolean(lead.followUpApprovedAt)
           : lead.emailStatus === 'Approved' && Boolean(lead.approvedAt);
         if (!approved || !draft) return sendJson(res, 409, { error: 'Approve the email before downloading the .eml handoff.' });
-        const attachProposal = Boolean(followUp && draft?.attachProposal && lead.proposalFile);
+        const attachProposal = shouldAttachProposal(lead, followUp, draft);
         let pdfBuffer = null;
         if (attachProposal) {
           const pdfPath = path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile));
@@ -2957,7 +2975,7 @@ async function handleApi(req, res, url) {
           if (!pending || lead[statusKey] !== 'Pending second approval' || !draft) return sendJson(res, 409, { error: 'No draft is awaiting a second approval.' });
           if (pending.firstApproverId === approverId) return sendJson(res, 403, { error: 'Four-eyes policy: a different staff member must provide the second approval.' });
           if (!roleAllows(req.authSession, ['admin', 'reviewer'])) return sendJson(res, 403, { error: 'Only Admin or Reviewer accounts may countersign outbound email.' });
-          const attachProposal = Boolean(followUp && draft.attachProposal && lead.proposalFile);
+          const attachProposal = shouldAttachProposal(lead, followUp, draft);
           const payload = { to: lead.email, kind: followUp ? 'follow-up' : 'initial', subject: draft.subject, body: draft.body, attachProposal, pdfSha256: attachProposal ? pdfDigest() : '', project: lead.project, amount: lead.amount };
           if (!configStore.verifyApprovalDigest(pending.digest, payload)) {
             lead[statusKey] = 'Draft'; lead[approvalKey] = null; saveDb();
@@ -2974,7 +2992,8 @@ async function handleApi(req, res, url) {
         }
 
         if (!roleAllows(req.authSession, ['admin', 'reviewer', 'owner'])) return sendJson(res, 403, { error: 'Your role cannot approve outbound email.' });
-        const attachProposal = Boolean(followUp && body.attachProposal && lead.proposalFile);
+        if (!followUp) ensureProposalPdf(lead, actorName());
+        const attachProposal = shouldAttachProposal(lead, followUp, { attachProposal: body.attachProposal });
         if (attachProposal && !fs.existsSync(pdfPathFor())) return sendJson(res, 409, { error: 'The prepared proposal PDF could not be found.' });
         const message = {
           subject: String(body.subject || '').slice(0, 200),
@@ -3047,6 +3066,7 @@ async function handleApi(req, res, url) {
         const approverId = req.authSession.userId || req.authSession.username;
         const approverLabel = `${req.authSession.displayName || req.authSession.username} <${req.authSession.username}>`;
         const launch = () => {
+          ensureProposalPdf(lead, approverLabel); // first email always carries the PDF
           seq.status = 'approved'; seq.approval.approvedAt = new Date().toISOString();
           const first = seq.steps[0];
           lead.emailDraft = { ...(lead.emailDraft || {}), subject: first.subject, body: first.body, updatedAt: new Date().toISOString() };
@@ -3143,8 +3163,8 @@ async function handleApi(req, res, url) {
         const approved = followUp ? lead.followUpEmailStatus === 'Approved' && Boolean(lead.followUpApprovedAt) : lead.emailStatus === 'Approved' && Boolean(lead.approvedAt);
         if (!draft || !approved) return sendJson(res, 409, { error: `Approve the ${followUp ? 'follow-up' : 'message'} before sending.` });
         if (['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status)) return sendJson(res, 409, { error: `Mailbox verification says this address is ${lead.mailboxCheck.status}; fix the address before sending.` });
-        const attachProposal = Boolean(followUp && draft?.attachProposal && lead.proposalFile);
-        const pdfPath = attachProposal ? path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)) : '';
+        const attachProposal = shouldAttachProposal(lead, followUp, draft);
+        const pdfPath = attachProposal ? proposalPdfPath(lead) : '';
         if (attachProposal && !fs.existsSync(pdfPath)) return sendJson(res, 409, { error: 'The prepared proposal PDF could not be found.' });
         const to = String(lead.email || '').trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return sendJson(res, 400, { error: 'Add a valid recipient email before sending.' });

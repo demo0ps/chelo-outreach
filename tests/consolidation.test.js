@@ -107,7 +107,8 @@ test('Inbox: Approvals tab is the desktop twin of the phone tab and includes bri
 test('Preview before send: workbench and approvals open one screen with email + PDF + checks + the single next action', async () => {
   const { t, html } = boot(); fixtures(t);
   t.state.view = 'workbench'; t.state.wb.selectedId = 'l-draft'; t.renderApp();
-  assert.match(html.app, /data-action="send-preview" data-id="l-draft"/, 'step 5 offers the preview');
+  assert.match(html.app, /data-action="wb-send-all" data-id="l-draft"/, 'the one button opens the preview');
+  assert.match(html.app, /Who they are/); assert.match(html.app, /What we.{1,6}ll send/); assert.doesNotMatch(html.app, /class="wb-step /, 'no stepper');
   // simulate the API answer and render the modal
   t.state.modal = { type: 'send-preview', id: 'l-draft', step: 0, loading: false, error: '', data: { leadId: 'l-draft', step: 0, from: { name: 'Nandi', email: 'n@cheloapp.com' }, to: { name: 'Naledi', email: 'n@x.co' }, subject: 'Bolt + Literacy', text: 'Hi', html: '<!doctype html><html><body><p>Hi</p></body></html>', links: [{ url: 'https://x/track/cta/abc', kind: 'cta' }], attachments: [], proposal: null, steps: [], status: { email: 'Draft', sequence: null, approvalPolicy: 'single' }, checks: [{ id: 'to', ok: true, label: 'Recipient', detail: 'n@x.co' }, { id: 'cta', ok: true, label: 'Reply button present', detail: '' }], ready: true } };
   t.renderApp();

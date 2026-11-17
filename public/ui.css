@@ -2129,3 +2129,41 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 /* sidebar on the favicon purple: lift secondary text for contrast (≥4.5:1 on #3f2fc0) */
 .brand-tag, .user-mini small { color: rgba(255,255,255,.72); }
 .mobile-more-sheet .mobile-more-heading { color: rgba(255,255,255,.72); }
+
+/* ---- Simplify R2: funder page = three cards ---- */
+.wb-lead-page { display: grid; gap: 0; }
+.wb-lead-page .wb-detail-head { border-bottom: 1px solid var(--z-200); }
+.wb-flow-error { margin: 12px 20px 0; }
+.wb-card { border-top: 1px solid var(--z-200); padding: 16px 20px 18px; display: grid; gap: 12px; }
+.wb-card:first-of-type { border-top: 0; }
+.wb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wb-card-head h3 { margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; color: var(--z-900); }
+.wb-card-head h3 .icon-svg { width: 16px; height: 16px; }
+.wb-card-body { display: grid; gap: 12px; }
+.wb-card-body .subtle, .wb-card-body .form-error { margin: 0; font-size: 12.5px; }
+.wb-action-card { background: var(--z-50); border-top: 0; }
+.wb-action-main { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.wb-action-main strong { font-size: 15px; display: block; margin-bottom: 2px; }
+.wb-action-main .subtle { margin: 0; font-size: 12.5px; }
+.wb-action-facts { color: var(--z-500); }
+.wb-action-main .button { min-width: 160px; justify-content: center; }
+.wb-action-secondary { display: flex; flex-wrap: wrap; gap: 6px; }
+.wb-facts { display: grid; gap: 2px; }
+.wb-fact { font-size: 13.5px; line-height: 1.45; padding: 6px 8px; }
+.wb-fact input { margin-top: 4px; }
+.wb-sources-line { margin: 0; font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.wb-sources-line .source-link { font-size: 12px; }
+.wb-facts-kv { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; }
+.wb-facts-kv div { display: grid; gap: 2px; }
+.wb-facts-kv dt { font-size: 11.5px; color: var(--z-500); }
+.wb-facts-kv dd { margin: 0; font-size: 13px; font-weight: 500; }
+.wb-project-pick { max-width: 520px; }
+.wb-send-meta { display: grid; gap: 4px; }
+.wb-send-meta .sp-row { display: grid; grid-template-columns: 72px 1fr; gap: 8px; font-size: 12.5px; }
+.wb-send-meta .sp-row span { color: var(--z-500); }
+.wb-send-meta .sp-row strong { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wb-send-meta .icon-svg { width: 14px; height: 14px; }
+.wb-followup-note { display: flex; gap: 8px; align-items: flex-start; }
+.wb-followup-note .icon-svg { width: 14px; height: 14px; flex: 0 0 auto; margin-top: 2px; }
+.wb-lead-page .wb-seq { margin-top: 4px; }
+@media (max-width: 720px) { .wb-card { padding: 14px 16px; } .wb-action-main .button { width: 100%; } }
