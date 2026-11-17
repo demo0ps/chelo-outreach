@@ -63,3 +63,8 @@ The funder page in **To do** is now three cards; the six-step stepper and the ed
 Follow-up count unchanged (the conversion ladder: first email + 3 follow-ups); the copy states the real number from the plan.
 
 Mobile: the email card shows *Send & follow up* when a plan is drafted; wording updated. Cache tag `20261026-v33`. Tests 71/0.
+
+## Sidebar colour & brand mark (2026-11-17)
+
+- Sidebar locked to **deep indigo** `#2a2470 → #1f1a58` (subtle vertical gradient) — the favicon hue taken deep and quiet. Selected item: soft brand-purple tint `rgba(89,69,232,.48)`; hover: white 7%; captions and the user line in muted lavender `#b9b4e6`; menu text white. Counts: white chip with indigo text. `theme-color` = `#2a2470`. The `?sidebar=` trial switch and `sidebar-compare.html` were removed.
+- **Brand tile = the favicon.** Every brand tile (sidebar, login, booking / public pages, phone header) now shows `/brand/chelo-mark.svg` (purple tile with the ring-and-dot) instead of the generic target icon. Text beside it stays "Chelo · Communication Center"; the login screen now says the same. Outbound emails stay plain-text styled (no logo header) on purpose, for deliverability.

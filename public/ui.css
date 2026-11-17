@@ -1983,17 +1983,15 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
    Rules applied: flat solid sidebar with 1px border and monochrome icons; no glass, gradients, glows or transform hovers;
    no eyebrow labels; tables/lists sit on the page instead of inside nested cards; caps only for true category labels. */
 :root { --sidebar-fg: rgba(255,255,255,.86); --sidebar-muted: #b9b4e6; --sidebar-border: rgba(255,255,255,.10); --shadow-md: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.10); --glow-accent: none; }
-/* Sidebar shades — all the favicon hue (#5945e8) taken deep and quiet. Pick with ?sidebar=a|b|c (remembered). */
-:root, html[data-sidebar="a"] { /* A · Midnight indigo — most executive; brand purple only as the active-edge marker */
-  --sidebar: #1e1b4b; --sidebar-2: #161338; --sidebar-hover: rgba(255,255,255,.07); --sidebar-active: rgba(255,255,255,.10); --sidebar-active-edge: #7c6cf2; --sidebar-count-fg: #1e1b4b; }
-html[data-sidebar="b"] { /* B · Deep indigo — 'royal'; active item carries a soft brand-purple tint */
+:root { /* Sidebar: deep indigo — the favicon hue (#5945e8) taken deep and quiet; the selected item carries a soft brand-purple tint */
   --sidebar: #2a2470; --sidebar-2: #1f1a58; --sidebar-hover: rgba(255,255,255,.07); --sidebar-active: rgba(89,69,232,.48); --sidebar-active-edge: transparent; --sidebar-count-fg: #2a2470; }
-html[data-sidebar="c"] { /* C · Royal #312E81 — richer colour, quiet white highlight */
-  --sidebar: #312e81; --sidebar-2: #262366; --sidebar-hover: rgba(255,255,255,.08); --sidebar-active: rgba(255,255,255,.14); --sidebar-active-edge: transparent; --sidebar-count-fg: #312e81; }
 
 /* sidebar */
 .sidebar { background: linear-gradient(180deg, var(--sidebar) 0%, var(--sidebar-2) 100%); color: var(--sidebar-fg); border-right: 1px solid var(--sidebar-border); box-shadow: none; padding: 16px 12px 14px; }
-.brand-symbol { background: #5945e8; color: #fff; border-radius: 9px; box-shadow: 0 0 0 1px rgba(255,255,255,.18); } /* same as the favicon */
+/* the brand tile IS the favicon: the mark image draws its own purple tile */
+.brand-symbol, .booking-brand-icon, .auth-brand .brand-symbol { background: none; border: 0; box-shadow: none; padding: 0; overflow: visible; border-radius: 9px; }
+.brand-mark { display: block; width: 100%; height: 100%; border-radius: inherit; box-shadow: 0 0 0 1px rgba(255,255,255,.14); }
+.booking-brand-icon .brand-mark { box-shadow: none; }
 .brand-symbol::before, .brand-symbol::after { display: none; }
 .brand-symbol svg, .brand-symbol .icon-svg { filter: none; }
 .nav-caption { font-size: 11.5px; letter-spacing: 0; text-transform: none; color: var(--sidebar-muted); padding: 12px 10px 6px; }

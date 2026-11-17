@@ -1,5 +1,4 @@
-// Sidebar shade trial: ?sidebar=a|b|c picks a shade and remembers it (see ui.css). Default A.
-(() => { try { const q = new URLSearchParams(location.search).get('sidebar'); const v = ['a', 'b', 'c'].includes(q) ? q : (localStorage.getItem('chelo.sidebar') || 'a'); if (q) localStorage.setItem('chelo.sidebar', v); document.documentElement.dataset.sidebar = v; } catch { /* no storage */ } })();
+const BRAND_MARK = '<img class="brand-mark" src="/brand/chelo-mark.svg" alt="" width="32" height="32" decoding="async" />';
 const API = async (url, options = {}) => {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -402,7 +401,7 @@ function shellHeader() {
 function shellSidebar() {
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<aside class="sidebar">
-    <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${svgIcon('target')}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">Communication Center</span></span></a>
+    <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${BRAND_MARK}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">Communication Center</span></span></a>
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
       ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
@@ -694,7 +693,7 @@ function authGateView() {
   const intro = setup ? 'Set up the first Chelo Communication Center administrator before connecting services.' : 'Sign in to your protected Chelo partnerships workspace.';
   const fields = setup ? `<div class="form-group"><label for="auth-password-confirm">Confirm password</label><input class="form-control" id="auth-password-confirm" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required /></div>` : '';
   const submit = setup ? 'Create admin account' : 'Sign in';
-  return `<main class="auth-screen"><section class="auth-card"><div class="auth-brand"><span class="brand-symbol">${svgIcon('target')}</span><span><strong>Chelo</strong><small>impact partnerships</small></span></div><span class="auth-kicker">SECURE WORKSPACE</span><h1>${title}</h1><p class="auth-intro">${intro}</p>${state.authError ? `<div class="form-error">${esc(state.authError)}</div>` : ''}<form class="auth-form" data-form="${setup ? 'auth-setup' : 'auth-login'}">${setup ? `<div class="form-group"><label for="auth-display">Your name</label><input class="form-control" id="auth-display" name="displayName" autocomplete="name" required placeholder="e.g. Nandi M." /></div>` : ''}<div class="form-group"><label for="auth-username">${setup ? 'Admin email' : 'Staff email'}</label><input class="form-control" id="auth-username" name="username" type="email" autocomplete="username" required placeholder="you@cheloapp.com" /></div><div class="form-group"><label for="auth-password">${setup ? 'Create password' : 'Password'}</label><input class="form-control" id="auth-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="${setup ? '12' : '1'}" required placeholder="${setup ? 'At least 12 characters' : 'Enter your password'}" /></div>${fields}<button type="submit" class="button button-primary auth-submit">${svgIcon(setup ? 'lock' : 'arrow')} ${submit}</button></form>${state.auth.demoAccessAvailable ? `<div class="auth-demo-divider"><span>or explore</span></div><button type="button" class="button button-secondary auth-demo-button" data-action="demo-login">${svgIcon('eye')} Enter demo as admin</button><p class="auth-demo-warning">Full admin access to the demo workspace. Only use with fictional data and an isolated, disposable data directory.</p>` : ''}<p class="auth-security-note">${svgIcon('shield')} Credentials and provider secrets are processed server-side. Use a unique password and keep this workspace on a trusted network.</p>${setup ? `<p class="auth-first-run-warning">Complete first-run setup before exposing the app to other networks.</p>` : ''}</section><div class="auth-orb auth-orb-one"></div><div class="auth-orb auth-orb-two"></div></main>`;
+  return `<main class="auth-screen"><section class="auth-card"><div class="auth-brand"><span class="brand-symbol">${BRAND_MARK}</span><span><strong>Chelo</strong><small>Communication Center</small></span></div><span class="auth-kicker">SECURE WORKSPACE</span><h1>${title}</h1><p class="auth-intro">${intro}</p>${state.authError ? `<div class="form-error">${esc(state.authError)}</div>` : ''}<form class="auth-form" data-form="${setup ? 'auth-setup' : 'auth-login'}">${setup ? `<div class="form-group"><label for="auth-display">Your name</label><input class="form-control" id="auth-display" name="displayName" autocomplete="name" required placeholder="e.g. Nandi M." /></div>` : ''}<div class="form-group"><label for="auth-username">${setup ? 'Admin email' : 'Staff email'}</label><input class="form-control" id="auth-username" name="username" type="email" autocomplete="username" required placeholder="you@cheloapp.com" /></div><div class="form-group"><label for="auth-password">${setup ? 'Create password' : 'Password'}</label><input class="form-control" id="auth-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="${setup ? '12' : '1'}" required placeholder="${setup ? 'At least 12 characters' : 'Enter your password'}" /></div>${fields}<button type="submit" class="button button-primary auth-submit">${svgIcon(setup ? 'lock' : 'arrow')} ${submit}</button></form>${state.auth.demoAccessAvailable ? `<div class="auth-demo-divider"><span>or explore</span></div><button type="button" class="button button-secondary auth-demo-button" data-action="demo-login">${svgIcon('eye')} Enter demo as admin</button><p class="auth-demo-warning">Full admin access to the demo workspace. Only use with fictional data and an isolated, disposable data directory.</p>` : ''}<p class="auth-security-note">${svgIcon('shield')} Credentials and provider secrets are processed server-side. Use a unique password and keep this workspace on a trusted network.</p>${setup ? `<p class="auth-first-run-warning">Complete first-run setup before exposing the app to other networks.</p>` : ''}</section><div class="auth-orb auth-orb-one"></div><div class="auth-orb auth-orb-two"></div></main>`;
 }
 function renderView() {
   switch (state.view) {
@@ -1743,7 +1742,7 @@ async function importCandidateCsvPreview() {
 function renderPublicBooking() {
   const root = $('#app');
   if (!state.bookingInfo) {
-    root.innerHTML = `<main class="booking-screen"><div class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Partnership briefing</div><h1>Choose a preferred time</h1><p>Loading your invitation…</p></div><div class="loading-line"><span></span></div></div></main>`;
+    root.innerHTML = `<main class="booking-screen"><div class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Partnership briefing</div><h1>Choose a preferred time</h1><p>Loading your invitation…</p></div><div class="loading-line"><span></span></div></div></main>`;
     return;
   }
   const info = state.bookingInfo;
@@ -1765,7 +1764,7 @@ function renderPublicBooking() {
     <div class="form-group"><label for="b-time">Preferred time (SAST) *</label><select class="form-control" id="b-time" name="time" required>${['09:00', '10:30', '13:00', '14:30', '15:30'].map(t => `<option value="${t}">${t}</option>`).join('')}</select></div>
     <div class="form-group full"><label for="b-note">Anything you'd like us to prepare? <span class="optional">(optional)</span></label><textarea class="form-control" id="b-note" name="note" placeholder="Share your focus areas or questions."></textarea></div>
   </div>${state.bookingError ? `<div class="form-error" style="margin-top:11px">${esc(state.bookingError)}</div>` : ''}<div style="display:flex;justify-content:flex-end;margin-top:17px"><button type="submit" class="button button-primary">Request ${meetingDuration}-minute introduction ${svgIcon('arrow')}</button></div></form></div>`;
-  root.innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">A conversation about impact</div><h1>A ${meetingDuration}-minute introduction to Chelo.</h1><p>Choose a preferred time for a brief, no-commitment conversation.</p></div>${bookingBody}<div class="booking-foot">Chelo · Security. Transparency. Accountability. · South Africa<br>Your selected slot is a preference; the team will confirm it personally.</div></article></main>`;
+  root.innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">A conversation about impact</div><h1>A ${meetingDuration}-minute introduction to Chelo.</h1><p>Choose a preferred time for a brief, no-commitment conversation.</p></div>${bookingBody}<div class="booking-foot">Chelo · Security. Transparency. Accountability. · South Africa<br>Your selected slot is a preference; the team will confirm it personally.</div></article></main>`;
 }
 async function initPublicBooking() {
   state.bookingLoading = true; renderPublicBooking();
@@ -1774,7 +1773,7 @@ async function initPublicBooking() {
   catch (err) { state.bookingInfo = { error: err.message }; }
   state.bookingLoading = false;
   if (state.bookingInfo?.error) {
-    $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Partnership briefing</div><h1>Invitation unavailable</h1><p>This link may have expired or the contact has been suppressed.</p></div><div class="booking-card-body"><p class="page-subtitle">Please reply to your Chelo contact for assistance.</p></div></article></main>`;
+    $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Partnership briefing</div><h1>Invitation unavailable</h1><p>This link may have expired or the contact has been suppressed.</p></div><div class="booking-card-body"><p class="page-subtitle">Please reply to your Chelo contact for assistance.</p></div></article></main>`;
   } else renderPublicBooking();
 }
 // Hosted partnership page (/p/:token): funder-as-hero picture, three numbers, what you receive, two slots + booking.
@@ -1813,7 +1812,7 @@ async function bookFromPage(date, time) {
 function renderPublicOptOut() {
   const info = state.optOutInfo;
   if (!info) {
-    $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Email preferences</div><h1>Loading your request…</h1><p>One moment.</p></div></article></main>`;
+    $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Email preferences</div><h1>Loading your request…</h1><p>One moment.</p></div></article></main>`;
     return;
   }
   const unavailable = Boolean(info.error);
@@ -1823,7 +1822,7 @@ function renderPublicOptOut() {
     : completed
       ? `<div class="booking-success"><div class="success-check">${svgIcon('check')}</div><h2>Preference saved</h2><p>Chelo will not send further outreach or follow-up emails to this contact. You may close this page.</p></div>`
       : `<div class="booking-card-body"><div class="booking-project"><small>Organisation</small><strong>${esc(info.company)}</strong></div><p class="page-subtitle" style="margin:0 0 16px">If you no longer wish to receive Chelo outreach about this partnership, confirm below. This will stop future follow-ups for this contact.</p><button type="button" class="button button-primary" data-action="public-opt-out">${svgIcon('ban')}Stop further outreach</button></div>`;
-  $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Email preferences</div><h1>${completed ? 'You’re opted out.' : 'Manage your email preferences.'}</h1><p>We respect your choice.</p></div>${content}<div class="booking-foot">Chelo · Security. Transparency. Accountability. · South Africa</div></article></main>`;
+  $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Email preferences</div><h1>${completed ? 'You’re opted out.' : 'Manage your email preferences.'}</h1><p>We respect your choice.</p></div>${content}<div class="booking-foot">Chelo · Security. Transparency. Accountability. · South Africa</div></article></main>`;
 }
 async function initPublicOptOut() {
   renderPublicOptOut();
@@ -1951,7 +1950,7 @@ async function init() {
     state.auth = await API('/api/auth/status');
     if (!state.auth.authenticated) { renderAuthGate(); return; }
     state.data = await API('/api/init'); renderApp(); loadRadar(); if (state.view === 'workbench') wbRunPending();
-  } catch (err) { $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${svgIcon('target')}</span>Chelo</div><div class="eyebrow">Workspace unavailable</div><h1>Could not load the partnerships workspace.</h1><p>${esc(err.message)}</p></div><div class="booking-card-body">Refresh the page in a moment. Check that the local app server is running.</div></article></main>`; }
+  } catch (err) { $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Workspace unavailable</div><h1>Could not load the partnerships workspace.</h1><p>${esc(err.message)}</p></div><div class="booking-card-body">Refresh the page in a moment. Check that the local app server is running.</div></article></main>`; }
 }
 init();
 
