@@ -109,6 +109,19 @@ test('workbench flow: create → auto verify/research/match/draft, dead email qu
     if (preview.status === 200) assert.ok(preview.payload.attachments.length === 1 && preview.payload.attachments[0].sizeKb > 20, JSON.stringify(preview.payload.attachments));
   }
 
+  // 1d. A lead blocked for "needs-email" is unblocked the moment an address lands on it (typed here; same helper for the finder)
+  const noEmail = await api('POST', '/api/leads', { company: 'Quiet Holdings', contactName: '', email: '', sourceName: 'Catalogue', sourceUrl: 'https://github.com/about' });
+  assert.equal(noEmail.status, 201, JSON.stringify(noEmail.payload));
+  const blockedRun = await api('POST', `/api/leads/${noEmail.payload.id}/flow`, {});
+  assert.equal(blockedRun.payload.flow.steps.verify.status, 'needs-email');
+  assert.equal(blockedRun.payload.lead.flowStatus, 'blocked');
+  assert.equal((await api('PATCH', `/api/leads/${noEmail.payload.id}`, { email: 'csi@github.com' })).status, 200);
+  await new Promise(r => setTimeout(r, 150)); // reveal/unblock runs on setImmediate
+  const unblocked = await api('GET', `/api/leads/${noEmail.payload.id}/flow`);
+  assert.notEqual(unblocked.payload.lead.flowStatus, 'blocked', 'stale "no email yet" block cleared');
+  assert.equal(unblocked.payload.flow.steps.verify.status, 'pending');
+  assert.match(unblocked.payload.flow.steps.verify.detail, /Press Run/);
+
   // 2. Dead email (no MX) is rejected at intake; dead mailbox is quarantined by the flow
   const dead = await api('POST', '/api/leads', { company: 'Ghost Mining', contactName: 'Nobody', email: 'x@no-such-domain-zz-123456.co.za', sourceName: 's' });
   assert.equal(dead.status, 400);

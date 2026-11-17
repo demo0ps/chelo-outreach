@@ -987,8 +987,18 @@ function flowStep(lead, name, patch) {
   lead.flow.step = name;
   lead.flow.updatedAt = new Date().toISOString();
 }
+/** An email address arrived (typed, chosen from the finder, or found automatically): a "needs-email" block is no longer true.
+ *  Per staff decision the flow does not auto-continue — the lead goes back to "Run" and the person presses it. */
+function unblockForEmail(lead) {
+  const verify = lead.flow?.steps?.verify;
+  if (!normalizeEmail(lead.email) || !verify || verify.status !== 'needs-email') return false;
+  flowStep(lead, 'verify', { status: 'pending', detail: `Email address added (${lead.email}). Press Run to check it and carry on.` });
+  lead.flow.status = 'new'; delete lead.flow.error;
+  return true;
+}
 function deriveFlowStatus(lead) {
   const f = lead.flow; if (!f) return 'new';
+  if (f.status === 'blocked' && f.steps?.verify?.status === 'needs-email' && normalizeEmail(lead.email)) return 'new'; // heals records blocked before the address arrived
   if (f.status === 'running' || f.status === 'dead' || f.status === 'error' || f.status === 'blocked') return f.status;
   if (lead.triage && !lead.triage.handled) return 'replied';
   if (lead.sequence && ['running', 'pending-approval'].includes(lead.sequence.status)) return lead.sequence.status === 'pending-approval' ? 'approved' : 'sequence';
@@ -1490,6 +1500,7 @@ async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true, sign
     if (!lead.sourceName) lead.sourceName = 'Organisation website';
     lead.contactCheck = await inspectContactRecord(lead);
     revealLeadIfContactable(lead);
+    unblockForEmail(lead);
     lead.updatedAt = new Date().toISOString();
     configStore.recordAudit({ actor, action: 'lead.mailbox_found', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${chosen.pattern ? 'pattern-verified' : 'published'} mailbox ${maskEmail(chosen.email)} (${chosen.kind}; ${chosen.verification.status})` });
   }
@@ -2932,6 +2943,7 @@ async function handleApi(req, res, url) {
         if (normalizedBody.email !== undefined) normalizedBody.email = normalizeEmail(normalizedBody.email);
         updateLead(lead, normalizedBody, actorName());
         if (newContactCheck) lead.contactCheck = newContactCheck;
+        if (normalizedBody.email !== undefined) unblockForEmail(lead);
         saveDb();
         return sendJson(res, 200, lead);
       }
@@ -3223,7 +3235,7 @@ async function handleApi(req, res, url) {
         if (isSuppressedEmail(email)) return sendJson(res, 409, { error: 'That address is on the suppression list.' });
         lead.email = email; lead.contactKind = 'generic-mailbox'; if (!lead.contactName) lead.contactName = 'CSI / Social Investment team'; if (!lead.title) lead.title = 'Generic organisation mailbox';
         lead.contactSource = { kind: cand.pattern ? 'pattern-mailbox (staff-selected)' : 'published-mailbox (staff-selected)', sourceUrl: cand.sources?.[0] || '', verification: cand.verification, at: new Date().toISOString() };
-        lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10); lead.contactCheck = await inspectContactRecord(lead); revealLeadIfContactable(lead); lead.updatedAt = new Date().toISOString();
+        lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10); lead.contactCheck = await inspectContactRecord(lead); revealLeadIfContactable(lead); unblockForEmail(lead); lead.updatedAt = new Date().toISOString();
         configStore.recordAudit({ actor: actorName(), action: 'lead.mailbox_selected', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: staff selected ${maskEmail(email)}` });
         saveDb(); return sendJson(res, 200, { ok: true, lead: workbenchLead(lead) });
       }

@@ -103,3 +103,13 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   batch's AbortSignal. Whatever finishes is saved; organisations cut short are marked `cutShort` and go to the back of the queue
   (not "no mailbox published"). The browser keeps asking for the next batch, shows live progress, tolerates a 502/503/504 three times,
   and stops with a clear message when only slow sites remain.
+
+## Email arrives → block clears (v39)
+
+- Symptom: a lead showed "No email address yet" in red while the finder panel showed a mailbox "In use". The address had been saved,
+  but the workflow still carried the verdict from the earlier run.
+- Fix: `unblockForEmail(lead)` runs whenever an address lands on a lead (typed, "Use this", or found automatically). The verify step
+  becomes *pending* with "Email address added (…). Press Run to check it and carry on." and the status returns to **Run** — Chelo does
+  not auto-continue (staff decision). `deriveFlowStatus` also heals records that were blocked before the address arrived.
+- Mailbox finder skips department mailboxes entirely — hr@, careers@, press@, sales@, support@ … — including department
+  *subdomains* such as `info@hr.ibm.com`. Prefers csi@ / foundation@ / sustainability@ / info@.

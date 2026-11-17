@@ -5,8 +5,8 @@ const { createMailboxFinder, extractMailboxes, looksPersonal } = require('../lib
 test('mailbox finder: captures only the organisation’s own generic mailboxes, never personal addresses', () => {
   const html = `<footer>CSI enquiries: <a href="mailto:CSI@example-corp.co.za">CSI@example-corp.co.za</a> · foundation@example-corp.co.za · thandi.nkosi@example-corp.co.za · j.smith@example-corp.co.za · media@example-corp.co.za · info@gmail.com · partner@othercorp.com · logo@2x.png</footer>`;
   const hits = extractMailboxes(html, { domains: new Set(['example-corp.co.za']), sourceUrl: 'https://www.example-corp.co.za/contact' });
-  assert.deepEqual(hits.map(h => h.email), ['csi@example-corp.co.za', 'foundation@example-corp.co.za', 'media@example-corp.co.za']);
-  assert.equal(hits[0].score, 1); assert.equal(hits[2].score, 0, 'media is kept for transparency but never auto-selected');
+  assert.deepEqual(hits.map(h => h.email), ['csi@example-corp.co.za', 'foundation@example-corp.co.za'], 'media@ is a department mailbox and is skipped entirely');
+  assert.equal(hits[0].score, 1);
   assert.ok(looksPersonal('thandi.nkosi') && looksPersonal('j.smith') && !looksPersonal('csi') && !looksPersonal('corporate.affairs'));
   assert.equal(extractMailboxes('mail us at enquiries [at] example-corp.co.za', { domains: new Set(['example-corp.co.za']) })[0].email, 'enquiries@example-corp.co.za');
 });
@@ -50,4 +50,14 @@ test('mailbox finder: a time budget cuts a slow site short and marks it for retr
   assert.equal(r.status, 'unreachable', 'retry state, not a final verdict');
   assert.ok(calls <= 2, `stopped crawling after the abort (made ${calls} page requests)`);
   assert.ok(r.durationMs < 1000);
+});
+
+test('mailbox finder: department mailboxes and department subdomains are skipped entirely', () => {
+  const { extractMailboxes, wrongDepartment } = require('../lib/mailbox-finder');
+  const html = 'Contact: info@hr.ibm.com · careers@ibm.com · press@ibm.com · info@ro.ibm.com · csi@ibm.com · support@ibm.com · foundation@ibm.com';
+  const got = extractMailboxes(html, { domains: new Set(['ibm.com']), sourceUrl: 'https://www.ibm.com/contact' }).map(c => c.email);
+  assert.deepEqual(got, ['csi@ibm.com', 'foundation@ibm.com', 'info@ro.ibm.com']);
+  assert.equal(wrongDepartment('info', 'hr.ibm.com', 'ibm.com'), true);
+  assert.equal(wrongDepartment('info', 'ibm.com', 'ibm.com'), false);
+  assert.equal(wrongDepartment('csi', 'za.ibm.com', 'ibm.com'), false);
 });
