@@ -44,3 +44,13 @@ Non-root sessions receive a scoped settings object (`technicalHidden: true`, no 
 **Full-access peers / co-root (2026-10-26).** The primary root can grant any active staff account **Full access** (Team & governance → "Grant full access"). A full-access account passes every root check — Ops, Deliverability, Data quality, Integrations, raw audit export, full staff list including the root under its real name, unmasked payloads — and is protected like root (nobody else can demote, deactivate, rename or reset it; it is forced to the Administrator role). Differences from the primary root: it is *visible* to staff under its real name (only the primary root is masked as "Chelo system"), it cannot grant or revoke full access, and the primary root can revoke it at any time (`PUT /api/staff/:id {coRoot:false}`), after which it is an everyday administrator. Role changes now take effect on the next request rather than the next login.
 
 **Inbox membership (2026-10-26).** Only root / full-access accounts can change inbox members (`PUT /api/inbox/mailboxes/:id/members`); others get 403. Conversation visibility is enforced server-side (`canSee`) on every inbox route; hidden conversations answer 404.
+
+## UI de-slop pass (2026-10-26)
+
+Audited `public/` with the Unslopovich detector and the No-Slop-UI rulebook (125 findings → 0).
+
+- **One stylesheet.** `styles.css` and `experience.css` were folded into `ui.css` in cascade order (nothing dropped), then a final "Section D" override block applies the treatment. Cache-bust `v29`.
+- **Sidebar:** flat solid navy, 1px border-right, 18px monochrome icons in `currentColor`, 6px active state. The 3D glossy tiles, per-item hue gradients, glow rings and the shared SVG gradient/glow paint defs in `index.html` are gone.
+- **Content:** no eyebrow label above page titles (`pageHead` keeps its signature but ignores the first argument); decorative subtitles trimmed; tables/lists sit on the page; one card level — nested cards flatten to dividers; no icon-in-tinted-square per row; status chips carry colour through text/background, not a dot; focus is a 2px ring, hovers change colour only (no transforms/glows); modals fade.
+- **Overview:** opens with the work queue (follow-ups + upcoming briefings); the four figures are a compact row below it; pipeline and recent prospects follow. Data unchanged.
+- **Copy:** generic failure toast now states cause + next step. No logic, data or navigation changes.

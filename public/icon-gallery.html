@@ -4,22 +4,20 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Chelo · Icon system</title>
-<link rel="stylesheet" href="/styles.css?v=chelo-workspace-20261026-v26" />
-<link rel="stylesheet" href="/experience.css?v=chelo-workspace-20261026-v26" />
-<link rel="stylesheet" href="/ui.css?v=chelo-workspace-20261026-v26" />
+<link rel="stylesheet" href="/ui.css?v=chelo-workspace-20261026-v29" />
 <style>
   body { margin:0; background:#f6f5fb; font-family:Inter, system-ui, -apple-system, Segoe UI, sans-serif; color:#2f2768; }
   .gal-wrap { max-width:1180px; margin:0 auto; padding:36px 24px 80px; }
   .gal-wrap h1 { font-size:24px; letter-spacing:-.4px; margin:0 0 6px; }
   .gal-wrap p.lead { color:#6c6790; font-size:13.5px; margin:0 0 26px; max-width:760px; line-height:1.6; }
   .gal-section { margin-top:30px; }
-  .gal-section h2 { font-size:13px; letter-spacing:1.4px; text-transform:uppercase; color:#8a84ad; margin:0 0 12px; }
+  .gal-section h2 { font-size:13px; letter-spacing:0; text-transform:none; font-weight:600; color:#8a84ad; margin:0 0 12px; }
   .gal-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:10px; }
   .gal-tile { background:#fff; border:1px solid #e8e5f5; border-radius:16px; padding:16px 10px 12px; display:flex; flex-direction:column; align-items:center; gap:10px; transition:transform .18s ease, box-shadow .18s ease; }
-  .gal-tile:hover { transform:translateY(-2px); box-shadow:0 10px 26px rgba(74,58,173,.10); }
+  .gal-tile:hover { border-color:#c4c4cc; box-shadow:0 2px 8px rgba(0,0,0,.08); }
   .gal-tile .icon-svg { width:30px; height:30px; color:#5a4fc9; }
   .gal-tile small { font-size:11.5px; color:#6c6790; }
-  .gal-navy { background:linear-gradient(165deg,#211d57 0%,#292169 58%,#201c50 100%); border-radius:20px; padding:18px; }
+  .gal-navy { background:#1e1a4f; border-radius:20px; padding:18px; }
   .gal-navy .gal-tile { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.1); }
   .gal-navy .gal-tile .icon-svg { color:#e9e6ff; }
   .gal-navy .gal-tile small { color:#cfc9f2; }
@@ -51,7 +49,7 @@
       <span class="metric-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="analytics"></svg></span>
       <span class="ai-guidance-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="spark"></svg></span>
     </div>
-    <nav class="nav-list" style="max-width:260px;margin-top:16px;background:linear-gradient(165deg,#211d57,#292169);padding:12px;border-radius:16px">
+    <nav class="nav-list" style="max-width:260px;margin-top:16px;background:#1e1a4f;padding:12px;border-radius:16px">
       <button class="nav-item active" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="overview"></svg></span><span class="nav-label">Overview</span></button>
       <button class="nav-item" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="discover"></svg></span><span class="nav-label">Discover</span></button>
       <button class="nav-item" type="button"><span class="nav-icon"><svg class="icon-svg" viewBox="0 0 24 24" data-icon="pipeline"></svg></span><span class="nav-label">Pipeline</span></button>

@@ -181,7 +181,7 @@ function getCsvPreviewRows(preview = state.csvImportPreview) {
 }
 
 // Chelo duotone icon system — 24px grid. Layers: .icon-tint (translucent body), .icon-line (crisp stroke),
-// .icon-accent (small luminous dot: gradient + glow). Classless paths inherit the stroke defaults of .icon-svg.
+// .icon-accent (small emphasis dot, drawn in currentColor). Classless paths inherit the stroke defaults of .icon-svg.
 const A = (cx, cy, r = 1.6) => `<circle class="icon-accent" cx="${cx}" cy="${cy}" r="${r}"/>`;
 const icons = {
   refresh: `<path class="icon-tint" d="M12 4.2a7.8 7.8 0 1 1-7.4 10.2h2.3A5.6 5.6 0 1 0 12 6.4z"/><path class="icon-line" d="M19.6 10.5A7.8 7.8 0 0 0 5.2 8.3M4.4 13.5a7.8 7.8 0 0 0 14.4 2.2"/><path class="icon-line" d="M19.8 4.8v5.7h-5.7M4.2 19.2v-5.7h5.7"/>${A(12, 12, 1.4)}`,
@@ -441,8 +441,10 @@ function renderApp() {
 }
 
 function pageHead(eyebrow, title, subtitle, actions = '', variant = '') {
+  // `eyebrow` is kept in the signature for callers/tests but is no longer rendered (decorative label).
   const variantClass = variant ? ` page-head-${variant}` : '';
-  return `<div class="page-head${variantClass}"><div><div class="eyebrow"><span class="eyebrow-dot"></span>${esc(eyebrow)}</div><h1>${esc(title)}</h1><p class="page-subtitle">${esc(subtitle)}</p></div><div class="head-actions">${actions}</div></div>`;
+  const sub = subtitle ? `<p class="page-subtitle">${esc(subtitle)}</p>` : '';
+  return `<div class="page-head${variantClass}"><div><h1>${esc(title)}</h1>${sub}</div><div class="head-actions">${actions}</div></div>`;
 }
 function demoBanner() {
   if (state.auth.demoAccess) return '';
@@ -484,24 +486,24 @@ function overviewView() {
   }).join('');
   const followupRows = followUps.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('mail')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>Follow-up ${Number(l.followUpStep || 1)} of 2 · ${isoDate(l.followUpAt)}</span></div><button type="button" class="panel-action" data-action="follow-up" data-id="${esc(l.id)}">${svgIcon('send')}Draft</button></div>`).join('');
   const today = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
-  return `${pageHead('Partnerships workspace', 'Make impact easier to fund.', `${today} · Manage outreach, briefings and long-term partners.`, `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover candidates</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`, 'overview')}
+  return `${pageHead('Partnerships workspace', 'Overview', today, `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover candidates</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`, 'overview')}
     ${state.dismissDemo ? '' : demoBanner()}
+    <section class="dashboard-grid">
+      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('clock')}Follow-up queue</h2></div><button class="panel-action" data-view="prospects">${svgIcon('prospects')}View prospects</button></div><div class="shortcut-list">${followupRows || `<div class="panel-empty"><strong>You're up to date</strong>No follow-up tasks are due yet.</div>`}</div></div>
+      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('calendar')}Upcoming briefings</h2></div><button class="panel-action" data-view="briefings">${svgIcon('settings')}Manage →</button></div><div class="booking-list">${bookingRows || `<div class="panel-empty"><strong>No briefings scheduled</strong>When a donor requests a time, it will appear here.</div>`}</div></div>
+    </section>
     <section class="metric-grid">
       ${metricCard('Open prospects', String(active.length), 'in active pipeline', 'prospects', `${leads.length} total`, false)}
       ${metricCard('Potential pipeline', shortMoney(getPipelineValue()), 'estimated ask value', 'trend', 'ZAR', false)}
       ${metricCard('Briefing requests', String(requests.length), 'awaiting confirmation', 'calendar', requests.length ? 'Needs review' : 'All clear', Boolean(requests.length))}
       ${metricCard('Active partners', String(state.data.partners.filter(p => p.status !== 'Inactive').length), 'won relationships', 'partners', `${money(state.data.partners.reduce((s, p) => s + Number(p.amount || 0), 0))} total`, false)}
     </section>
-    <section class="dashboard-grid">
-      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('activity')}Pipeline pulse</h2><p class="panel-description">A quick view of prospects moving toward a briefing</p></div><button class="panel-action" data-view="pipeline">${svgIcon('kanban')}Open Kanban →</button></div>
+    <section class="bottom-grid">
+      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('activity')}Pipeline pulse</h2></div><button class="panel-action" data-view="pipeline">${svgIcon('kanban')}Open Kanban →</button></div>
         <div class="pipeline-summary">${stageHighlights.map(([name, count, target]) => `<div class="pipeline-stat"><span class="stage-name">${name}</span><strong>${count}</strong><div class="mini-bar"><span style="width:${Math.max(10, Math.min(100, (count / Math.max(1, leads.length)) * 100))}%"></span></div></div>`).join('')}</div>
         <div class="pipeline-list">${pipelineStages.map(s => { const count = leads.filter(l => l.stage === s).length; const val = leads.filter(l => l.stage === s).reduce((a, l) => a + Number(l.amount || 0), 0); return `<div class="pipeline-list-row"><span class="row-stage">${esc(s)}</span><div class="row-bar"><span style="width:${Math.max(2, Math.round((count / max) * 100))}%"></span></div><strong>${count} · ${shortMoney(val)}</strong></div>`; }).join('')}</div>
       </div>
-      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('clock')}Follow-up queue</h2><p class="panel-description">Tasks surfaced from approved outreach</p></div><button class="panel-action" data-view="prospects">${svgIcon('prospects')}View prospects</button></div><div class="shortcut-list">${followupRows || `<div class="panel-empty"><strong>You're up to date</strong>No follow-up tasks are due yet.</div>`}</div></div>
-    </section>
-    <section class="bottom-grid">
-      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('prospects')}Recently updated prospects</h2><p class="panel-description">Source-backed relationships, not just names on a list</p></div><button class="panel-action" data-view="prospects">${svgIcon('arrow')}See all →</button></div><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / contact</th><th>Stage</th><th>Potential ask</th><th>Fit</th><th></th></tr></thead><tbody>${leadRows || `<tr><td colspan="5" class="panel-empty">No prospects yet.</td></tr>`}</tbody></table></div></div>
-      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('calendar')}Upcoming briefings</h2><p class="panel-description">Requests and confirmed conversations</p></div><button class="panel-action" data-view="briefings">${svgIcon('settings')}Manage →</button></div><div class="booking-list">${bookingRows || `<div class="panel-empty"><strong>No briefings scheduled</strong>When a donor requests a time, it will appear here.</div>`}</div></div>
+      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('prospects')}Recently updated prospects</h2></div><button class="panel-action" data-view="prospects">${svgIcon('arrow')}See all →</button></div><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / contact</th><th>Stage</th><th>Potential ask</th><th>Fit</th><th></th></tr></thead><tbody>${leadRows || `<tr><td colspan="5" class="panel-empty">No prospects yet.</td></tr>`}</tbody></table></div></div>
     </section>${radarPanel}${signalsPanel()}`;
 }
 
@@ -526,7 +528,7 @@ function leadTableRows(leads) {
 function prospectsView() {
   const leads = filteredLeads();
   const stages = ['All stages', ...(state.data.stages || [])];
-  return `${pageHead('Donor development', 'Prospects', 'Manage reviewed organisations in your outreach pipeline.', `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover leads</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
+  return `${pageHead('Donor development', 'Prospects', '', `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover leads</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
     <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>Human-reviewed sourcing:</strong> prospects enter the pipeline only after a team member reviews and adds them from Discover. CSV imports are held separately until approved.</span><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')}CSV template</a></div>
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search organisation, contact, project…" value="${esc(state.query)}" /></label><select class="select-control" id="stage-filter">${stages.map(s => `<option value="${esc(s)}" ${state.stageFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div><div class="control-right"><span class="subtle">${leads.length} prospect${leads.length === 1 ? '' : 's'}</span></div></div>
     <div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects found</strong>Change filters or add a new source-backed lead.</div></td></tr>`}</tbody></table></div></div>`;
@@ -596,7 +598,7 @@ function sentView() {
 function pipelineView() {
   const visibleStages = (state.data.stages || []).filter(s => s !== 'Not proceeding');
   const query = state.query.toLowerCase().trim();
-  return `${pageHead('Opportunity management', 'Pipeline', 'Drag a prospect across stages as the relationship develops.', `<button class="button button-secondary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
+  return `${pageHead('Opportunity management', 'Pipeline', 'Drag cards between stages.', `<button class="button button-secondary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
     <div class="board-note"><span class="grip">⠿</span> Drag cards between stages. Marking a lead <strong>Won</strong> automatically creates a partner profile with its point of contact.</div>
     <div class="kanban-board" id="kanban-board">${visibleStages.map(stage => {
       const leads = state.data.leads.filter(l => l.stage === stage && (!query || [l.company, l.contactName, l.sector, l.project].join(' ').toLowerCase().includes(query)));
@@ -625,14 +627,14 @@ function partnersView() {
     const sourceFreshness = verificationFreshness(p.sourceLastVerifiedAt, 'Source');
     return `<article class="partner-card"><div class="partner-card-head"><div class="partner-logo">${initials(p.company)}</div><div><h3>${esc(p.company)}</h3><span>${esc(p.status || 'Active')} · Since ${isoDate(p.partnerSince)}</span></div><button class="table-action" style="margin-left:auto" type="button" data-action="edit-partner" data-id="${esc(p.id)}">${svgIcon('edit')}Edit</button></div><div class="partner-value"><div><small>Recorded contribution</small><strong>${money(p.amount)}</strong></div><span class="stage-pill pill-won">Won</span></div><div class="partner-contact"><span class="avatar">${initials(p.contactName)}</span><span><strong style="display:block;color:#2f2a5e;font-size:12px">${esc(p.contactName || 'Contact not set')}</strong><span style="display:block;margin-top:3px;color:#8d89a4">${esc(p.title || 'Point of contact')} · ${esc(p.email || 'No email')}</span><small class="freshness-tag ${contactFreshness.className}">${esc(contactFreshness.text)}</small></span></div><div class="partner-project"><strong>Impact focus:</strong> ${esc(p.project || 'Education impact partnership')}<br><span class="subtle">Relationship owner: ${esc(p.owner || 'Unassigned')}</span></div><div class="partner-priority-summary"><strong>Priorities & timing</strong><p>${esc(p.partnerPriorities || 'No partner priorities recorded yet.')}</p><strong>Relationship context</strong><p>${esc(p.relationshipContext || 'No warm-introduction or relationship path recorded.')}</p><small class="${sourceFreshness.className}">${esc(sourceFreshness.text)}${p.sourceLastVerifiedAt ? ` · ${esc(dateOnly(p.sourceLastVerifiedAt))}` : ''}</small></div></article>`;
   }).join('');
-  return `${pageHead('Won relationships', 'Partners', 'Your trusted funders and points of contact, carried forward from won deals.', `<button class="button button-secondary" data-view="pipeline">${svgIcon('pipeline')} Open pipeline</button>`)}
+  return `${pageHead('Won relationships', 'Partners', '', `<button class="button button-secondary" data-view="pipeline">${svgIcon('pipeline')} Open pipeline</button>`)}
     <section class="metric-grid">${metricCard('Active partners', String(state.data.partners.filter(p => p.status !== 'Inactive').length), 'relationship records', 'partners')}${metricCard('Total partner value', shortMoney(total), 'recorded contribution value', 'trend')}${metricCard('Won prospects', String(state.data.leads.filter(l => l.stage === 'Won').length), 'converted from pipeline', 'checkCircle')}${metricCard('Relationship owners', String(new Set(state.data.partners.map(p => p.owner).filter(Boolean)).size), 'team members', 'overview')}</section>
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search partners, relationships or priorities…" value="${esc(state.query)}" /></label></div><div class="control-right"><span class="subtle">${partners.length} partner${partners.length === 1 ? '' : 's'}</span></div></div>
     ${partners.length ? `<div class="partners-grid">${cards}</div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('partners')}</div><strong>No partner records yet</strong><p>Move a prospect to Won in the Kanban pipeline and Chelo will create a partner profile with its relationship and priorities context.</p><button class="button button-primary" data-view="pipeline">${svgIcon('pipeline')}Open pipeline</button></div>`}`;
 }
 function proposalsView() {
   const leads = sortRecent(state.data.leads.filter(l => !['Not proceeding'].includes(l.stage)));
-  return `${pageHead('Impact proposals', 'Proposals', 'Generate, refine and review donor-specific proposals before creating a branded PDF.', `<button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
+  return `${pageHead('Impact proposals', 'Proposals', 'Review each proposal before you create the PDF.', `<button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
     <div class="note-callout" style="margin-bottom:15px"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>Chelo-guided drafting:</strong> proposals use the verified-recipient, traceability and impact-reporting context plus your project notes. Confirm project scope, contribution and every factual claim before sharing.</span></div>
     <div class="proposal-grid">${leads.map(l => `<article class="proposal-card"><div class="proposal-icon">${svgIcon('proposals')}</div><h3>${esc(l.company)}</h3><p>${esc(l.project || 'Education impact partnership')} · ${money(l.amount)} potential ask</p><div class="proposal-card-foot"><span>${l.proposalFile ? `Updated ${isoDate(l.updatedAt)}` : 'No PDF generated yet'}</span><div style="display:flex;gap:5px">${l.proposalFile ? `<a class="button button-secondary button-small" href="${proposalDownload(l)}" download>${svgIcon('download')} PDF</a>` : ''}<button class="button ${l.proposalFile ? 'button-ghost' : 'button-primary'} button-small" type="button" data-action="create-proposal" data-id="${esc(l.id)}">${svgIcon('proposals')}${l.proposalFile ? 'Edit & regenerate' : 'Create PDF'}</button></div></div>${l.proposalFile ? `<div class="proposal-card-foot" style="margin-top:10px;padding-top:9px"><span>Share after briefing or on request</span><div><button class="table-action" data-action="copy-proposal-link" data-id="${esc(l.id)}">${svgIcon('copy')}Copy secure link</button><button class="table-action" data-action="email" data-id="${esc(l.id)}">${svgIcon('mail')}Draft email</button></div></div>` : ''}</article>`).join('')}</div>`;
 }
@@ -666,7 +668,7 @@ function analyticsView() {
   const trackingNote = state.data.settings?.openTrackingReady
     ? 'Opens are estimated from a 1×1 pixel. Image blocking, caching and privacy proxies can distort counts.'
     : 'Open tracking needs a public HTTPS app URL in Settings. Until configured, no open pixel is added to email drafts.';
-  return `${pageHead('Engagement reporting', 'Analytics', 'Measure approved outreach, opens and preferred-time CTA engagement.', actions)}
+  return `${pageHead('Engagement reporting', 'Analytics', '', actions)}
     <div class="privacy-callout"><span class="privacy-callout-icon">${svgIcon('eye')}</span><div><strong>Open counts are estimates, not proof a person read the email.</strong><p>${esc(trackingNote)} “Yes — choose…” clicks are first-party CTA hits; briefing requests are counted separately.</p></div></div>
     ${state.analyticsLoading ? `<div class="loading-line"><span></span></div>` : ''}
     <section class="metric-grid analytics-metrics">
@@ -699,7 +701,7 @@ function settingsView() {
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
   const sectionContent = state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
   const tabs = `<div class="settings-tabs" role="tablist">${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button><button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
-  return `${pageHead('Workspace controls', 'Settings', 'Protect access, connect providers and review the application activity trail.', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
+  return `${pageHead('Workspace controls', 'Settings', '', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
 }
 function authGateView() {
   const setup = Boolean(state.auth.setupRequired);
@@ -1549,7 +1551,7 @@ async function dispatchAction(button) {
     if (action === 'mobile-menu') {
       $('.sidebar')?.classList.toggle('mobile-open'); return;
     }
-  } catch (err) { toast(err.message || 'Something went wrong.', true); }
+  } catch (err) { toast(err.message || 'That action did not complete. Check your connection and try again.', true); }
 }
 
 async function handleSubmit(event) {
@@ -2231,7 +2233,7 @@ function workbenchView() {
   if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
-  return `${pageHead('Outreach workbench', 'From lead to sent email in one place', 'Add or discover organisations, let Chelo verify the mailbox, research their CSI focus and draft the email — you review the findings, approve and send.', `<button type="button" class="button button-secondary" data-view="discover">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  return `${pageHead('Outreach workbench', 'Workbench', 'Add or discover organisations, let Chelo verify the mailbox, research their CSI focus and draft the email — you review the findings, approve and send.', `<button type="button" class="button button-secondary" data-view="discover">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
   ${wbIntakeBar()}
   <div class="wb-layout">
     <section class="panel wb-list-panel">
