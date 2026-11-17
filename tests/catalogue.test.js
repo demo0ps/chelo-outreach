@@ -57,7 +57,7 @@ test('catalogue import API: idempotent batches, org-level verification, duplicat
   const status0 = (await api('GET', '/api/leads/catalogue')).payload;
   assert.ok(status0.total >= 200); assert.equal(status0.imported, 0);
 
-  const first = (await api('POST', '/api/leads/catalogue/import', { limit: 50, verify: false })).payload;
+  const first = (await api('POST', '/api/import', { source: 'catalogue', limit: 50, verify: false })).payload;
   assert.equal(first.created + first.skippedExisting, 50); assert.ok(first.skippedExisting >= 1, 'Standard Bank skipped as already present');
   const second = (await api('POST', '/api/leads/catalogue/import', { limit: 50, verify: false })).payload;
   assert.equal(second.created + second.skippedExisting, 50); assert.ok(second.status.imported >= first.created + second.created, 'batches continue where the last stopped');

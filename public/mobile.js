@@ -23,22 +23,11 @@
     for (const b of state.data.bookings.filter(b => b.status === 'Requested')) items.push({ kind: 'booking', at: b.createdAt, booking: b, lead: state.data.leads.find(l => l.id === b.leadId) });
     return items.sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || Date.parse(b.at || 0) - Date.parse(a.at || 0));
   }
-  function approvalItems() {
-    const items = [];
-    for (const l of state.data.leads) {
-      if (l.doNotContact) continue;
-      const seq = l.sequence;
-      if (seq && seq.status === 'pending-approval') items.push({ kind: 'countersign-plan', lead: l, at: seq.approval?.firstApprovedAt || l.updatedAt });
-      else if (seq && seq.status === 'draft') items.push({ kind: 'plan', lead: l, at: seq.builtAt || l.updatedAt });
-      else if (l.emailStatus === 'Pending second approval') items.push({ kind: 'countersign-email', lead: l, at: l.updatedAt });
-      else if (l.emailDraft && ['Draft', 'None', undefined, ''].includes(l.emailStatus) && !seq) items.push({ kind: 'draft', lead: l, at: l.emailDraft.generatedAt || l.updatedAt });
-      else if (l.research && l.research.status === 'pending-review') items.push({ kind: 'research', lead: l, at: l.research.fetchedAt || l.updatedAt });
-    }
-    return items.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
-  }
+  // approvalItems() is shared with the desktop Inbox → Approvals tab (defined in app.js). Phone shows lead-level items only.
+  const approvalItemsPhone = () => approvalItems().filter(i => i.kind !== 'booking');
   function notifications() {
     const n = [];
-    const inbox = inboxItems(); const appr = approvalItems();
+    const inbox = inboxItems(); const appr = approvalItemsPhone();
     const overdue = inbox.filter(i => i.overdue).length; if (overdue) n.push({ tone: 'danger', icon: 'clock', text: `${overdue} repl${overdue === 1 ? 'y is' : 'ies are'} past the response SLA`, tab: 'inbox' });
     const replies = inbox.filter(i => i.kind === 'reply').length; if (replies) n.push({ tone: 'info', icon: 'mail', text: `${replies} human repl${replies === 1 ? 'y' : 'ies'} waiting for triage`, tab: 'inbox' });
     const bookings = inbox.filter(i => i.kind === 'booking').length; if (bookings) n.push({ tone: 'info', icon: 'calendar', text: `${bookings} briefing request${bookings === 1 ? '' : 's'} to confirm`, tab: 'inbox' });
@@ -53,7 +42,7 @@
   // ---- shell -----------------------------------------------------------------------------------
   const TABS = [['inbox', 'Inbox', 'mail'], ['approvals', 'Approvals', 'checkCircle'], ['leads', 'Leads', 'prospects'], ['more', 'More', 'dots']];
   function tabBar() {
-    const counts = { inbox: (typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0) + inboxItems().filter(i => i.kind !== 'reply').length, approvals: approvalItems().length, leads: 0, more: notifications().filter(n => n.tone === 'danger').length };
+    const counts = { inbox: (typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0) + inboxItems().filter(i => i.kind !== 'reply').length, approvals: approvalItemsPhone().length, leads: 0, more: notifications().filter(n => n.tone === 'danger').length };
     return `<nav class="m-tabs" aria-label="Sections">${TABS.map(([id, label, icon]) => `<button type="button" class="m-tab ${state.m.tab === id ? 'is-active' : ''}" data-action="m-tab" data-tab="${id}" aria-current="${state.m.tab === id ? 'page' : 'false'}"><span class="m-tab-icon">${svgIcon(icon)}${counts[id] ? `<span class="m-badge">${counts[id] > 99 ? '99+' : counts[id]}</span>` : ''}</span><span>${label}</span></button>`).join('')}</nav>`;
   }
   function header(title, { back = null, sub = '' } = {}) {
@@ -83,7 +72,7 @@
   // ---- Approvals -------------------------------------------------------------------------------
   const KIND_META = { plan: ['Sequence plan', 'send', 'tone-accent'], 'countersign-plan': ['Countersign plan (4-eyes)', 'shield', 'tone-warn'], draft: ['First-touch draft', 'mail', 'tone-accent'], 'countersign-email': ['Countersign email (4-eyes)', 'shield', 'tone-warn'], research: ['Research brief to review', 'search', 'tone-info'] };
   function approvalsView() {
-    const items = approvalItems();
+    const items = approvalItemsPhone();
     const rows = items.map(i => { const [label, icon, tone] = KIND_META[i.kind]; const l = i.lead; return `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(l.id)}"><span class="m-row-icon ${tone}">${svgIcon(icon)}</span><span class="m-row-main"><strong>${esc(l.company)}</strong><span>${esc(label)}</span><em>${esc(l.emailDraft?.subject || l.project || '')}</em></span><small>${when(i.at)}</small></button>`; }).join('');
     const policy = state.auth.approvalPolicy || state.data.settings?.approvalPolicy || 'single';
     return `${header('Approvals', { sub: `${items.length} waiting · ${policy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}` })}<section class="m-list">${rows || empty('checkCircle', 'Nothing to approve. New drafts and plans appear here the moment the engine prepares them.')}</section>`;

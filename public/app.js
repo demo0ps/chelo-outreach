@@ -15,8 +15,8 @@ const state = {
   dq: { data: null, loading: false, error: '', busy: false },
   rel: { summary: null, loading: false, error: '', busy: false, view: null, viewId: null, tab: 'timeline' },
   cat: { status: null, loading: false, busy: false, task: '', progress: '', storage: null },
-  ops: { data: null, loading: false, error: '', area: 'all' },
-  wb: { selectedId: null, sort: 'fit', filter: 'all', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
+  ops: { data: null, loading: false, error: '', area: 'all', tab: 'health' },
+  wb: { selectedId: null, sort: 'fit', filter: 'all', intake: 'add', discovery: { query: '', results: [], busy: false, error: '' }, busy: {}, pendingRan: false },
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
   view: 'workbench', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
@@ -24,7 +24,7 @@ const state = {
   bookingInfo: null, bookingLoading: false, bookingSubmitted: false, bookingError: '',
   optOutInfo: null, optOutDone: false,
   importInput: null, importReport: null, csvImportPreview: null, currentDate: new Date(), mobileMoreOpen: false,
-  projectFilter: 'All provinces', copilot: null, copilotBusy: false, projectImportPreview: null, researchBusy: false, researchError: '', copilotTab: 'web'
+  projectFilter: 'All provinces', prospectsMode: 'table', copilot: null, copilotBusy: false, projectImportPreview: null, researchBusy: false, researchError: '', copilotTab: 'paste'
 };
 let auditSearchTimer = null;
 let auditRequestId = 0;
@@ -277,7 +277,8 @@ function safeUrl(url) {
   return '';
 }
 
-const TECHNICAL_VIEWS = ['ops', 'deliverability', 'data'];
+const TECHNICAL_VIEWS = []; // engine tabs inside Ops are gated per tab (see OPS_TABS / opsTabs)
+const ROOT_ONLY_OPS_TABS = ['health', 'deliverability', 'data'];
 function isRoot() { return Boolean(state.auth.isRoot || state.auth.demoAccess); }
 function isPrimaryRoot() { return Boolean(state.auth.isPrimaryRoot || state.auth.demoAccess); }
 function navItem(view, title, icon, count = null) {
@@ -291,12 +292,12 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['inbox', 'Inbox — conversations', 'reply'], ['workbench', 'Outreach workbench', 'wand'], ['ops', 'Ops dashboard', 'activity'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
-  ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Relationships', 'partners'],
-  ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
+  ['inbox', 'Inbox — conversations & approvals', 'reply'], ['workbench', 'Outreach workbench (add, local pool, CSV)', 'wand'], ['overview', 'Overview', 'overview'], ['projects', 'Verified projects', 'grid'],
+  ['prospects', 'Prospects — table or board', 'prospects'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Relationships', 'partners'],
+  ['proposals', 'Proposals', 'proposals'], ['ops', 'Ops — health, deliverability, analytics, data quality', 'activity'], ['settings', 'Settings', 'settings']
 ];
 function paletteItems(query) {
-  const viewMeta = VIEW_META.filter(([v]) => !TECHNICAL_VIEWS.includes(v) || isRoot());
+  const viewMeta = VIEW_META.map(([v, label, icon]) => v === 'ops' && !isRoot() ? [v, 'Analytics', 'analytics'] : [v, label, icon]);
   const q = (query || '').trim().toLowerCase();
   const match = text => !q || text.toLowerCase().includes(q);
   const groups = [];
@@ -305,6 +306,9 @@ function paletteItems(query) {
   const actions = [
     { id: 'act:new-lead', icon: 'plus', title: 'Add prospect', hint: 'Action', run: () => openModal('lead-form') },
     { id: 'act:import', icon: 'upload', title: 'Import candidates from CSV', hint: 'Action', run: () => { setView('discover'); setTimeout(() => $('#candidate-csv')?.click(), 50); } },
+    { id: 'view:pipeline', icon: 'kanban', title: 'Prospects board (pipeline)', hint: 'View', run: () => setView('pipeline') },
+    { id: 'view:analytics', icon: 'analytics', title: 'Analytics', hint: 'View', run: () => setView('analytics') },
+    ...(isRoot() ? [{ id: 'view:deliverability', icon: 'shield', title: 'Deliverability & sending engine', hint: 'View', run: () => setView('deliverability') }, { id: 'view:data', icon: 'database', title: 'Data quality & merge reviews', hint: 'View', run: () => setView('data') }] : []),
     { id: 'act:copilot', icon: 'spark', title: 'Open POPIA copilot', hint: 'Action', run: () => openModal('copilot') },
     { id: 'act:briefings', icon: 'bell', title: 'Review briefing requests', hint: 'Action', run: () => setView('briefings') },
     { id: 'act:settings-team', icon: 'users', title: 'Team & approval policy', hint: 'Settings', run: () => { state.settingsSection = 'team'; setView('settings'); } },
@@ -400,22 +404,17 @@ function shellSidebar() {
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
       ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
-      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['replied', 'needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length)}
+      ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['replied', 'needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length + state.data.candidates.filter(c => c.status === 'New candidate').length)}
       ${navItem('overview', 'Overview', 'overview')}
-      ${navItem('discover', 'Discover', 'globe', state.data.candidates.filter(c => c.status === 'New candidate').length)}
       ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
       ${navItem('prospects', 'Prospects', 'prospects')}
-      ${navItem('pipeline', 'Pipeline', 'pipeline')}
       ${navItem('briefings', 'Briefings', 'briefings', pending)}
       ${navItem('sent', 'Sent', 'mail')}
       ${navItem('partners', 'Relationships', 'partners')}
       ${navItem('proposals', 'Proposals', 'proposals')}
-      ${navItem('analytics', 'Analytics', 'analytics')}
-      ${navItem('ops', 'Ops', 'activity', state.ops.data ? ((state.ops.data.counts.critical + state.ops.data.counts.warn) || null) : null)}
-      ${navItem('deliverability', 'Deliverability', 'shield', (state.data.mailboxes || []).filter(m => m.status === 'paused').length || null)}
-      ${navItem('data', 'Data quality', 'database', state.dq.data ? (state.dq.data.openMergeReviews || 0) : null)}
+      ${navItem('ops', isRoot() ? 'Ops' : 'Analytics', 'activity', ((state.ops.data ? (state.ops.data.counts.critical + state.ops.data.counts.warn) : 0) + (state.data.mailboxes || []).filter(m => m.status === 'paused').length + (state.dq.data ? (state.dq.data.openMergeReviews || 0) : 0)) || null)}
       ${navItem('settings', 'Settings', 'settings')}
-      <button type="button" class="nav-item mobile-more-button ${['projects','prospects','pipeline','briefings','sent','partners','proposals','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
+      <button type="button" class="nav-item mobile-more-button ${['projects','prospects','briefings','sent','partners','proposals','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
     </nav>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-card"><span class="tiny-label">Outreach workflow</span><strong>Source · personalise · connect</strong><p>Review local and CSV candidates, keep source details, then build considered partnerships.</p><div class="sidebar-progress"><span></span></div></div>
@@ -486,7 +485,7 @@ function overviewView() {
   }).join('');
   const followupRows = followUps.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('mail')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>Follow-up ${Number(l.followUpStep || 1)} of 2 · ${isoDate(l.followUpAt)}</span></div><button type="button" class="panel-action" data-action="follow-up" data-id="${esc(l.id)}">${svgIcon('send')}Draft</button></div>`).join('');
   const today = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
-  return `${pageHead('Partnerships workspace', 'Overview', today, `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover candidates</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`, 'overview')}
+  return `${pageHead('Partnerships workspace', 'Overview', today, `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add organisation</button>`, 'overview')}
     ${state.dismissDemo ? '' : demoBanner()}
     <section class="dashboard-grid">
       <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('clock')}Follow-up queue</h2></div><button class="panel-action" data-view="prospects">${svgIcon('prospects')}View prospects</button></div><div class="shortcut-list">${followupRows || `<div class="panel-empty"><strong>You're up to date</strong>No follow-up tasks are due yet.</div>`}</div></div>
@@ -499,7 +498,7 @@ function overviewView() {
       ${metricCard('Active partners', String(state.data.partners.filter(p => p.status !== 'Inactive').length), 'won relationships', 'partners', `${money(state.data.partners.reduce((s, p) => s + Number(p.amount || 0), 0))} total`, false)}
     </section>
     <section class="bottom-grid">
-      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('activity')}Pipeline pulse</h2></div><button class="panel-action" data-view="pipeline">${svgIcon('kanban')}Open Kanban →</button></div>
+      <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('activity')}Pipeline pulse</h2></div><button class="panel-action" data-view="pipeline">${svgIcon('kanban')}Open board →</button></div>
         <div class="pipeline-summary">${stageHighlights.map(([name, count, target]) => `<div class="pipeline-stat"><span class="stage-name">${name}</span><strong>${count}</strong><div class="mini-bar"><span style="width:${Math.max(10, Math.min(100, (count / Math.max(1, leads.length)) * 100))}%"></span></div></div>`).join('')}</div>
         <div class="pipeline-list">${pipelineStages.map(s => { const count = leads.filter(l => l.stage === s).length; const val = leads.filter(l => l.stage === s).reduce((a, l) => a + Number(l.amount || 0), 0); return `<div class="pipeline-list-row"><span class="row-stage">${esc(s)}</span><div class="row-bar"><span style="width:${Math.max(2, Math.round((count / max) * 100))}%"></span></div><strong>${count} · ${shortMoney(val)}</strong></div>`; }).join('')}</div>
       </div>
@@ -528,12 +527,14 @@ function leadTableRows(leads) {
 function prospectsView() {
   const leads = filteredLeads();
   const stages = ['All stages', ...(state.data.stages || [])];
-  return `${pageHead('Donor development', 'Prospects', '', `<button class="button button-secondary" data-view="discover">${svgIcon('globe')} Discover leads</button><button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
-    <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>Human-reviewed sourcing:</strong> prospects enter the pipeline only after a team member reviews and adds them from Discover. CSV imports are held separately until approved.</span><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')}CSV template</a></div>
-    <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search organisation, contact, project…" value="${esc(state.query)}" /></label><select class="select-control" id="stage-filter">${stages.map(s => `<option value="${esc(s)}" ${state.stageFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div><div class="control-right"><span class="subtle">${leads.length} prospect${leads.length === 1 ? '' : 's'}</span></div></div>
-    <div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects found</strong>Change filters or add a new source-backed lead.</div></td></tr>`}</tbody></table></div></div>`;
+  const mode = state.prospectsMode === 'board' ? 'board' : 'table';
+  const toggle = `<div class="view-toggle" role="tablist" aria-label="Layout"><button type="button" role="tab" class="view-toggle-btn ${mode === 'table' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="table" aria-selected="${mode === 'table'}">${svgIcon('listCheck')} Table</button><button type="button" role="tab" class="view-toggle-btn ${mode === 'board' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="board" aria-selected="${mode === 'board'}">${svgIcon('kanban')} Board</button></div>`;
+  const body = mode === 'board' ? pipelineBoard() : `<div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects match.</strong><p>Adjust the filters or add an organisation in the Workbench.</p></div></td></tr>`}</tbody></table></div></div>`;
+  return `${pageHead('Donor development', 'Prospects', '', `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add organisation</button>`)}
+    <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search organisation, contact, project…" value="${esc(state.query)}" /></label>${mode === 'table' ? `<select class="select-control" id="stage-filter">${stages.map(s => `<option value="${esc(s)}" ${state.stageFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>` : ''}</div><div class="control-right">${toggle}</div></div>
+    ${body}`;
 }
-function discoverView() {
+function discoverPanel() {
   const q = state.query.trim().toLowerCase();
   const candidates = sortRecent(state.data.candidates).filter(c => (state.candidateFilter === 'All candidates' || c.status === state.candidateFilter) && (!q || [c.company, c.contactName, c.email, c.sector, c.project, c.sourceName, c.notes, c.relationshipContext, c.partnerPriorities].join(' ').toLowerCase().includes(q)));
   const pending = state.data.candidates.filter(c => c.status === 'New candidate').length;
@@ -553,11 +554,9 @@ function discoverView() {
         : `<button class="button button-secondary button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Complete details</button>`;
     return `<article class="candidate-card"><div class="candidate-card-main"><div class="candidate-org"><span class="candidate-avatar">${initials(c.company)}</span><div><h3>${esc(c.company)}</h3><span class="candidate-contact">${esc(c.contactName || 'Contact to verify')} · ${esc(c.title || c.sector || 'Prospective funder')}</span></div></div><div class="candidate-badges"><span class="fit-score"><span class="fit-dot"></span>${Number(c.fitScore || 0)}% fit</span>${wasAdded ? `<span class="status-pill status-confirmed">${esc(c.status)}</span>` : `<span class="status-pill status-requested">Review needed</span>`}</div><span class="candidate-health ${healthClass}">${esc(healthLabel)}</span><div class="verification-row"><span class="freshness-tag ${contactFreshness.className}">${esc(contactFreshness.text)}</span><span class="freshness-tag ${sourceFreshness.className}">${esc(sourceFreshness.text)}</span></div><p class="candidate-summary">${esc(c.notes || 'Review the source and confirm fit before adding this organisation.')}</p>${c.relationshipContext ? `<div class="candidate-context"><strong>Warm introduction:</strong> ${esc(c.relationshipContext)}</div>` : ''}${c.partnerPriorities ? `<div class="candidate-context"><strong>Partner priorities:</strong> ${esc(c.partnerPriorities)}</div>` : ''}<div class="candidate-meta"><span>${svgIcon('grid')}${esc(c.sector || 'Sector not set')}</span><span>${svgIcon('target')}${esc(c.project || 'Project not selected')}</span><span>${svgIcon('building')}${esc(c.sourceName || 'Source not supplied')}</span></div></div><div class="candidate-card-side"><div><small>Suggested ask · staff to confirm</small><strong>${money(c.amount)}</strong></div><div class="candidate-links">${source ? `<a class="text-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">View source ${svgIcon('external')}</a>` : `<span class="subtle">No source URL provided</span>`}${c.email ? `<a class="text-link" href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ''}</div>${wasAdded && c.promotedLeadId ? `<button class="button button-secondary button-small" data-action="open-lead" data-id="${esc(c.promotedLeadId)}">${svgIcon('eye')}Open pipeline record</button>` : wasAdded ? `<span class="subtle">Already in pipeline</span>` : `<div class="candidate-card-actions"><button class="button button-ghost button-small" data-action="candidate-review" data-id="${esc(c.id)}">${svgIcon('edit')}Edit details</button>${intakeAction}</div>`}</div></article>`;
   }).join('');
-  return `${pageHead('Source · review · add', 'Discover', 'Review candidates from Chelo’s local prospect pool and CSV imports. Add each organisation to the pipeline individually.', `<button class="button button-secondary" data-action="candidate-import">${svgIcon('download')} Import CSV</button><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')}CSV template</a>`)}
-    <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>Human-reviewed discovery:</strong> CSV imports open a preview with column mapping, row-level warnings and exact-match duplicate suggestions. Server intake checks email syntax/domain, duplicates and opt-outs. Staff contact dates are separate from DNS/MX checks; a passing domain does not verify a mailbox.</span></div>
+  return `<div class="wb-pool-head"><p class="subtle">Chelo's local prospect pool and CSV imports. Each organisation is reviewed and added individually; CSV rows are held here until a person approves them.</p><div class="head-actions"><button class="button button-secondary button-small" data-action="candidate-import">${svgIcon('download')} Import CSV</button><a class="button button-ghost button-small" href="/sample-leads.csv" download>${svgIcon('download')} CSV template</a></div></div>
     ${cataloguePanel()}
-    <section class="metric-grid discover-metrics">${metricCard('Awaiting review', String(pending), 'candidates not yet added', 'globe')}${metricCard('Added to pipeline', String(added), 'human-approved prospects', 'checkCircle')}${metricCard('CSV imports', String(state.data.candidates.filter(c => c.sourceKind === 'CSV import' || /csv/i.test(c.sourceName || '')).length), 'local database records', 'download')}${metricCard('Web search', 'Not connected', 'intentional MVP boundary', 'search')}</section>
-    <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="candidate-search" type="search" placeholder="Search candidates, contacts, projects…" value="${esc(state.query)}" /></label><select class="select-control" id="candidate-filter"><option value="All candidates" ${state.candidateFilter === 'All candidates' ? 'selected' : ''}>All candidates</option><option value="New candidate" ${state.candidateFilter === 'New candidate' ? 'selected' : ''}>Awaiting review</option><option value="Added to pipeline" ${state.candidateFilter === 'Added to pipeline' ? 'selected' : ''}>Added to pipeline</option><option value="Already in pipeline" ${state.candidateFilter === 'Already in pipeline' ? 'selected' : ''}>Already in pipeline</option></select></div><div class="control-right"><span class="subtle">${candidates.length} candidate${candidates.length === 1 ? '' : 's'}</span></div></div>
+    <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="candidate-search" type="search" placeholder="Search candidates, contacts, projects…" value="${esc(state.query)}" /></label><select class="select-control" id="candidate-filter"><option value="All candidates" ${state.candidateFilter === 'All candidates' ? 'selected' : ''}>All candidates (${state.data.candidates.length})</option><option value="New candidate" ${state.candidateFilter === 'New candidate' ? 'selected' : ''}>Awaiting review (${pending})</option><option value="Added to pipeline" ${state.candidateFilter === 'Added to pipeline' ? 'selected' : ''}>Added (${added})</option></select></div></div>
     <div class="candidate-list">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('globe')}</div><strong>No candidates found</strong><p>Import a CSV or add records to the local candidate database.</p></div>`}</div>
     <input type="file" id="candidate-csv" accept=".csv,text/csv" hidden />`;
 }
@@ -580,7 +579,7 @@ function sentView() {
   const openRate = trackedInitial ? `${Math.round(openedMessages / trackedInitial * 100)}%` : 'Unavailable';
   const pct = n => total ? `${Math.round(n / total * 100)}%` : '0%';
   const rows = [...recipients].map(id => ({ lead: getLead(id), first: initial.filter(m => m.leadId === id).sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt))[0] })).filter(x => x.lead).sort((a, b) => new Date(b.first.sentAt) - new Date(a.first.sentAt));
-  return `${pageHead('Outreach activity', 'Sent', 'Track confirmed handoffs, first-party link clicks, manually recorded replies and briefing requests.', `<button class="button button-secondary" data-view="prospects">${svgIcon('prospects')} Open prospects</button>`)}
+  return `${pageHead('Outreach activity', 'Sent', 'Replies are handled in the Inbox; this is the send log.', `<button class="button button-secondary" data-view="prospects">${svgIcon('prospects')} Open prospects</button>`)}
     <div class="provider-notice"><span class="provider-notice-icon">${svgIcon('info')}</span><div><strong>${state.data.settings?.smtpConfigured ? 'SMTP sending is available after approval' : 'SMTP is not configured yet'}</strong><p>${smtpSent} messages were accepted by SMTP; ${manualHandoffs} were confirmed as manual handoffs. Open counts use an approximate tracking pixel when a public HTTPS URL is configured; image blockers, caching and privacy proxies affect accuracy. “Yes — choose…” clicks are first-party CTA hits, and replies remain manually recorded.</p></div></div>
     <section class="metric-grid sent-metrics">${metricCard('Recipients', String(total), 'initial outreach confirmed', 'mail')}${metricCard('SMTP accepted', String(smtpSent), `${manualHandoffs} manual handoffs`, 'send')}${metricCard('Estimated open rate', openRate, `${openedMessages} unique tracked opens`, 'eye')}${metricCard('Yes CTA click rate', pct(clicks), `${clicks} recipients clicked “Yes — choose…”`, 'target')}${metricCard('Response rate', pct(replies), `${replies} replies recorded`, 'checkCircle')}${metricCard('Briefing rate', pct(bookings), `${bookings} briefing requests`, 'calendar')}</section>
     <div class="panel sent-panel"><div class="panel-header"><div><h2>Outreach history</h2><p>One row per recipient, with follow-up status and engagement events.</p></div><span class="subtle">${rows.length} recipient${rows.length === 1 ? '' : 's'}</span></div>${rows.length ? `<div class="lead-table-wrap"><table class="table sent-table"><thead><tr><th>Recipient</th><th>First handoff</th><th>Emails</th><th>Clicks</th><th>Reply</th><th>Briefing</th><th>Next follow-up</th><th>Actions</th></tr></thead><tbody>${rows.map(({ lead, first }) => {
@@ -592,14 +591,13 @@ function sentView() {
       const replied = leadEvents.some(e => e.type === 'reply');
       const booked = leadEvents.some(e => e.type === 'booking');
       const follow = lead.followUpAt && !lead.doNotContact ? `${isoDate(lead.followUpAt)} · ${Number(lead.followUpStep || 1)} of 2` : lead.doNotContact ? 'Stopped · opt-out' : replied ? 'Stopped · reply' : booked ? 'Stopped · booking' : followUpCount >= 2 ? 'Complete · 2 of 2' : 'No follow-up due';
-      return `<tr><td><span class="company-name">${esc(lead.company)}</span><span class="company-secondary">${esc(lead.contactName || lead.email || 'Contact')}</span></td><td>${isoDate(first.sentAt)}<span class="company-secondary">${esc(lead.emailStatus || 'Handoff confirmed')}</span></td><td>${leadMessages.length}<span class="company-secondary">${initialCount} initial · ${followUpCount} follow-up${followUpCount === 1 ? '' : 's'}</span></td><td>${clicked ? `<span class="event-count">${clicked}</span> link type${clicked === 1 ? '' : 's'}` : '—'}</td><td>${replied ? `<span class="event-positive">Recorded</span>` : '—'}</td><td>${booked ? `<span class="event-positive">Requested</span>` : '—'}</td><td>${esc(follow)}</td><td class="sent-actions">${!replied && !lead.doNotContact ? `<button class="table-action" type="button" data-action="mark-replied" data-id="${esc(lead.id)}">${svgIcon('reply')}Mark reply</button>` : ''}<button class="table-action" type="button" data-action="open-lead" data-id="${esc(lead.id)}">${svgIcon('eye')}Details</button></td></tr>`;
-    }).join('')}</tbody></table></div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('mail')}</div><strong>No outreach confirmed yet</strong><p>Prepare and approve the text-only introductory email, hand it off to your email client, then confirm the handoff to start follow-up tracking.</p><button class="button button-primary" data-view="discover">${svgIcon('discover')}Review candidates</button></div>`}</div>`;
+      return `<tr><td><span class="company-name">${esc(lead.company)}</span><span class="company-secondary">${esc(lead.contactName || lead.email || 'Contact')}</span></td><td>${isoDate(first.sentAt)}<span class="company-secondary">${esc(lead.emailStatus || 'Handoff confirmed')}</span></td><td>${leadMessages.length}<span class="company-secondary">${initialCount} initial · ${followUpCount} follow-up${followUpCount === 1 ? '' : 's'}</span></td><td>${clicked ? `<span class="event-count">${clicked}</span> link type${clicked === 1 ? '' : 's'}` : '—'}</td><td>${replied ? `<button type="button" class="table-action" data-action="ix-open-lead" data-lead="${esc(lead.id)}">${svgIcon('reply')} Open in Inbox</button>` : '—'}</td><td>${booked ? `<span class="event-positive">Requested</span>` : '—'}</td><td>${esc(follow)}</td><td class="sent-actions">${!replied && !lead.doNotContact ? `<button class="table-action" type="button" data-action="mark-replied" data-id="${esc(lead.id)}">${svgIcon('reply')}Mark reply</button>` : ''}<button class="table-action" type="button" data-action="open-lead" data-id="${esc(lead.id)}">${svgIcon('eye')}Details</button></td></tr>`;
+    }).join('')}</tbody></table></div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('mail')}</div><strong>No outreach confirmed yet</strong><p>Prepare and approve the text-only introductory email, hand it off to your email client, then confirm the handoff to start follow-up tracking.</p><button class="button button-primary" data-view="discover">${svgIcon('discover')}Review in Workbench</button></div>`}</div>`;
 }
-function pipelineView() {
+function pipelineBoard() {
   const visibleStages = (state.data.stages || []).filter(s => s !== 'Not proceeding');
   const query = state.query.toLowerCase().trim();
-  return `${pageHead('Opportunity management', 'Pipeline', 'Drag cards between stages.', `<button class="button button-secondary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
-    <div class="board-note"><span class="grip">⠿</span> Drag cards between stages. Marking a lead <strong>Won</strong> automatically creates a partner profile with its point of contact.</div>
+  return `<div class="board-note"><span class="grip">⠿</span> Drag cards between stages. Marking a lead <strong>Won</strong> automatically creates a partner profile with its point of contact.</div>
     <div class="kanban-board" id="kanban-board">${visibleStages.map(stage => {
       const leads = state.data.leads.filter(l => l.stage === stage && (!query || [l.company, l.contactName, l.sector, l.project].join(' ').toLowerCase().includes(query)));
       return `<section class="kanban-column" data-drop-stage="${esc(stage)}"><div class="kanban-heading"><strong>${esc(stage)}</strong><span>${leads.length}</span></div><div class="kanban-list">${leads.length ? leads.map(l => `<article class="lead-card" draggable="true" data-drag-lead="${esc(l.id)}" data-open-lead="${esc(l.id)}"><div class="lead-card-top"><h3>${esc(l.company)}</h3><span class="score">${Number(l.fitScore || 0)}%</span></div><div class="lead-card-contact">${esc(l.contactName || 'Contact to identify')} · ${esc(l.sector || 'Uncategorised')}</div><div class="lead-card-foot"><span class="lead-card-amount">${shortMoney(l.amount)}</span><span class="lead-card-sector">${esc(l.project || '')}</span></div></article>`).join('') : `<div class="kanban-empty">Drop a prospect here</div>`}</div></section>`;
@@ -617,20 +615,6 @@ function bookingsView() {
   return `${pageHead('Donor conversations', 'Briefings', 'A “Yes” from a prospect becomes a time preference for Chelo to review and confirm.', '')}
     <div class="booking-grid"><div><div class="metric-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));max-width:480px">${metricCard('Awaiting confirmation', String(requested), 'date/time requests', 'clock', requested ? 'Review now' : 'All clear', Boolean(requested))}${metricCard('Confirmed briefings', String(confirmed), 'on the calendar manually', 'calendar', 'Calendar sync later', false)}</div><div class="booking-cards">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('calendar')}</div><strong>No briefing requests yet</strong><p>When a donor follows the booking link in an approved email, their preferred date and time will be added here.</p></div>`}</div></div>
     <aside class="briefing-aside"><div class="aside-card dark"><h3 class="h-icon">${svgIcon('bell')}Booking requests</h3><p>The prospect chooses a preferred slot and leaves a phone number. Your team confirms the actual meeting time.</p><span class="aside-number">${requested}</span><p>need a team response</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('calendar')}Calendar invites</h3><p>Confirming a request emails an RFC 5545 .ics invite (Africa/Johannesburg) with the Google Meet, Microsoft Teams or Zoom link. Set default room links under Settings → Briefings.</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('video')}Default platform</h3><p>${esc(platformLabel(state.data.settings?.defaultPlatform))}${state.data.settings?.smtpConfigured ? ' · SMTP ready' : ' · SMTP not configured: download .ics and send manually'}</p></div></aside></div>`;
-}
-function partnersView() {
-  const q = state.query.trim().toLowerCase();
-  const partners = state.data.partners.filter(p => !q || [p.company, p.contactName, p.project, p.email, p.relationshipContext, p.partnerPriorities].join(' ').toLowerCase().includes(q));
-  const total = state.data.partners.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const cards = partners.map(p => {
-    const contactFreshness = verificationFreshness(p.contactLastVerifiedAt, 'Staff contact');
-    const sourceFreshness = verificationFreshness(p.sourceLastVerifiedAt, 'Source');
-    return `<article class="partner-card"><div class="partner-card-head"><div class="partner-logo">${initials(p.company)}</div><div><h3>${esc(p.company)}</h3><span>${esc(p.status || 'Active')} · Since ${isoDate(p.partnerSince)}</span></div><button class="table-action" style="margin-left:auto" type="button" data-action="edit-partner" data-id="${esc(p.id)}">${svgIcon('edit')}Edit</button></div><div class="partner-value"><div><small>Recorded contribution</small><strong>${money(p.amount)}</strong></div><span class="stage-pill pill-won">Won</span></div><div class="partner-contact"><span class="avatar">${initials(p.contactName)}</span><span><strong style="display:block;color:#2f2a5e;font-size:12px">${esc(p.contactName || 'Contact not set')}</strong><span style="display:block;margin-top:3px;color:#8d89a4">${esc(p.title || 'Point of contact')} · ${esc(p.email || 'No email')}</span><small class="freshness-tag ${contactFreshness.className}">${esc(contactFreshness.text)}</small></span></div><div class="partner-project"><strong>Impact focus:</strong> ${esc(p.project || 'Education impact partnership')}<br><span class="subtle">Relationship owner: ${esc(p.owner || 'Unassigned')}</span></div><div class="partner-priority-summary"><strong>Priorities & timing</strong><p>${esc(p.partnerPriorities || 'No partner priorities recorded yet.')}</p><strong>Relationship context</strong><p>${esc(p.relationshipContext || 'No warm-introduction or relationship path recorded.')}</p><small class="${sourceFreshness.className}">${esc(sourceFreshness.text)}${p.sourceLastVerifiedAt ? ` · ${esc(dateOnly(p.sourceLastVerifiedAt))}` : ''}</small></div></article>`;
-  }).join('');
-  return `${pageHead('Won relationships', 'Partners', '', `<button class="button button-secondary" data-view="pipeline">${svgIcon('pipeline')} Open pipeline</button>`)}
-    <section class="metric-grid">${metricCard('Active partners', String(state.data.partners.filter(p => p.status !== 'Inactive').length), 'relationship records', 'partners')}${metricCard('Total partner value', shortMoney(total), 'recorded contribution value', 'trend')}${metricCard('Won prospects', String(state.data.leads.filter(l => l.stage === 'Won').length), 'converted from pipeline', 'checkCircle')}${metricCard('Relationship owners', String(new Set(state.data.partners.map(p => p.owner).filter(Boolean)).size), 'team members', 'overview')}</section>
-    <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search partners, relationships or priorities…" value="${esc(state.query)}" /></label></div><div class="control-right"><span class="subtle">${partners.length} partner${partners.length === 1 ? '' : 's'}</span></div></div>
-    ${partners.length ? `<div class="partners-grid">${cards}</div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('partners')}</div><strong>No partner records yet</strong><p>Move a prospect to Won in the Kanban pipeline and Chelo will create a partner profile with its relationship and priorities context.</p><button class="button button-primary" data-view="pipeline">${svgIcon('pipeline')}Open pipeline</button></div>`}`;
 }
 function proposalsView() {
   const leads = sortRecent(state.data.leads.filter(l => !['Not proceeding'].includes(l.stage)));
@@ -650,7 +634,7 @@ function analyticsChart(analytics) {
   const label = i => rows[i]?.date ? new Date(`${rows[i].date}T12:00:00`).toLocaleDateString('en-ZA',{day:'numeric',month:'short'}) : '';
   return `<div class="analytics-chart-wrap"><svg class="analytics-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily email sends, estimated opens, Yes CTA clicks and preferred-time requests">${grid}<polyline points="${line('sent')}" class="chart-line chart-sent"/><polyline points="${line('opens')}" class="chart-line chart-open"/><polyline points="${line('clicks')}" class="chart-line chart-click"/><polyline points="${line('briefingRequests')}" class="chart-line chart-booking"/>${rows.map((row,i)=>`<circle cx="${x(i)}" cy="${y(row.sent)}" r="2.5" class="chart-dot chart-dot-sent"><title>${esc(row.date)} · ${row.sent} sent</title></circle>`).join('')}<text x="${left}" y="${height-7}" class="chart-axis-label">${label(0)}</text><text x="${width-right}" y="${height-7}" text-anchor="end" class="chart-axis-label">${label(rows.length-1)}</text></svg><div class="chart-legend"><span><i class="legend-sent"></i>Emails sent</span><span><i class="legend-open"></i>Estimated opens</span><span><i class="legend-click"></i>Yes CTA clicks</span><span><i class="legend-booking"></i>Preferred-time requests</span></div></div>`;
 }
-function analyticsView() {
+function analyticsView(embedded = false) {
   const analytics = state.data.analytics;
   const rangeOptions = [[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[365,'Last 12 months'],[0,'All time']];
   const range = `<select class="select-control" id="analytics-range" aria-label="Analytics date range">${rangeOptions.map(([value,label])=>`<option value="${value}" ${Number(state.analyticsRange)===value?'selected':''}>${label}</option>`).join('')}</select>`;
@@ -668,7 +652,7 @@ function analyticsView() {
   const trackingNote = state.data.settings?.openTrackingReady
     ? 'Opens are estimated from a 1×1 pixel. Image blocking, caching and privacy proxies can distort counts.'
     : 'Open tracking needs a public HTTPS app URL in Settings. Until configured, no open pixel is added to email drafts.';
-  return `${pageHead('Engagement reporting', 'Analytics', '', actions)}
+  return `${embedded ? `<div class="page-controls"><div class="control-left"><h2 class="panel-title">Engagement</h2></div><div class="control-right">${actions}</div></div>` : pageHead('Engagement reporting', 'Analytics', '', actions)}
     <div class="privacy-callout"><span class="privacy-callout-icon">${svgIcon('eye')}</span><div><strong>Open counts are estimates, not proof a person read the email.</strong><p>${esc(trackingNote)} “Yes — choose…” clicks are first-party CTA hits; briefing requests are counted separately.</p></div></div>
     ${state.analyticsLoading ? `<div class="loading-line"><span></span></div>` : ''}
     <section class="metric-grid analytics-metrics">
@@ -715,18 +699,13 @@ function renderView() {
   switch (state.view) {
     case 'workbench': return workbenchView();
     case 'inbox': return typeof window.inboxView === 'function' ? window.inboxView() : '';
-    case 'deliverability': return deliverabilityView();
-    case 'data': return dataQualityView();
     case 'ops': return opsView();
-    case 'discover': return discoverView();
     case 'projects': return projectsView();
     case 'prospects': return prospectsView();
-    case 'pipeline': return pipelineView();
     case 'briefings': return bookingsView();
     case 'sent': return sentView();
     case 'partners': return relationshipsView();
     case 'proposals': return proposalsView();
-    case 'analytics': return analyticsView();
     case 'settings': return settingsView();
     default: return overviewView();
   }
@@ -1165,7 +1144,7 @@ async function loadAnalytics(days = state.analyticsRange) {
   state.analyticsLoading = true;
   try { state.data.analytics = await API(`/api/analytics?days=${encodeURIComponent(days)}`); }
   catch (error) { toast(error.message || 'Could not load analytics.', true); }
-  finally { state.analyticsLoading = false; if (state.view === 'analytics') renderApp(); }
+  finally { state.analyticsLoading = false; if (state.view === 'ops') renderApp(); }
 }
 async function loadAudit() {
   const requestId = ++auditRequestId;
@@ -1181,17 +1160,27 @@ async function loadAudit() {
 }
 function openModal(type, id = null, extras = {}) { state.modal = { type, id, ...extras }; renderApp(); }
 function closeModal() { if (state.modal?.type === 'csv-preview') state.csvImportPreview = null; state.modal = null; renderApp(); }
+// Retired sections redirect to their merged home (bookmarks and phone deep links keep working).
+const VIEW_ALIASES = {
+  discover: () => { state.wb.intake = 'pool'; return 'workbench'; },
+  pipeline: () => { state.prospectsMode = 'board'; return 'prospects'; },
+  analytics: () => { state.ops.tab = 'analytics'; return 'ops'; },
+  deliverability: () => { state.ops.tab = 'deliverability'; return 'ops'; },
+  data: () => { state.ops.tab = 'data'; return 'ops'; },
+  partners: () => 'partners'
+};
+function resolveView(view) { return VIEW_ALIASES[view] ? VIEW_ALIASES[view]() : view; }
 function setView(view) {
-  if (TECHNICAL_VIEWS.includes(view) && !isRoot()) view = 'overview';
+  view = resolveView(view);
+  if (view === 'ops' && !isRoot() && ROOT_ONLY_OPS_TABS.includes(state.ops.tab || 'health')) state.ops.tab = 'analytics';
   state.view = view; state.modal = null; state.mobileMoreOpen = false;
   if (!['workbench', 'discover', 'prospects', 'pipeline', 'partners', 'sent', 'projects'].includes(view)) state.query = '';
   if (view === 'workbench') wbRunPending();
   if (view === 'overview') loadRadar();
   if (view === 'partners') loadRelationships(true);
-  if (view === 'discover') loadCatalogue();
-  if (view === 'ops') loadOps(true);
+  if (view === 'workbench' && state.wb.intake === 'pool') loadCatalogue();
+  if (view === 'ops') { if (isRoot()) loadOps(true); if (state.ops.tab === 'analytics') loadAnalytics(state.analyticsRange); if (state.ops.tab === 'deliverability') loadDeliverability(); if (state.ops.tab === 'data') loadDataQuality(); }
   renderApp(); window.scrollTo({ top: 0, behavior: 'smooth' });
-  if (view === 'analytics') loadAnalytics(state.analyticsRange);
   if (view === 'settings' && state.settingsSection === 'audit') loadAudit();
 }
 function formDataObject(form) { return Object.fromEntries(new FormData(form).entries()); }
@@ -1359,7 +1348,10 @@ async function dispatchAction(button) {
       toast(`${result.created} project(s) added, ${result.updated} updated${result.errors.length ? `, ${result.errors.length} rejected` : ''}.`, Boolean(result.errors.length)); return;
     }
     if (action === 'open-copilot') { state.copilot = { target: button.dataset.target || 'lead-form', text: '', result: null, error: '' }; const returnTo = state.modal; const leadFormDraft = $('#lead-form') ? formDataObject($('#lead-form')) : null; return openModal('copilot', null, { returnTo, leadFormDraft }); }
-    if (action === 'copilot-tab') { state.copilotTab = button.dataset.tab === 'paste' ? 'paste' : 'web'; renderApp(); return; }
+    if (action === 'prospects-mode') { state.prospectsMode = button.dataset.mode === 'board' ? 'board' : 'table'; renderApp(); return; }
+    if (action === 'wb-intake') { state.wb.intake = button.dataset.intake === 'pool' ? 'pool' : 'add'; if (state.wb.intake === 'pool') loadCatalogue(); renderApp(); return; }
+    if (action === 'ops-tab') { state.ops.tab = button.dataset.tab; if (!isRoot() && ROOT_ONLY_OPS_TABS.includes(state.ops.tab)) state.ops.tab = 'analytics'; if (state.ops.tab === 'analytics') loadAnalytics(state.analyticsRange); if (state.ops.tab === 'deliverability') loadDeliverability(); if (state.ops.tab === 'data') loadDataQuality(); renderApp(); return; }
+    if (action === 'copilot-tab') { state.copilotTab = 'paste'; renderApp(); return; }
     if (action === 'research-run') {
       const lead = getLead(id); if (!lead) return;
       const website = $('#research-website')?.value?.trim() || '';
@@ -1732,7 +1724,7 @@ async function importCandidateCsvPreview() {
   const button = $('[data-action="csv-import-confirm"]');
   if (button) { button.disabled = true; button.textContent = 'Checking selected rows…'; }
   try {
-    const result = await API('/api/candidates/import', { method: 'POST', body: JSON.stringify({ candidates: selected.map(row => row.candidate) }) });
+    const result = await API('/api/import', { method: 'POST', body: JSON.stringify({ source: 'csv', candidates: selected.map(row => row.candidate) }) });
     state.csvImportPreview = null; state.importReport = result; state.modal = null;
     await refresh(); openModal('import-report');
   } catch (err) {
@@ -2054,15 +2046,7 @@ function projectImportModal(preview) {
 }
 function copilotModal() {
   const c = state.copilot || { text: '', result: null, error: '' };
-  const tab = state.copilotTab || 'web';
-  const tabs = `<div class="copilot-tabs" role="tablist"><button type="button" class="copilot-tab ${tab === 'web' ? 'is-active' : ''}" data-action="copilot-tab" data-tab="web" role="tab">${svgIcon('globe')} Web research</button><button type="button" class="copilot-tab ${tab === 'paste' ? 'is-active' : ''}" data-action="copilot-tab" data-tab="paste" role="tab">${svgIcon('edit')} Paste-to-Extract</button></div>`;
-  if (tab === 'web') {
-    const lead = state.modal?.returnTo?.id ? getLead(state.modal.returnTo.id) : null;
-    const webBody = `${tabs}<div class="note-callout"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>How web research works.</strong> Staff start a lookup for one organisation. Chelo queries the configured search provider${state.data.settings?.searchConfigured ? ` (${esc(state.data.settings.searchProvider)})` : ' (not configured — official website only)'} and the funder's official site for public CSI, foundation and annual-report pages, scrubs emails, phone numbers and ID numbers before any AI step, and returns a cited Funder Brief. You tick what may be used; only approved findings reach the email and proposal PDF.</span></div>
-      ${lead ? researchBriefCard(lead, 'copilot') : `<div class="empty-state" style="margin-top:14px"><strong>Save the prospect first.</strong><p>Web research attaches a brief to a saved prospect so it can be reviewed, audited and reused for 30 days. Add the organisation, then open the copilot from the prospect's details, Prepare outreach or Proposal screens.</p></div>`}`;
-    const webFooter = `<div class="modal-footer-left"><span class="subtle">POPIA: organisation-level public facts only · no contact details are collected</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Close</button></div>`;
-    return modalFrame('Research copilot', 'Gather cited public context and align the ask with the funder’s mission.', webBody, webFooter, true);
-  }
+  const tabs = `<div class="note-callout"><span class="note-callout-icon">${svgIcon('info')}</span><span>Web research with citations runs from the Workbench <strong>Research</strong> step. This copilot extracts facts from text you paste.</span></div>`;
   const r = c.result;
   const extracted = r?.extracted;
   const resultBlock = r ? `<div class="copilot-result"><div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>${r.mode === 'openai' ? 'AI-assisted extraction' : 'Local extraction (no AI provider)'}.</strong> ${esc(r.message)} Redacted before processing: ${r.redactions.emails} email(s), ${r.redactions.phones} phone(s), ${r.redactions.saIds} ID number(s).</span></div><div class="detail-grid" style="margin-top:12px"><div class="detail-item"><small>Sector</small><strong>${esc(extracted.sector || '—')}</strong></div><div class="detail-item"><small>Grant window</small><strong>${esc(grantCycleLabel(extracted))}</strong></div><div class="detail-item"><small>Suggested project</small><strong>${esc(state.data.projects.find(p => p.id === extracted.suggestedProjectId)?.name || 'None (staff decide)')}</strong></div><div class="detail-item"><small>Signals</small><strong>${extracted.employeeVolunteering ? 'Volunteering · ' : ''}${extracted.inKindSupport ? 'In-kind · ' : ''}${(extracted.focusAreas || []).length} focus area(s)</strong></div></div><div class="detail-item" style="margin-top:10px"><small>Partner priorities (editable after apply)</small><div class="detail-note">${esc(extracted.partnerPriorities || '')}</div></div>${(extracted.focusAreas || []).length ? `<div class="chip-row">${extracted.focusAreas.map(f => `<span class="stage-pill pill-researched">${esc(f)}</span>`).join('')}</div>` : ''}</div>` : '';
@@ -2207,6 +2191,21 @@ function researchModal(lead) {
 // Outreach Workbench — one screen: add/discover → verify → research → match → draft → review & send → track
 // =====================================================================
 const WB_FILTERS = [['all', 'All'], ['replied', 'Replied · triage'], ['running', 'Working'], ['needs-review', 'Needs review'], ['ready', 'Ready to send'], ['approved', 'Approved'], ['queued', 'Queued'], ['sequence', 'In sequence'], ['sent', 'Sent'], ['blocked', 'Needs input'], ['dead', 'Dead emails']];
+function approvalItems() {
+  const items = [];
+  for (const l of state.data.leads) {
+    if (l.doNotContact) continue;
+    const seq = l.sequence;
+    if (seq && seq.status === 'pending-approval') items.push({ kind: 'countersign-plan', lead: l, at: seq.approval?.firstApprovedAt || l.updatedAt });
+    else if (seq && seq.status === 'draft') items.push({ kind: 'plan', lead: l, at: seq.builtAt || l.updatedAt });
+    else if (l.emailStatus === 'Pending second approval') items.push({ kind: 'countersign-email', lead: l, at: l.updatedAt });
+    else if (l.emailDraft && ['Draft', 'None', undefined, ''].includes(l.emailStatus) && !seq) items.push({ kind: 'draft', lead: l, at: l.emailDraft.generatedAt || l.updatedAt });
+    else if (l.research && l.research.status === 'pending-review') items.push({ kind: 'research', lead: l, at: l.research.fetchedAt || l.updatedAt });
+  }
+  for (const b of state.data.bookings.filter(b => b.status === 'Requested')) { const lead = state.data.leads.find(l => l.id === b.leadId); if (lead) items.push({ kind: 'booking', lead, booking: b, at: b.createdAt }); }
+  return items.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
+}
+const APPROVAL_KIND_META = { 'countersign-plan': ['Sequence plan needs countersign', 'shield', 'tone-warn'], plan: ['Sequence plan to approve', 'send', 'tone-info'], 'countersign-email': ['Email needs countersign', 'shield', 'tone-warn'], draft: ['First-touch draft to approve', 'mail', 'tone-info'], research: ['Research brief to review', 'search', 'tone-info'], booking: ['Briefing request to confirm', 'calendar', 'tone-info'] };
 function wbStatusOf(lead) {
   if (lead.flowStatus) return lead.flowStatus;
   const f = lead.flow; if (!f) return 'new';
@@ -2233,7 +2232,7 @@ function workbenchView() {
   if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
-  return `${pageHead('Outreach workbench', 'Workbench', 'Add or discover organisations, let Chelo verify the mailbox, research their CSI focus and draft the email — you review the findings, approve and send.', `<button type="button" class="button button-secondary" data-view="discover">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  return `${pageHead('Outreach workbench', 'Workbench', 'Add → verify → research → draft → approve → send, in one place.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
   ${wbIntakeBar()}
   <div class="wb-layout">
     <section class="panel wb-list-panel">
@@ -2246,7 +2245,11 @@ function workbenchView() {
 }
 function wbIntakeBar() {
   const d = state.wb.discovery;
-  return `<section class="panel wb-intake">
+  const intake = state.wb.intake === 'pool' ? 'pool' : 'add';
+  const poolCount = state.data.candidates.filter(c => c.status === 'New candidate').length;
+  const tabs = `<div class="wb-intake-tabs" role="tablist"><button type="button" role="tab" class="wb-intake-tab ${intake === 'add' ? 'is-active' : ''}" data-action="wb-intake" data-intake="add" aria-selected="${intake === 'add'}">${svgIcon('plus')} Add or discover</button><button type="button" role="tab" class="wb-intake-tab ${intake === 'pool' ? 'is-active' : ''}" data-action="wb-intake" data-intake="pool" aria-selected="${intake === 'pool'}">${svgIcon('database')} Local pool & CSV${poolCount ? ` <span class="wb-count">${poolCount}</span>` : ''}</button></div>`;
+  if (intake === 'pool') { loadCatalogue(); return `<section class="panel wb-intake">${tabs}${discoverPanel()}<input type="file" id="candidate-csv" accept=".csv,text/csv" hidden /></section>`; }
+  return `<section class="panel wb-intake">${tabs}
     <form class="wb-add-form" data-form="wb-add" id="wb-add-form">
       <div class="wb-add-fields">
         <input class="form-control" name="company" placeholder="Organisation" required autocomplete="organization" />
@@ -2297,7 +2300,7 @@ function wbStepper(lead) {
   const emailStatus = lead.emailStatus || 'None';
   const openStep = s === 'replied' ? 'track' : s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sequence' || s === 'queued' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify';
   const header = `<div class="wb-detail-head">
-    <div><div class="eyebrow"><span class="eyebrow-dot"></span>${esc(lead.stage || 'New')}</div><h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ' · no email yet'}</p></div>
+    <div>${stagePill(lead.stage || 'New')}<h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ' · no email yet'}</p></div>
     <div class="wb-detail-actions">${wbPill(s)}<button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button><button type="button" class="button button-secondary button-small" data-action="wb-run" data-id="${esc(lead.id)}" ${busy || s === 'running' ? 'disabled' : ''}>${svgIcon('refresh')}${busy || s === 'running' ? 'Working…' : 'Re-run flow'}</button></div>
   </div>`;
   // 1 · Verify
@@ -2356,7 +2359,7 @@ function wbStepper(lead) {
   // 6 · Track
   const events = (lead.emailEvents || []).slice(-6).reverse();
   const booking = (state.data.bookings || []).find(b => b.leadId === lead.id);
-  const trackBody = `${wbTriageCard(lead)}<div class="wb-track-grid">
+  const trackBody = `${wbReplyPointer(lead)}<div class="wb-track-grid">
       <div class="wb-kv"><span>Status</span><strong>${esc(emailStatus)}</strong></div>
       <div class="wb-kv"><span>Opens</span><strong>${lead.openCount || (lead.emailEvents || []).filter(e => e.type === 'open').length || 0}</strong></div>
       <div class="wb-kv"><span>Reply</span><strong>${lead.repliedAt ? isoDate(lead.repliedAt) : '—'}</strong></div>
@@ -2432,6 +2435,12 @@ function wbSequencePanel(lead) {
     <div class="wb-step-actions">${actions.join('')}</div>
   </div>`;
 }
+function wbReplyPointer(lead) {
+  const t = lead.triage; if (!t) return '';
+  if (t.handled) return `<div class="wb-triage is-handled"><span class="stage-pill pill-won">${svgIcon('check')}Triaged: ${esc(wbTriageLabel(t.outcome?.category || t.category))}</span><small class="subtle">${esc(t.handledBy || '')} · ${isoDate(t.handledAt)}</small></div>`;
+  const overdue = t.dueAt && Date.parse(t.dueAt) < Date.now();
+  return `<div class="wb-triage"><div class="wb-triage-head"><div><h4>${svgIcon('reply')}Reply received — sequence stopped</h4><p class="subtle">Suggested: ${esc(wbTriageLabel(t.category))} (${esc(t.confidence || 'low')} confidence)${t.dueAt ? ` · ${overdue ? 'overdue, was due' : 'respond by'} ${wbWhen(t.dueAt)}` : ''}</p></div><button type="button" class="button button-primary button-small" data-action="ix-open-lead" data-lead="${esc(lead.id)}">${svgIcon('reply')} Handle in Inbox</button></div>${t.excerpt ? `<blockquote class="triage-excerpt">${esc(t.excerpt)}</blockquote>` : ''}</div>`;
+}
 function wbTriageCard(lead) {
   const t = lead.triage; if (!t) return '';
   const [label, icon, action] = TRIAGE_META[t.category] || TRIAGE_META.unclassified;
@@ -2440,7 +2449,7 @@ function wbTriageCard(lead) {
   const redirect = t.hints?.redirect || {}; const resumeOn = t.hints?.resumeOn || '';
   const sla = t.dueAt ? `<span class="triage-sla ${overdue ? 'is-overdue' : ''}">${svgIcon('clock')}${overdue ? 'Overdue — was due' : 'Respond by'} ${wbWhen(t.dueAt)}</span>` : '';
   return `<div class="wb-triage" data-lead="${esc(lead.id)}">
-    <div class="wb-triage-head"><div><div class="eyebrow"><span class="eyebrow-dot"></span>Human reply · sequence stopped</div><h4>${svgIcon(icon)}Suggested: ${esc(label)} <small class="subtle">(${esc(t.confidence || 'low')} confidence)</small></h4><p class="subtle">${esc(action)}${t.reasons?.length ? ` · ${esc(t.reasons.slice(0, 2).join('; '))}` : ''}</p></div>${sla}</div>
+    <div class="wb-triage-head"><div><p class="subtle">Human reply · sequence stopped</p><h4>${svgIcon(icon)}Suggested: ${esc(label)} <small class="subtle">(${esc(t.confidence || 'low')} confidence)</small></h4><p class="subtle">${esc(action)}${t.reasons?.length ? ` · ${esc(t.reasons.slice(0, 2).join('; '))}` : ''}</p></div>${sla}</div>
     ${t.excerpt ? `<blockquote class="triage-excerpt">${esc(t.excerpt)}</blockquote>` : ''}
     <div class="triage-inputs">
       <label class="form-group"><span>Redirect name (wrong person)</span><input class="form-control" id="triage-redirect-name" value="${esc(redirect.name || '')}" placeholder="e.g. Naledi Mokoena" /></label>
@@ -2509,9 +2518,9 @@ async function loadDataQuality(force = false) {
   catch (err) { state.dq.error = err.message; }
   finally { state.dq.loading = false; renderApp(); }
 }
-function dataQualityView() {
+function dataQualityView(embedded = false) {
   const d = state.dq.data;
-  const head = pageHead('Data quality', 'Data engine', 'Identity resolution at ingest, a merge-review queue instead of silent duplicates, freshness scoring with automatic re-verification after 90 days, and a public-contact waterfall with per-hop confidence.', `<button type="button" class="button button-secondary" data-action="dq-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-primary" data-action="dq-reverify" ${state.dq.busy ? 'disabled' : ''}>${svgIcon('checkCircle')}${state.dq.busy ? 'Re-verifying…' : 'Re-verify stale now'}</button>`);
+  const head = embedded ? '' : pageHead('Data quality', 'Data engine', 'Identity resolution at ingest, a merge-review queue instead of silent duplicates, freshness scoring with automatic re-verification after 90 days, and a public-contact waterfall with per-hop confidence.', `<button type="button" class="button button-secondary" data-action="dq-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-primary" data-action="dq-reverify" ${state.dq.busy ? 'disabled' : ''}>${svgIcon('checkCircle')}${state.dq.busy ? 'Re-verifying…' : 'Re-verify stale now'}</button>`);
   if (!d) { loadDataQuality(); return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('database')}</div><p>${state.dq.error ? esc(state.dq.error) : 'Scoring records…'}</p></div>`; }
   const tiles = metricCard('Average data score', String(d.averageScore), `${d.totals.leads} pipeline records · A ${d.gradeCounts.A || 0} · B ${d.gradeCounts.B || 0} · C ${d.gradeCounts.C || 0} · D ${d.gradeCounts.D || 0}`, 'database')
     + metricCard('Re-verify due', String(d.reverifyDue), `mailboxes older than ${d.reverifyAfterDays} days`, 'checkCircle', d.reverifyDue ? 'weekly sweep + button' : '', d.reverifyDue > 0)
@@ -2599,7 +2608,7 @@ function relationshipsView() {
     <section class="metric-grid">${metricCard('Partners', String(r.totals.partners), `${r.totals.warm} warm · ${r.totals.cooling} cooling · ${r.totals.cold} cold${r.totals.atRisk ? ` · ${r.totals.atRisk} at risk` : ''}`, 'partners')}${metricCard('Stewardship due', String(r.stewardship.dueThisWeek + r.stewardship.overdue), `${r.stewardship.overdue} overdue · ${r.stewardship.dueThisWeek} this week · ${r.stewardship.open} open`, 'calendar')}${metricCard('Pledged · received', `${shortMoney(r.pledges.pledged)} · ${shortMoney(r.pledges.received)}`, r.pledges.overdue ? `${shortMoney(r.pledges.overdue)} overdue` : `${shortMoney(r.pledges.outstanding)} outstanding`, 'trend')}${metricCard('Org graph', `${r.graph.orgs} orgs`, `${r.graph.linkedFoundations} foundation links · ${r.graph.people} people · ${r.graph.edges} edges`, 'link')}</section>
     <section class="panel rel-queue"><div class="panel-head"><div><h3>Stewardship queue</h3><p class="subtle">Cadence: thank-you +2d · impact plan +14d · site visit +60d · quarterly updates · annual report · renewal at FYE −4 months · pledge follow-ups. Completing a task logs a touch on the timeline.</p></div>${r.renewals.length ? `<span class="pill-new stage-pill">${r.renewals.length} renewal${r.renewals.length === 1 ? '' : 's'} within 120 days</span>` : ''}</div>${queue.length ? `<ul class="rel-task-list">${queue.map(taskRow).join('')}</ul>${r.stewardship.open > queue.length ? `<p class="subtle">+${r.stewardship.open - queue.length} more scheduled.</p>` : ''}` : `<div class="empty-state small"><p>Nothing due. New partners get a plan the moment a prospect is marked Won.</p></div>`}</section>
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search partners, owners or introducers…" value="${esc(state.query)}" /></label></div><div class="control-right"><span class="subtle">${partners.length} partner${partners.length === 1 ? '' : 's'} · sorted by health, then next due</span></div></div>
-    ${partners.length ? `<div class="partners-grid">${cards}</div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('partners')}</div><strong>No partner records yet</strong><p>Move a prospect to Won and Chelo creates the partner profile, carries the introducer and foundation links across, and schedules the stewardship cadence.</p><button class="button button-primary" data-view="pipeline">${svgIcon('pipeline')} Open pipeline</button></div>`}`;
+    ${partners.length ? `<div class="partners-grid">${cards}</div>` : `<div class="empty-state"><div class="empty-state-icon">${svgIcon('partners')}</div><strong>No partner records yet</strong><p>Move a prospect to Won and Chelo creates the partner profile, carries the introducer and foundation links across, and schedules the stewardship cadence.</p><button class="button button-primary" data-view="pipeline">${svgIcon('pipeline')} Open board</button></div>`}`;
 }
 function relationshipModal() {
   const v = state.rel.view;
@@ -2693,7 +2702,7 @@ async function catAction(action) {
     try {
       for (let i = 0; i < 12; i++) {
         state.cat.progress = `Loading… ${created} added`; renderApp();
-        const r = await API('/api/leads/catalogue/import', { method: 'POST', body: JSON.stringify({ limit: 40, verify: true }) });
+        const r = await API('/api/import', { method: 'POST', body: JSON.stringify({ source: 'catalogue', limit: 40, verify: true }) });
         created += r.created; skipped += r.skippedExisting; verified += r.verification?.verified || 0; state.cat.status = r.status;
         if (!r.status.remaining || (r.created === 0 && r.skippedExisting === 0)) break;
       }
@@ -2738,9 +2747,26 @@ function opsCheck(c) {
   return `<li class="ops-check ${cls}"><span class="ops-dot" aria-hidden="true"></span><div class="ops-check-body"><strong>${esc(c.title)}</strong>${c.detail ? `<p>${esc(c.detail)}</p>` : ''}<p class="ops-fix">${svgIcon('wand')}<span><b>Fix:</b> ${esc(c.fix)}</span></p></div>${c.view ? `<button type="button" class="button button-ghost button-small" data-view="${esc(c.view)}">${svgIcon('arrow')}Open</button>` : ''}</li>`;
 }
 function opsKpi(label, value, sub = '', tone = '') { return `<div class="ops-kpi ${tone}"><small>${esc(label)}</small><strong>${value}</strong>${sub ? `<span class="subtle">${esc(sub)}</span>` : ''}</div>`; }
+const OPS_TABS = [['health', 'Health', 'activity'], ['deliverability', 'Deliverability', 'shield'], ['analytics', 'Analytics', 'analytics'], ['data', 'Data quality', 'database']];
+function opsVisibleTabs() { return OPS_TABS.filter(([k]) => isRoot() || !ROOT_ONLY_OPS_TABS.includes(k)); }
+function opsCurrentTab() { const allowed = opsVisibleTabs(); const t = allowed.some(([k]) => k === state.ops.tab) ? state.ops.tab : allowed[0][0]; state.ops.tab = t; return t; }
+function opsTabs() {
+  const tab = opsCurrentTab();
+  const badge = { health: state.ops.data ? (state.ops.data.counts.critical + state.ops.data.counts.warn) : 0, deliverability: (state.data.mailboxes || []).filter(m => m.status === 'paused').length, analytics: 0, data: state.dq.data ? (state.dq.data.openMergeReviews || 0) : 0 };
+  return `<div class="settings-tabs ops-tabs" role="tablist">${opsVisibleTabs().map(([k, label, icon]) => `<button type="button" role="tab" class="settings-tab ${tab === k ? 'active' : ''}" data-action="ops-tab" data-tab="${k}" aria-selected="${tab === k}">${svgIcon(icon)} ${label}${badge[k] ? ` <span class="nav-count">${badge[k]}</span>` : ''}</button>`).join('')}</div>`;
+}
 function opsView() {
+  const tab = opsCurrentTab();
+  const head = pageHead('Observability', isRoot() ? 'Ops' : 'Analytics', '', tab === 'health' ? `<button type="button" class="button button-secondary" data-action="ops-refresh">${svgIcon('refresh')} Refresh</button>` : '') + (opsVisibleTabs().length > 1 ? opsTabs() : '');
+  if (tab === 'deliverability') return head + deliverabilityView(true);
+  if (tab === 'analytics') return head + analyticsView(true);
+  if (tab === 'data') return head + dataQualityView(true);
+  return head + opsHealthView();
+}
+function opsHealthView() {
   const o = state.ops.data;
-  const head = pageHead('Observability', 'Ops dashboard', 'One screen for the whole engine: what is broken, what it costs you, and the exact next click. Checks are ranked by severity; every one carries its fix.', `<button type="button" class="button button-secondary" data-action="ops-refresh" ${state.ops.loading ? 'disabled' : ''}>${svgIcon('refresh')}${state.ops.loading ? 'Refreshing…' : 'Refresh'}</button><a class="button button-ghost" href="/api/ops" target="_blank" rel="noopener">${svgIcon('external')}JSON</a>`);
+  const head = '';
+  void pageHead('Observability', 'Ops dashboard', 'One screen for the whole engine: what is broken, what it costs you, and the exact next click. Checks are ranked by severity; every one carries its fix.', `<button type="button" class="button button-secondary" data-action="ops-refresh" ${state.ops.loading ? 'disabled' : ''}>${svgIcon('refresh')}${state.ops.loading ? 'Refreshing…' : 'Refresh'}</button><a class="button button-ghost" href="/api/ops" target="_blank" rel="noopener">${svgIcon('external')}JSON</a>`);
   if (!o) return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('activity')}</div><p>${state.ops.error ? esc(state.ops.error) : 'Reading engine state…'}</p></div>`;
   const [label, cls, icon] = OPS_STATUS[o.status] || OPS_STATUS.healthy;
   const k = o.kpis;
@@ -2877,9 +2903,9 @@ function dlvJobPill(status) {
   return `<span class="stage-pill ${map[status] || 'pill-new'}">${esc(status)}</span>`;
 }
 function dlvWhen(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' }); }
-function deliverabilityView() {
+function deliverabilityView(embedded = false) {
   const data = state.dlv.data;
-  const head = pageHead('Deliverability', 'Sending engine', 'Your own mailboxes, authenticated domains, slow ramps, business-hours windows and a circuit breaker — the plumbing that decides whether emails land.', `<button type="button" class="button button-secondary" data-action="dlv-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-secondary" data-action="dlv-tick">${svgIcon('send')}Process queue now</button><button type="button" class="button button-primary" data-action="dlv-new-mailbox">${svgIcon('plus')}Add mailbox</button>`);
+  const head = embedded ? '' : pageHead('Deliverability', 'Sending engine', 'Your own mailboxes, authenticated domains, slow ramps, business-hours windows and a circuit breaker — the plumbing that decides whether emails land.', `<button type="button" class="button button-secondary" data-action="dlv-refresh">${svgIcon('refresh')}Refresh</button><button type="button" class="button button-secondary" data-action="dlv-tick">${svgIcon('send')}Process queue now</button><button type="button" class="button button-primary" data-action="dlv-new-mailbox">${svgIcon('plus')}Add mailbox</button>`);
   if (!data) { loadDeliverability(); return `${head}<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('activity')}</div><p>${state.dlv.error ? esc(state.dlv.error) : 'Loading sending engine…'}</p></div>`; }
   const boxes = data.mailboxes || [];
   const queue = data.queue || {};

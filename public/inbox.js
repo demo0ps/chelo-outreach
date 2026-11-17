@@ -2,7 +2,7 @@
  * Folders: per mailbox (unread badges) · Mine · Unassigned · All. Statuses: open · pending · snoozed · resolved.
  * Thread = sent outreach + inbound replies + staff replies + private notes (@mentions). Lead panel on the right. */
 (function () {
-  const IX = state.ix = { data: null, loading: false, folder: 'mine', status: 'open', q: '', convId: null, thread: null, threadLoading: false, composer: 'reply', members: null, error: '' };
+  const IX = state.ix = { data: null, loading: false, mode: 'conversations', folder: 'mine', status: 'open', q: '', convId: null, thread: null, threadLoading: false, composer: 'reply', members: null, error: '' };
   const S = { open: ['Open', 'pill-interested'], pending: ['Pending', 'pill-researched'], snoozed: ['Snoozed', 'pill-contacted'], resolved: ['Resolved', 'pill-won'] };
   const when = iso => { if (!iso) return ''; const d = new Date(iso); const days = Math.floor((Date.now() - d) / 86400000); if (days <= 0) return d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }); if (days === 1) return 'yesterday'; if (days < 7) return `${days}d`; return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }); };
   const staffName = uid => (IX.data?.staff || []).find(u => u.id === uid)?.displayName || (uid ? 'Teammate' : 'Unassigned');
@@ -143,8 +143,19 @@
     if (!IX.data && !IX.loading && !IX.error) load();
     if (IX.error) return `<div class="panel"><div class="panel-empty">${esc(IX.error)} <button type="button" class="button button-secondary button-small" data-action="ix-refresh">Retry</button></div></div>`;
     if (!IX.data) return `<div class="panel"><div class="panel-empty">Loading inbox…</div></div>`;
-    return `<div class="ix-shell">${folderPane()}${listPane()}${threadPane()}${leadPane()}</div>${IX.members ? `<div class="modal-backdrop" id="ix-members-backdrop">${membersModal()}</div>` : ''}`;
+    const appr = typeof approvalItems === 'function' ? approvalItems() : [];
+    const modeBar = `<div class="settings-tabs ix-mode" role="tablist"><button type="button" role="tab" class="settings-tab ${IX.mode !== 'approvals' ? 'active' : ''}" data-action="ix-mode" data-mode="conversations" aria-selected="${IX.mode !== 'approvals'}">${svgIcon('reply')} Conversations${window.inboxUnreadCount() ? ` <span class="nav-count">${window.inboxUnreadCount()}</span>` : ''}</button><button type="button" role="tab" class="settings-tab ${IX.mode === 'approvals' ? 'active' : ''}" data-action="ix-mode" data-mode="approvals" aria-selected="${IX.mode === 'approvals'}">${svgIcon('checkCircle')} Approvals${appr.length ? ` <span class="nav-count">${appr.length}</span>` : ''}</button></div>`;
+    if (IX.mode === 'approvals') return modeBar + approvalsPane(appr);
+    return `${modeBar}<div class="ix-shell">${folderPane()}${listPane()}${threadPane()}${leadPane()}</div>${IX.members ? `<div class="modal-backdrop" id="ix-members-backdrop">${membersModal()}</div>` : ''}`;
   };
+  // Everything waiting on a person: drafts, sequence plans, 4-eyes countersigns, research briefs, briefing requests.
+  function approvalsPane(items) {
+    const policy = state.auth.approvalPolicy || state.data.settings?.approvalPolicy || 'single';
+    const rows = items.map(i => { const [label, icon, tone] = (typeof APPROVAL_KIND_META !== 'undefined' && APPROVAL_KIND_META[i.kind]) || [i.kind, 'info', 'tone-info']; const l = i.lead;
+      const target = i.kind === 'booking' ? `data-view="briefings"` : `data-action="ix-goto-workbench" data-id="${esc(l.id)}"`;
+      return `<button type="button" class="ix-row ix-approval" ${target}><span class="ix-avatar ${tone}">${svgIcon(icon)}</span><span class="ix-row-main"><span class="ix-row-top"><strong>${esc(l.company)}</strong><span class="ix-row-when">${when(i.at)}</span></span><span class="ix-row-preview">${esc(label)}${i.booking ? ` · ${esc(i.booking.date || '')} ${esc(i.booking.time || '')}` : ''}${l.contactName ? ` · ${esc(l.contactName)}` : ''}</span></span></button>`; }).join('');
+    return `<section class="panel ix-approvals"><div class="panel-header"><div><h2 class="panel-title">Waiting on a person</h2><p class="panel-description">${items.length} item${items.length === 1 ? '' : 's'} · ${policy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}. Opening an item takes you to the step where it is approved.</p></div></div>${rows || `<div class="panel-empty">Nothing to approve. New drafts, plans and briefing requests appear here the moment the engine prepares them.</div>`}</section>`;
+  }
 
   // ---- phone (two-pane: list → thread) ----
   window.inboxMobileView = function inboxMobileView() {
@@ -180,6 +191,14 @@
   window.inboxAction = async function inboxAction(action, button) {
     const ds = button.dataset;
     if (action === 'ix-refresh') { await load(); return true; }
+    if (action === 'ix-mode') { IX.mode = ds.mode === 'approvals' ? 'approvals' : 'conversations'; if (state.view !== 'inbox') state.view = 'inbox'; renderApp(); return true; }
+    if (action === 'ix-open-lead') {
+      state.view = 'inbox'; IX.mode = 'conversations';
+      if (!IX.data) { await load({ silent: true }); }
+      const conv = (IX.data?.conversations || []).filter(c => c.leadId === ds.lead).sort((a, b) => (a.status === 'resolved') - (b.status === 'resolved') || String(b.lastActivityAt).localeCompare(String(a.lastActivityAt)))[0];
+      if (!conv) { toast('No conversation for this organisation yet.', true); renderApp(); return true; }
+      IX.folder = 'all'; IX.status = 'all'; await openConv(conv.id); return true;
+    }
     if (action === 'ix-folder') { IX.folder = ds.folder; renderApp(); return true; }
     if (action === 'ix-status-filter') { IX.status = ds.status; renderApp(); return true; }
     if (action === 'ix-open') { if (state.view !== 'inbox' && !(typeof window.isPhone === 'function' && window.isPhone())) state.view = 'inbox'; await openConv(ds.id); return true; }
@@ -206,7 +225,7 @@
       try { await API(`/api/leads/${encodeURIComponent(IX.thread.lead.id)}/triage`, { method: 'POST', body: JSON.stringify(body) }); toast('Triaged.'); await refresh(); await load({ silent: true }); await openConv(IX.convId); } catch (err) { toast(err.message, true); }
       return true;
     }
-    if (action === 'ix-goto-workbench') { state.view = 'workbench'; state.wb = state.wb || {}; state.wb.leadId = ds.id; renderApp(); return true; }
+    if (action === 'ix-goto-workbench') { state.view = 'workbench'; state.wb.selectedId = ds.id; state.wb.filter = 'all'; renderApp(); return true; }
     if (action === 'ix-members-open') { IX.members = Object.fromEntries(IX.data.mailboxes.map(m => [m.id, m.members || []])); renderApp(); return true; }
     if (action === 'ix-members-close') { IX.members = null; renderApp(); return true; }
     if (action === 'ix-members-save') {

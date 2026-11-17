@@ -1133,7 +1133,8 @@ function applyTriageOutcome(lead, body, actor) {
     lead.nextAction = lead.nextAction || '';
   }
   t.category = category; t.handled = true; t.handledAt = now; t.handledBy = actor; t.outcome = outcome;
-  for (const conv of db.conversations.filter(c => c.leadId === lead.id && c.status !== 'resolved')) { conv.triageCategory = category; if (['opt-out', 'automatic', 'not-now'].includes(category)) { conv.status = 'resolved'; conv.resolvedAt = now; conv.statusChangedAt = now; conv.statusChangedBy = actor; } }
+  for (const conv of db.conversations.filter(c => c.leadId === lead.id)) conv.triageCategory = category;
+  inboxCenter.onTriage(lead, outcome, { actor }); // single place where a triage decision changes conversation state
   lead.updatedAt = now;
   configStore.recordAudit({ actor, action: 'reply.triaged', entityType: 'lead', entityId: lead.id, summary: `Reply from ${lead.company} triaged as ${category}${outcome.redirect ? ` → ${outcome.redirect.name}` : ''}${outcome.resumeOn ? ` (resume ${outcome.resumeOn})` : ''}` });
   return t;
@@ -2178,7 +2179,6 @@ async function handleApi(req, res, url) {
       const probe = rs && url.searchParams.get('probe') ? await rs.probe() : undefined;
       return sendJson(res, 200, { durable: Boolean(rs), dataDir: DATA_DIR, ephemeralHost: Boolean(process.env.VERCEL), sync: rs ? rs.status() : null, probe });
     }
-    if (method === 'POST' && pathname === '/api/leads/catalogue/import') { const body = await readBody(req); return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/mailboxes') { const body = await readBody(req); return sendJson(res, 200, await findCatalogueMailboxes({ limit: Number(body.limit) || 12, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/leads/catalogue/verify') { const body = await readBody(req); return sendJson(res, 200, await reverifyOrganisations({ limit: Number(body.limit) || 60, actor: actorName() })); }
     if (method === 'POST' && pathname === '/api/stewardship/tick') { const r = stewardshipTick({ actor: actorName() }); saveDb(); return sendJson(res, 200, { ok: true, ...r }); }
@@ -2493,11 +2493,15 @@ async function handleApi(req, res, url) {
       saveDb();
       return sendJson(res, 201, lead);
     }
-    if (method === 'POST' && pathname === '/api/leads/import') {
-      return sendJson(res, 409, { error: 'Bulk imports are held in Discover for individual human review. Import candidates via /api/candidates/import, then promote them one at a time.' });
-    }
-    if (method === 'POST' && pathname === '/api/candidates/import') {
+    // One intake door. POST /api/import { source: 'csv', candidates: [...] } or { source: 'catalogue', limit, verify }.
+    // Legacy paths (/api/candidates/import, /api/leads/catalogue/import, /api/leads/import) are thin aliases kept for one release.
+    if (method === 'POST' && ['/api/import', '/api/candidates/import', '/api/leads/catalogue/import', '/api/leads/import'].includes(pathname)) {
       const body = await readBody(req);
+      const source = body.source || (pathname === '/api/leads/catalogue/import' ? 'catalogue' : 'csv');
+      if (pathname !== '/api/import') res.setHeader('Deprecation', 'true'), res.setHeader('Link', '</api/import>; rel="successor-version"');
+      if (source === 'catalogue') return sendJson(res, 200, await importDiscoveredLeads({ limit: Number(body.limit) || 60, verify: body.verify !== false, actor: actorName() }));
+      if (source !== 'csv') return sendJson(res, 400, { error: 'source must be "csv" or "catalogue".' });
+      if (pathname === '/api/leads/import' && !Array.isArray(body.candidates)) return sendJson(res, 409, { error: 'Bulk imports are held in the Workbench local pool for individual human review. POST /api/import with source "csv" and a candidates array, then promote each one.' });
       const rows = Array.isArray(body.candidates) ? body.candidates.slice(0, 500) : [];
       let imported = 0, invalidDeleted = 0, duplicates = 0, suppressed = 0, needsClarification = 0, retryRequired = 0, missingOrganisation = 0, needsCorrection = 0;
       const existingRecords = [
