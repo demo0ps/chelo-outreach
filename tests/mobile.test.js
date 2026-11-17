@@ -21,6 +21,7 @@ function boot({ phone = true } = {}) {
   ctx.globalThis = ctx; ctx.self = ctx;
   vm.createContext(ctx);
   vm.runInContext(read('app.js'), ctx);
+  vm.runInContext(read('inbox.js'), ctx);
   vm.runInContext(read('mobile.js'), ctx);
   vm.runInContext('globalThis.__t = { state, renderApp, dispatchAction, wbStatusOf };', ctx);
   return { t: ctx.__t, html, ctx, mql };
@@ -49,11 +50,17 @@ test('mobile: phone mode renders Inbox with replies, failed sends and briefing r
   await click(t, 'm-tab', { tab: 'inbox' });
   assert.match(html.app, /class="m-shell"/); assert.match(html.app, /class="m-tabs"/);
   assert.doesNotMatch(html.app, /class="sidebar"|class="app-shell"|data-view="ops"|Deliverability|Data quality/);
-  assert.match(html.app, /Umoya Holdings/); assert.match(html.app, /Suggested: Wrong person/); assert.match(html.app, /overdue/);
-  assert.match(html.app, /Failing Co/); assert.match(html.app, /Briefing requested · 2026-11-03 10:00/);
+  // Conversations come from /api/inbox (Communication Center); feed the fixture directly.
+  t.state.ix.data = { me: 'u-nandi', staff: [{ id: 'u-nandi', displayName: 'Nandi M' }, { id: 'u-thandi', displayName: 'Thandi Nkosi' }], approvalPolicy: 'four-eyes', canManageMembers: false,
+    mailboxes: [{ id: 'mb1', label: 'Partnerships', fromEmail: 'partnerships@cheloapp.com', open: 1, unread: 1, members: ['u-nandi'] }], unrouted: { open: 0, unread: 0 },
+    folders: { mine: 1, mineUnread: 1, unassigned: 0, all: 1 }, statuses: { open: 1, pending: 0, snoozed: 0, resolved: 0 }, mentions: [],
+    conversations: [{ id: 'c1', leadId: 'l-replied', mailboxId: 'mb1', company: 'Umoya Holdings', contactName: 'Sipho Dlamini', subject: 'Re: Umoya', status: 'open', assigneeId: 'u-nandi', unread: true, lastActivityAt: now, triageCategory: 'wrong-person', preview: { kind: 'inbound', text: 'Please speak to our CSI manager instead.' } }] };
+  t.renderApp();
+  assert.match(html.app, /Umoya Holdings/); assert.match(html.app, /Please speak to our CSI manager/); assert.match(html.app, /Mine · 1/);
+  assert.match(html.app, /Failing Co/); assert.match(html.app, /Also needing a human/);
   assert.doesNotMatch(html.app, /Quiet Ltd<\/strong><span>Q · /, 'quiet leads are not inbox items');
   const tabCounts = [...html.app.matchAll(/data-tab="(\w+)"[\s\S]*?(?:<span class="m-badge">(\d+)<\/span>)?<\/span><span>/g)].map(m => [m[1], m[2]]);
-  assert.deepEqual(tabCounts.find(x => x[0] === 'inbox'), ['inbox', '3']);
+  assert.deepEqual(tabCounts.find(x => x[0] === 'inbox'), ['inbox', '3'], '1 unread conversation + failed send + briefing request');
   assert.deepEqual(tabCounts.find(x => x[0] === 'approvals'), ['approvals', '3']);
 });
 

@@ -23,6 +23,7 @@ const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
 const triage = require('./lib/reply-triage');
+const inboxLib = require('./lib/inbox');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -67,7 +68,7 @@ fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
 if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
-for (const key of ['people', 'touches', 'pledges', 'stewardshipTasks']) if (!Array.isArray(db[key])) db[key] = [];
+for (const key of ['people', 'touches', 'pledges', 'stewardshipTasks', 'conversations', 'conversationMessages', 'inboxMembers']) if (!Array.isArray(db[key])) db[key] = [];
 const waterfall = dataEngine.createWaterfall({
   fetchText: async url => (await research.fetchPublicText(url)).text,
   search: async query => { const cfg = configStore.getSearchConfig(); if (!cfg || !cfg.apiKey) return null; return research.runSearch(cfg, query); },
@@ -86,9 +87,19 @@ try {
     console.log('[send-engine] migrated legacy SMTP settings into the mailbox registry');
   }
 } catch (err) { console.warn(`[send-engine] legacy SMTP migration skipped: ${err.message}`); }
+const inboxCenter = inboxLib.createInbox({ db, saveDb, configStore, sendEngine, id, addActivity });
+try { const backfilled = inboxCenter.backfill(); if (backfilled) console.log(`[inbox] opened ${backfilled} conversation(s) for existing replies`); } catch (err) { console.warn(`[inbox] backfill skipped: ${err.message}`); }
 sendEngine.hooks({
   onSent(job, { mailbox }) {
     const lead = db.leads.find(l => l.id === job.leadId); if (!lead) return;
+    if (job.kind === 'reply' && job.meta.conversationId) {
+      const replyMsg = inboxCenter.markReplySent(job.id, { providerMessageId: job.providerMessageId || null, at: job.sentAt });
+      db.messages.unshift({ id: id('message'), leadId: lead.id, kind: 'reply', sequence: 0, subject: replyMsg?.subject || job.subject, body: replyMsg?.text || '', sentAt: job.sentAt, status: 'Sent', provider: 'SMTP', providerMessageId: job.providerMessageId || '', mailboxId: job.mailboxId, jobId: job.id, conversationId: job.meta.conversationId, sentBy: job.meta.actor || 'staff' });
+      lead.lastContactedAt = job.sentAt; lead.updatedAt = new Date().toISOString();
+      addEmailEvent(lead.id, 'sent_reply', null, 'send-engine');
+      configStore.recordAudit({ actor: job.meta.actor || 'send-engine', action: 'email.reply_sent', entityType: 'lead', entityId: lead.id, summary: `Inbox reply to ${lead.company} accepted by ${mailbox?.fromEmail || 'mailbox'}` });
+      saveDb(); return;
+    }
     const followUp = Boolean(job.meta.followUp);
     const seq = job.meta.sequenceId && lead.sequence && lead.sequence.id === job.meta.sequenceId ? lead.sequence : null;
     const step = seq ? seq.steps.find(s => s.n === job.meta.sequenceStep) : null;
@@ -106,6 +117,7 @@ sendEngine.hooks({
   },
   onDead(job, { error, cls }) {
     const lead = db.leads.find(l => l.id === job.leadId); if (!lead) return;
+    if (job.kind === 'reply' && job.meta.conversationId) { inboxCenter.markReplyFailed(job.id, error); addActivity(`${lead.company}: inbox reply could not be delivered (${String(error).slice(0, 80)})`, 'warning', 'send-engine'); saveDb(); return; }
     const followUp = Boolean(job.meta.followUp);
     if (cls === 'permanent') {
       lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Failed (rejected by server)';
@@ -1074,6 +1086,7 @@ function handleInboundSignal(normalized, source) {
       const lead = db.leads.find(l => l.id === result.leadId);
       stopLeadSequence(lead, 'replied', source);
       recordTriage(lead, { ...verdict, excerpt: normalized.text, subject: normalized.subject, source });
+      inboxCenter.recordInbound(lead, { subject: normalized.subject, text: normalized.text, fromEmail: normalized.email, fromName: normalized.fromName || '', source, mailboxId: normalized.mailboxId || (normalized.toEmail ? (sendEngine.listMailboxes().find(m => String(m.fromEmail).toLowerCase() === normalized.toEmail)?.id || '') : ''), category: verdict.category });
       if (verdict.category === 'opt-out') applyTriageOutcome(lead, { category: 'opt-out' }, source);
       saveDb();
       return { ...result, triage: verdict.category };
@@ -1120,6 +1133,7 @@ function applyTriageOutcome(lead, body, actor) {
     lead.nextAction = lead.nextAction || '';
   }
   t.category = category; t.handled = true; t.handledAt = now; t.handledBy = actor; t.outcome = outcome;
+  for (const conv of db.conversations.filter(c => c.leadId === lead.id && c.status !== 'resolved')) { conv.triageCategory = category; if (['opt-out', 'automatic', 'not-now'].includes(category)) { conv.status = 'resolved'; conv.resolvedAt = now; conv.statusChangedAt = now; conv.statusChangedBy = actor; } }
   lead.updatedAt = now;
   configStore.recordAudit({ actor, action: 'reply.triaged', entityType: 'lead', entityId: lead.id, summary: `Reply from ${lead.company} triaged as ${category}${outcome.redirect ? ` → ${outcome.redirect.name}` : ''}${outcome.resumeOn ? ` (resume ${outcome.resumeOn})` : ''}` });
   return t;
@@ -1834,7 +1848,7 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const pathname = url.pathname;
   try {
-    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Partnerships Workspace', version: '0.2.0', storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
+    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Communication Center', version: '0.2.0', storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/send-tick') {
       const secret = process.env.CRON_SECRET || '';
       const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -1938,7 +1952,7 @@ async function handleApi(req, res, url) {
       req.authSession.isRoot = isRootSession(req.authSession);
       res.maskRoot = !req.authSession.isRoot;
       if (isTechnicalPath(pathname) && !req.authSession.isRoot) return sendJson(res, 403, { error: 'This area is reserved for the root account.' });
-      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract') {
+      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract' && !pathname.startsWith('/api/inbox/conversations/')) {
         return sendJson(res, 403, { error: 'Reviewer accounts can approve or return drafts but cannot edit pipeline records.' });
       }
     }
@@ -2257,6 +2271,49 @@ async function handleApi(req, res, url) {
     }
     if (method === 'POST' && pathname === '/api/data/check-duplicates') { const body = await readBody(req); return sendJson(res, 200, checkDuplicates({ company: body.company, email: normalizeEmail(body.email), website: body.website }, { excludeId: body.excludeId || null })); }
     if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(), categories: triage.CATEGORIES });
+    // ---- Communication Center: shared inbox ----
+    if (pathname === '/api/inbox' && method === 'GET') {
+      const data = inboxCenter.overview(req.authSession);
+      return sendJson(res, 200, { ...data, staff: visibleUsers(req.authSession).filter(u => u.active).map(u => ({ id: u.id, displayName: u.displayName, username: u.username, role: u.role })), me: req.authSession.userId, canManageMembers: Boolean(req.authSession.isRoot), approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, categories: triage.CATEGORIES });
+    }
+    const memberRoute = pathname.match(/^\/api\/inbox\/mailboxes\/([^/]+)\/members$/);
+    if (memberRoute && method === 'PUT') {
+      if (!req.authSession.isRoot) return sendJson(res, 403, { error: 'Only root or full-access accounts manage inbox members.' });
+      const body = await readBody(req);
+      try {
+        const members = inboxCenter.setMembers(decodeURIComponent(memberRoute[1]), Array.isArray(body.userIds) ? body.userIds : [], { actor: actorName() });
+        configStore.recordAudit({ actor: actorName(), action: 'inbox.members_updated', entityType: 'mailbox', entityId: memberRoute[1], summary: `Inbox members set (${members.length})` });
+        return sendJson(res, 200, { members });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+    const convRoute = pathname.match(/^\/api\/inbox\/conversations\/([^/]+)(?:\/([a-z-]+))?(?:\/([^/]+))?$/);
+    if (convRoute) {
+      const conv = inboxCenter.get(decodeURIComponent(convRoute[1]));
+      if (!conv || !inboxCenter.canSee(req.authSession, conv)) return sendJson(res, 404, { error: 'Conversation not found.' });
+      const lead = db.leads.find(l => l.id === conv.leadId) || null;
+      const sub = convRoute[2] || ''; const extra = convRoute[3] ? decodeURIComponent(convRoute[3]) : '';
+      const origin = configStore.getPublicBaseUrl() || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+      try {
+        if (method === 'GET' && !sub) { inboxCenter.markSeen(conv, req.authSession.userId); return sendJson(res, 200, { conversation: conv, messages: inboxCenter.thread(conv, req.authSession), lead: lead ? clientLead(lead) : null }); }
+        const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
+        if (method === 'POST' && sub === 'seen') { inboxCenter.markSeen(conv, req.authSession.userId); return sendJson(res, 200, { ok: true }); }
+        if (method === 'POST' && sub === 'status') { inboxCenter.setStatus(conv, String(body.status || ''), { snoozedUntil: body.snoozedUntil || null, actor: actorName(), actorId: req.authSession.userId }); configStore.recordAudit({ actor: actorName(), action: 'inbox.status', entityType: 'conversation', entityId: conv.id, summary: `${conv.company}: conversation ${conv.status}` }); return sendJson(res, 200, { conversation: conv }); }
+        if (method === 'POST' && sub === 'assign') { inboxCenter.assign(conv, body.userId || null, { actor: actorName(), actorId: req.authSession.userId }); return sendJson(res, 200, { conversation: conv }); }
+        if (method === 'POST' && sub === 'note') { const note = inboxCenter.addNote(conv, body.text, { actor: req.authSession.displayName || req.authSession.username, actorId: req.authSession.userId }); return sendJson(res, 201, { message: note }); }
+        if (method === 'POST' && sub === 'reply' && !extra) {
+          if (!roleAllows(req.authSession, ['admin', 'owner', 'reviewer'])) return sendJson(res, 403, { error: 'Not permitted.' });
+          const msg = inboxCenter.draftReply(conv, lead, { text: body.text, subject: body.subject || '', actor: req.authSession.displayName || req.authSession.username, actorId: req.authSession.userId, origin });
+          configStore.recordAudit({ actor: actorName(), action: msg.status === 'awaiting-countersign' ? 'inbox.reply_drafted' : 'inbox.reply_queued', entityType: 'lead', entityId: conv.leadId, summary: `Inbox reply to ${conv.company} ${msg.status === 'awaiting-countersign' ? 'awaiting 4-eyes countersignature' : 'queued for sending'}` });
+          return sendJson(res, 201, { message: msg, conversation: conv });
+        }
+        if (method === 'POST' && sub === 'reply' && extra) {
+          const msg = inboxCenter.countersignReply(conv, lead, extra, { actor: req.authSession.displayName || req.authSession.username, actorId: req.authSession.userId, origin });
+          configStore.recordAudit({ actor: actorName(), action: 'inbox.reply_countersigned', entityType: 'lead', entityId: conv.leadId, summary: `Inbox reply to ${conv.company} countersigned and queued` });
+          return sendJson(res, 200, { message: msg, conversation: conv });
+        }
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      return sendJson(res, 405, { error: 'Unsupported inbox action.' });
+    }
     if (method === 'GET' && pathname === '/api/workbench') {
       const leads = visibleLeads().map(workbenchLead);
       const counts = leads.reduce((acc, l) => { acc[l.flowStatus] = (acc[l.flowStatus] || 0) + 1; return acc; }, {});
@@ -3110,6 +3167,7 @@ async function handleApi(req, res, url) {
         stopLeadSequence(lead, 'replied', actorName());
         const verdict = body.text ? triage.classifyReply({ subject: body.subject || '', text: body.text }) : { category: 'unclassified', confidence: 'low', reasons: ['logged by staff without text'], hints: {} };
         recordTriage(lead, { ...verdict, excerpt: body.text || '', subject: body.subject || '', source: 'staff' });
+        inboxCenter.recordInbound(lead, { subject: body.subject || '', text: body.text || '', fromEmail: lead.email || '', source: 'staff', mailboxId: body.mailboxId || '', category: verdict.category });
         addActivity(`Reply recorded for ${lead.company}`, 'email', actorName());
         saveDb();
         return sendJson(res, 200, lead);
@@ -3309,7 +3367,7 @@ const server = http.createServer(requestHandler);
 
 function listen() {
   server.listen(PORT, HOST, () => {
-    console.log(`Chelo Partnerships Workspace running at http://${HOST}:${PORT}`);
+    console.log(`Chelo Communication Center running at http://${HOST}:${PORT}`);
     console.log(`Data directory: ${DATA_DIR} (SQLite WAL: ${path.basename(store.sqlitePath)}). Demo prospects are fictional; verified projects are Chelo seed records.`);
   });
 }

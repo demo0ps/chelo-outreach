@@ -53,7 +53,7 @@
   // ---- shell -----------------------------------------------------------------------------------
   const TABS = [['inbox', 'Inbox', 'mail'], ['approvals', 'Approvals', 'checkCircle'], ['leads', 'Leads', 'prospects'], ['more', 'More', 'dots']];
   function tabBar() {
-    const counts = { inbox: inboxItems().length, approvals: approvalItems().length, leads: 0, more: notifications().filter(n => n.tone === 'danger').length };
+    const counts = { inbox: (typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0) + inboxItems().filter(i => i.kind !== 'reply').length, approvals: approvalItems().length, leads: 0, more: notifications().filter(n => n.tone === 'danger').length };
     return `<nav class="m-tabs" aria-label="Sections">${TABS.map(([id, label, icon]) => `<button type="button" class="m-tab ${state.m.tab === id ? 'is-active' : ''}" data-action="m-tab" data-tab="${id}" aria-current="${state.m.tab === id ? 'page' : 'false'}"><span class="m-tab-icon">${svgIcon(icon)}${counts[id] ? `<span class="m-badge">${counts[id] > 99 ? '99+' : counts[id]}</span>` : ''}</span><span>${label}</span></button>`).join('')}</nav>`;
   }
   function header(title, { back = null, sub = '' } = {}) {
@@ -72,7 +72,12 @@
       const [label, icon] = TRIAGE_META[t.category] || TRIAGE_META.unclassified;
       return `<button type="button" class="m-row ${i.overdue ? 'is-overdue' : ''}" data-action="m-open-lead" data-id="${esc(l.id)}"><span class="m-row-icon tone-accent">${svgIcon(icon)}</span><span class="m-row-main"><strong>${esc(l.company)}</strong><span>${esc(t.excerpt || 'Human reply')}</span><em>Suggested: ${esc(label)}${i.overdue ? ' · overdue' : t.dueAt ? ` · respond by ${when(t.dueAt)}` : ''}</em></span><small>${when(i.at)}</small></button>`;
     }).join('');
-    return `${header('Inbox', { sub: items.length ? `${items.length} item${items.length === 1 ? '' : 's'} need a human` : 'Nothing waiting — sequences are running themselves' })}<section class="m-list">${rows || empty('mail', 'No replies, failed sends or briefing requests right now.')}</section>`;
+    const convo = typeof window.inboxMobileView === 'function' ? window.inboxMobileView() : '';
+    if (state.ix && state.ix.convId) return convo;
+    const other = items.filter(i => i.kind !== 'reply');
+    const otherRows = other.length ? `<div class="m-section-title">Also needing a human</div><section class="m-list">${rows.length ? other.map(i => i.kind === 'booking' ? `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(i.booking.leadId || '')}" data-booking="${esc(i.booking.id)}"><span class="m-row-icon tone-accent">${svgIcon('calendar')}</span><span class="m-row-main"><strong>${esc(i.lead?.company || i.booking.company || 'Briefing request')}</strong><span>${esc(i.booking.date || '')} ${esc(i.booking.time || '')}</span></span></button>` : `<button type="button" class="m-row" data-action="m-open-lead" data-id="${esc(i.lead.id)}"><span class="m-row-icon tone-warn">${svgIcon('xCircle')}</span><span class="m-row-main"><strong>${esc(i.lead.company)}</strong><span>${esc(i.lead.emailStatus || 'blocked')}</span></span></button>`).join('') : ''}</section>` : '';
+    const unread = typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0;
+    return `${header('Inbox', { sub: unread ? `${unread} unread for you` : 'Conversations across your inboxes' })}${convo}${otherRows}`;
   }
 
   // ---- Approvals -------------------------------------------------------------------------------

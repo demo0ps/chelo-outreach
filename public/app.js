@@ -291,7 +291,7 @@ function settingsSectionLabel(section) { return ({ integrations: 'Integrations',
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
-  ['workbench', 'Outreach workbench', 'wand'], ['ops', 'Ops dashboard', 'activity'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
+  ['inbox', 'Inbox — conversations', 'reply'], ['workbench', 'Outreach workbench', 'wand'], ['ops', 'Ops dashboard', 'activity'], ['deliverability', 'Deliverability & sending engine', 'shield'], ['data', 'Data quality & merge reviews', 'database'], ['overview', 'Overview', 'overview'], ['discover', 'Discover candidates', 'globe'], ['projects', 'Verified projects', 'grid'], ['prospects', 'Prospects', 'prospects'],
   ['pipeline', 'Pipeline', 'pipeline'], ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent outreach', 'mail'], ['partners', 'Relationships', 'partners'],
   ['proposals', 'Proposals', 'proposals'], ['analytics', 'Analytics', 'analytics'], ['settings', 'Settings', 'settings']
 ];
@@ -396,9 +396,10 @@ function shellHeader() {
 function shellSidebar() {
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<aside class="sidebar">
-    <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${svgIcon('target')}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">impact partnerships</span></span></a>
+    <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${svgIcon('target')}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">Communication Center</span></span></a>
     <div class="nav-caption">Workspace</div>
     <nav class="nav-list" aria-label="Main navigation">
+      ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
       ${navItem('workbench', 'Workbench', 'wand', state.data.leads.filter(l => ['replied', 'needs-review', 'ready', 'approved'].includes(wbStatusOf(l))).length)}
       ${navItem('overview', 'Overview', 'overview')}
       ${navItem('discover', 'Discover', 'globe', state.data.candidates.filter(c => c.status === 'New candidate').length)}
@@ -703,7 +704,7 @@ function settingsView() {
 function authGateView() {
   const setup = Boolean(state.auth.setupRequired);
   const title = setup ? 'Create your admin account' : 'Welcome back';
-  const intro = setup ? 'Set up the first Chelo workspace administrator before connecting services.' : 'Sign in to your protected Chelo partnerships workspace.';
+  const intro = setup ? 'Set up the first Chelo Communication Center administrator before connecting services.' : 'Sign in to your protected Chelo partnerships workspace.';
   const fields = setup ? `<div class="form-group"><label for="auth-password-confirm">Confirm password</label><input class="form-control" id="auth-password-confirm" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required /></div>` : '';
   const submit = setup ? 'Create admin account' : 'Sign in';
   return `<main class="auth-screen"><section class="auth-card"><div class="auth-brand"><span class="brand-symbol">${svgIcon('target')}</span><span><strong>Chelo</strong><small>impact partnerships</small></span></div><span class="auth-kicker">SECURE WORKSPACE</span><h1>${title}</h1><p class="auth-intro">${intro}</p>${state.authError ? `<div class="form-error">${esc(state.authError)}</div>` : ''}<form class="auth-form" data-form="${setup ? 'auth-setup' : 'auth-login'}">${setup ? `<div class="form-group"><label for="auth-display">Your name</label><input class="form-control" id="auth-display" name="displayName" autocomplete="name" required placeholder="e.g. Nandi M." /></div>` : ''}<div class="form-group"><label for="auth-username">${setup ? 'Admin email' : 'Staff email'}</label><input class="form-control" id="auth-username" name="username" type="email" autocomplete="username" required placeholder="you@cheloapp.com" /></div><div class="form-group"><label for="auth-password">${setup ? 'Create password' : 'Password'}</label><input class="form-control" id="auth-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="${setup ? '12' : '1'}" required placeholder="${setup ? 'At least 12 characters' : 'Enter your password'}" /></div>${fields}<button type="submit" class="button button-primary auth-submit">${svgIcon(setup ? 'lock' : 'arrow')} ${submit}</button></form>${state.auth.demoAccessAvailable ? `<div class="auth-demo-divider"><span>or explore</span></div><button type="button" class="button button-secondary auth-demo-button" data-action="demo-login">${svgIcon('eye')} Enter demo as admin</button><p class="auth-demo-warning">Full admin access to the demo workspace. Only use with fictional data and an isolated, disposable data directory.</p>` : ''}<p class="auth-security-note">${svgIcon('shield')} Credentials and provider secrets are processed server-side. Use a unique password and keep this workspace on a trusted network.</p>${setup ? `<p class="auth-first-run-warning">Complete first-run setup before exposing the app to other networks.</p>` : ''}</section><div class="auth-orb auth-orb-one"></div><div class="auth-orb auth-orb-two"></div></main>`;
@@ -711,6 +712,7 @@ function authGateView() {
 function renderView() {
   switch (state.view) {
     case 'workbench': return workbenchView();
+    case 'inbox': return typeof window.inboxView === 'function' ? window.inboxView() : '';
     case 'deliverability': return deliverabilityView();
     case 'data': return dataQualityView();
     case 'ops': return opsView();
@@ -1151,7 +1153,7 @@ function toast(message, error = false) {
 }
 function renderAuthGate() { $('#app').innerHTML = authGateView(); $('#modal-root').innerHTML = ''; }
 async function refresh() {
-  try { state.data = await API('/api/init'); renderApp(); }
+  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); }
   catch (error) {
     if (error.status === 401) { state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false })); renderAuthGate(); return; }
     throw error;
@@ -1215,6 +1217,7 @@ function fillProposalDraft(result) {
 async function dispatchAction(button) {
   const action = button.dataset.action;
   if (String(action || '').startsWith('m-') && typeof window.mobileAction === 'function') { if (await window.mobileAction(action, button)) return; }
+  if (String(button.dataset.action || '').startsWith('ix-') && typeof window.inboxAction === 'function') { if (await window.inboxAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
@@ -1843,6 +1846,7 @@ document.addEventListener('click', async event => {
   if (leadRow && typeof window.isPhone === 'function' && window.isPhone() && state.m) { event.preventDefault(); state.m.leadId = leadRow.dataset.openLead; renderApp(); return; }
   if (leadRow) { openModal('lead-detail', leadRow.dataset.openLead); return; }
   if (event.target.id === 'modal-backdrop') closeModal();
+  if (event.target.id === 'ix-members-backdrop' && state.ix) { state.ix.members = null; renderApp(); }
   if (event.target.id === 'mobile-more-backdrop') { state.mobileMoreOpen = false; renderApp(); }
 });
 document.addEventListener('submit', handleSubmit);

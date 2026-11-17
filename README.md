@@ -1,4 +1,4 @@
-# Chelo Partnerships Workspace
+# Chelo Communication Center
 
 A zero-bloat Node 22 + vanilla JS donor-outreach workspace for Chelo: human-reviewed discovery, a **Verified Projects Catalog** with live funding-gap tracking, approval-first email outreach (1-person or strict **4-eyes**), multi-staff roles with a hash-chained audit ledger, SAST-exact video briefings with automatic **.ics** invites (Google Meet / Microsoft Teams / Zoom), inbound bounce/reply sync, a POPIA-scrubbed **Paste-to-Extract** research copilot and a **Grant-Cycle Radar**. Storage is ACID-safe `node:sqlite` (WAL) under `/data`. The interface keeps Chelo's soft-3D navy / purple / white design.
 

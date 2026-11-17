@@ -722,3 +722,110 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .m-bars li { display: grid; grid-template-columns: 120px 1fr 28px; align-items: center; gap: 10px; font-size: 13px; color: #52525b; }
 .m-bars i { display: block; height: 8px; border-radius: 999px; background: linear-gradient(90deg, #6a57ff, #5945e8); min-width: 4px; }
 .m-bars strong { text-align: right; }
+
+/* ===== Communication Center · Inbox (Chatwoot-style three-pane) ===== */
+.ix-shell { display: grid; grid-template-columns: 220px minmax(300px, 360px) minmax(0, 1fr) 300px; gap: 0; height: calc(100vh - 118px); min-height: 520px; background: #fff; border: 1px solid var(--z-200); border-radius: var(--r-xl); overflow: hidden; }
+.ix-folders { border-right: 1px solid var(--z-200); background: var(--z-25); padding: 12px 10px; overflow: auto; }
+.ix-folders-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 10px; }
+.ix-folders-head h2 { font-size: 15px; font-weight: 650; margin: 0; }
+.ix-folder-group { margin-bottom: 14px; }
+.ix-folder-caption { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--z-500); padding: 6px 8px; }
+.ix-manage { border: 0; background: transparent; color: var(--a-600); font: inherit; font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+.ix-manage .icon-svg { width: 12px; height: 12px; }
+.ix-folder { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; color: var(--z-700); text-align: left; cursor: pointer; }
+.ix-folder:hover { background: var(--z-100); }
+.ix-folder.is-active { background: var(--a-50); color: var(--a-700); font-weight: 600; }
+.ix-folder-icon .icon-svg { width: 15px; height: 15px; }
+.ix-folder-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-count { font-size: 11px; color: var(--z-500); }
+.ix-badge { font-size: 11px; font-weight: 700; color: #fff; background: var(--a-600); border-radius: 999px; padding: 1px 7px; min-width: 18px; text-align: center; }
+.ix-empty-note { padding: 4px 8px; font-size: 12px; }
+.ix-mention { display: block; width: 100%; border: 0; background: var(--z-0); border: 1px solid var(--z-200); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; font: inherit; font-size: 12px; color: var(--z-600); text-align: left; cursor: pointer; }
+.ix-list { border-right: 1px solid var(--z-200); display: flex; flex-direction: column; min-width: 0; }
+.ix-list-head { padding: 10px 12px 6px; }
+.ix-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--z-200); overflow-x: auto; }
+.ix-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 10px; font: inherit; font-size: 12.5px; color: var(--z-500); cursor: pointer; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
+.ix-tab span { font-size: 11px; color: var(--z-400); }
+.ix-tab.is-active { color: var(--a-700); border-bottom-color: var(--a-600); font-weight: 600; }
+.ix-tab .icon-svg { width: 14px; height: 14px; }
+.ix-rows { overflow: auto; flex: 1; }
+.ix-row { display: grid; grid-template-columns: 36px 1fr; gap: 10px; width: 100%; padding: 11px 12px; border: 0; border-bottom: 1px solid var(--z-100); background: #fff; font: inherit; text-align: left; cursor: pointer; }
+.ix-row:hover { background: var(--z-50); }
+.ix-row.is-active { background: var(--a-50); }
+.ix-row.is-unread strong { font-weight: 700; }
+.ix-row.is-unread .ix-avatar { box-shadow: 0 0 0 2px var(--a-400); }
+.ix-row-main { min-width: 0; display: grid; gap: 2px; }
+.ix-row-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; }
+.ix-row-top strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-row-top time { font-size: 11px; color: var(--z-500); flex: none; }
+.ix-row-sub { font-size: 12px; color: var(--z-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-row-preview { font-size: 12.5px; color: var(--z-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-row-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.ix-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--z-100); color: var(--z-600); }
+.ix-chip-person { background: var(--a-50); color: var(--a-700); }
+.ix-chip-warn { background: #fff4e5; color: #9a5b00; }
+.ix-chip-note { background: #fef9c3; color: #854d0e; }
+.ix-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--a-100); color: var(--a-700); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ix-avatar-sm { width: 26px; height: 26px; font-size: 10px; }
+.ix-avatar-lg { width: 44px; height: 44px; font-size: 14px; }
+.ix-thread { display: flex; flex-direction: column; min-width: 0; background: var(--z-25); }
+.ix-thread-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 14px 18px; border-bottom: 1px solid var(--z-200); background: #fff; }
+.ix-thread-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.ix-thread-head p { margin: 2px 0 0; font-size: 12.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ix-thread-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.ix-assign { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--z-200); border-radius: 8px; padding: 0 6px; background: #fff; }
+.ix-assign .icon-svg { width: 14px; height: 14px; color: var(--z-500); }
+.ix-assign select { border: 0; background: transparent; font: inherit; font-size: 12.5px; padding: 6px 2px; max-width: 150px; }
+.ix-messages { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.ix-msg { max-width: 78%; border-radius: 12px; padding: 10px 12px; background: #fff; border: 1px solid var(--z-200); font-size: 13.5px; line-height: 1.5; }
+.ix-msg.is-inbound { align-self: flex-start; border-bottom-left-radius: 4px; }
+.ix-msg.is-outbound { align-self: flex-end; background: var(--a-50); border-color: var(--a-200); border-bottom-right-radius: 4px; }
+.ix-msg.is-note { align-self: stretch; max-width: 100%; background: #fefce8; border-color: #fde68a; }
+.ix-msg.is-mentioned { box-shadow: 0 0 0 2px #fcd34d; }
+.ix-msg header { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--z-500); margin-bottom: 4px; flex-wrap: wrap; }
+.ix-msg header strong { color: var(--z-800); }
+.ix-msg header time { margin-left: auto; font-size: 11px; }
+.ix-msg-subject { font-size: 11.5px; color: var(--z-500); }
+.ix-msg-body { white-space: normal; word-break: break-word; }
+.ix-msg footer { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 11.5px; color: var(--z-500); flex-wrap: wrap; }
+.ix-msg-status.is-bad { color: #b91c1c; }
+.ix-event { align-self: center; font-size: 11.5px; color: var(--z-500); background: var(--z-100); border-radius: 999px; padding: 2px 10px; }
+.ix-composer { border-top: 1px solid var(--z-200); background: #fff; padding: 8px 14px 12px; }
+.ix-composer-tabs { display: flex; gap: 2px; margin-bottom: 8px; }
+.ix-composer textarea { width: 100%; resize: vertical; font-size: 13.5px; }
+.ix-composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.ix-lead { border-left: 1px solid var(--z-200); background: #fff; overflow: auto; }
+.ix-lead-block { padding: 14px; border-bottom: 1px solid var(--z-100); }
+.ix-lead-block h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--z-500); font-weight: 600; }
+.ix-lead-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.ix-lead-head h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.ix-dl { display: grid; gap: 6px; margin: 0; }
+.ix-dl div { display: grid; grid-template-columns: 84px 1fr; gap: 6px; font-size: 12.5px; }
+.ix-dl dt { color: var(--z-500); } .ix-dl dd { margin: 0; color: var(--z-800); word-break: break-word; }
+.ix-lead-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.ix-triage { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.ix-empty { display: grid; place-items: center; text-align: center; padding: 40px 20px; color: var(--z-500); gap: 6px; height: 100%; align-content: center; }
+.ix-empty .icon-svg { width: 28px; height: 28px; color: var(--z-300); }
+.ix-empty h3 { margin: 0; font-size: 15px; color: var(--z-700); }
+.ix-empty p { margin: 0; font-size: 13px; max-width: 360px; }
+.ix-members-modal { background: #fff; border-radius: var(--r-xl); padding: 18px 20px; width: min(720px, 94vw); max-height: 86vh; overflow: auto; margin: 6vh auto; }
+.ix-members-modal .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.ix-members-modal h2 { margin: 0; font-size: 16px; display: inline-flex; gap: 6px; align-items: center; }
+.ix-members-row { display: grid; grid-template-columns: 180px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--z-100); }
+.ix-members-checks { display: flex; gap: 10px 14px; flex-wrap: wrap; }
+.checkbox-label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+@media (max-width: 1280px) { .ix-shell { grid-template-columns: 200px 300px minmax(0, 1fr); } .ix-lead { display: none; } }
+/* phone */
+.ix-m-chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; }
+.ix-chip-btn { border: 1px solid var(--z-200); background: #fff; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12.5px; white-space: nowrap; }
+.ix-chip-btn.is-active { background: var(--a-600); color: #fff; border-color: var(--a-600); }
+.ix-m-list .ix-tabs { padding: 0 8px; }
+.ix-m-thread { display: flex; flex-direction: column; min-height: calc(100vh - 120px); }
+.ix-m-bar { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--z-200); background: #fff; }
+.ix-m-bar div { display: grid; } .ix-m-bar .subtle { font-size: 12px; }
+.ix-m-actions { display: flex; gap: 6px; padding: 8px 12px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid var(--z-100); }
+.ix-m-actions select { flex: 1; min-width: 120px; font: inherit; font-size: 13px; padding: 6px; border: 1px solid var(--z-200); border-radius: 8px; }
+.ix-m-thread .ix-messages { padding: 12px; }
+.ix-m-thread .ix-msg { max-width: 90%; }
+.ix-m-thread .ix-composer .button { margin-top: 8px; width: 100%; }
+.m-section-title { font-size: 12px; font-weight: 600; color: var(--z-500); text-transform: uppercase; letter-spacing: .04em; padding: 14px 16px 6px; }
