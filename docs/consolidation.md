@@ -94,3 +94,12 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   carry the PDF **bytes** (base64 in the job payload), not a path. First email always attaches; the preview's "Proposal PDF attached"
   check now reflects the real file.
 - Read & send footer is a normal block at the end of the page (no longer pinned).
+
+## Find mailboxes · time-budgeted batches (v38)
+
+- Symptom: "Find mailboxes" spun and nothing changed. Cause: one batch crawled up to 8 pages × 2 URL variants × 12 s per organisation
+  plus SMTP checks; one slow website pushed the request past Vercel's 60 s limit → HTML 504 → the browser's JSON call failed silently.
+- Fix: every batch runs inside `MAILBOX_BATCH_BUDGET_MS` (16 s on serverless, 45 s locally); page fetches use a 6 s timeout and the
+  batch's AbortSignal. Whatever finishes is saved; organisations cut short are marked `cutShort` and go to the back of the queue
+  (not "no mailbox published"). The browser keeps asking for the next batch, shows live progress, tolerates a 502/503/504 three times,
+  and stops with a clear message when only slow sites remain.

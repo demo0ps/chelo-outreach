@@ -75,7 +75,8 @@ const waterfall = dataEngine.createWaterfall({
   log: message => console.warn(`[waterfall] ${message}`)
 });
 const mailboxFinder = createMailboxFinder({
-  fetchPage: async url => research.fetchPublicText(url, { includeHtml: true }),
+  // Short per-page timeout + the batch deadline, so one slow website cannot eat the whole time budget.
+  fetchPage: async (url, { signal } = {}) => { if (signal?.aborted) throw new Error('time budget used up'); return research.fetchPublicText(url, { includeHtml: true, timeoutMs: 6000, signal }); },
   verify: async email => mailboxVerifier.verify(email, { skipSmtp: SMTP_PROBE_DISABLED }),
   log: message => console.warn(`[mailbox-finder] ${message}`)
 });
@@ -1471,12 +1472,13 @@ async function reverifyOrganisations({ limit = 60, actor = 'staff' } = {}) {
 function mailboxSearchDue(lead) {
   if (normalizeEmail(lead.email) || lead.doNotContact) return false;
   if (!lead.mailboxSearch) return true;
+  if (lead.mailboxSearch.cutShort) return true; // ran out of batch time — try again at the back of the queue
   const age = Date.now() - Date.parse(lead.mailboxSearch.ranAt || 0);
   return lead.mailboxSearch.status === 'unreachable' && age > 24 * 3600e3; // retry unreachable sites daily; "none published" is final until staff re-run
 }
-async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true } = {}) {
-  const result = await mailboxFinder.find({ company: lead.company, website: lead.website, sourceUrl: lead.sourceUrl, email: lead.email }, { tryPatterns });
-  lead.mailboxSearch = { ranAt: result.ranAt, durationMs: result.durationMs, domain: result.domain, pages: result.pages.slice(0, 8), status: result.status, candidates: result.candidates.map(c => ({ email: c.email, kind: c.kind, score: c.score, pattern: Boolean(c.pattern), sources: c.sources.slice(0, 3), verification: c.verification })) };
+async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true, signal } = {}) {
+  const result = await mailboxFinder.find({ company: lead.company, website: lead.website, sourceUrl: lead.sourceUrl, email: lead.email }, { tryPatterns, signal });
+  lead.mailboxSearch = { ranAt: result.ranAt, durationMs: result.durationMs, domain: result.domain, pages: result.pages.slice(0, 8), status: result.status, ...(result.cutShort ? { cutShort: true, error: 'Ran out of time in this batch; will be retried.' } : {}), candidates: result.candidates.map(c => ({ email: c.email, kind: c.kind, score: c.score, pattern: Boolean(c.pattern), sources: c.sources.slice(0, 3), verification: c.verification })) };
   const chosen = result.chosen;
   if (chosen && !normalizeEmail(lead.email) && !isSuppressedEmail(chosen.email)) {
     lead.email = chosen.email;
@@ -1493,13 +1495,27 @@ async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true } = {
   }
   return lead.mailboxSearch;
 }
-async function findCatalogueMailboxes({ limit = 12, actor = 'staff' } = {}) {
-  const due = db.leads.filter(l => l.catalogKey && mailboxSearchDue(l)).slice(0, Math.max(1, Math.min(40, limit)));
-  const outcomes = await mapWithConcurrency(due, 6, async lead => { try { const r = await findLeadMailbox(lead, actor); return r.status; } catch (err) { lead.mailboxSearch = { ranAt: new Date().toISOString(), status: 'unreachable', error: String(err.message || err).slice(0, 200), candidates: [], pages: [] }; return 'unreachable'; } });
+// Each batch runs inside a fixed time budget: on serverless hosting the whole request (crawl + database push) must finish
+// under the platform's 60 s limit, so one slow website can no longer turn the button into a silent timeout. Whatever is not
+// finished when the budget ends is marked for retry and the browser simply asks for the next batch.
+const MAILBOX_BATCH_BUDGET_MS = Number(process.env.MAILBOX_BATCH_BUDGET_MS) || (SERVERLESS ? 16000 : 45000);
+async function findCatalogueMailboxes({ limit = 12, actor = 'staff', budgetMs = MAILBOX_BATCH_BUDGET_MS } = {}) {
+  const started = Date.now();
+  const due = db.leads.filter(l => l.catalogKey && mailboxSearchDue(l)).sort((a, b) => Number(Boolean(a.mailboxSearch?.cutShort)) - Number(Boolean(b.mailboxSearch?.cutShort))).slice(0, Math.max(1, Math.min(40, limit)));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), budgetMs);
+  let cutShort = 0;
+  const outcomes = await mapWithConcurrency(due, 6, async lead => {
+    if (controller.signal.aborted) { cutShort += 1; return 'skipped'; }
+    try { const r = await findLeadMailbox(lead, actor, { signal: controller.signal }); if (r.cutShort) cutShort += 1; return r.status; }
+    catch (err) { lead.mailboxSearch = { ranAt: new Date().toISOString(), status: 'unreachable', error: String(err.message || err).slice(0, 200), candidates: [], pages: [] }; return 'unreachable'; }
+  });
+  clearTimeout(timer);
   const results = outcomes.reduce((acc, st) => { acc[st] = (acc[st] || 0) + 1; return acc; }, {});
+  const searched = outcomes.filter(st => st !== 'skipped').length;
   const found = (results.published || 0) + (results['pattern-verified'] || 0);
-  if (due.length) { addActivity(`Mailbox finder checked ${due.length} discovered funders · ${found} published mailboxes found · ${found} lead(s) revealed in the pipeline`, 'lead', actor); saveDb(); }
-  return { searched: due.length, found, results, status: catalogueStatus() };
+  if (searched) { addActivity(`Mailbox finder checked ${searched} discovered funders · ${found} published mailboxes found · ${found} lead(s) revealed in the pipeline`, 'lead', actor); saveDb(); }
+  return { searched, found, results, cutShort, durationMs: Date.now() - started, budgetMs, status: catalogueStatus() };
 }
 
 // ---- Observability (Batch 6): one ops picture assembled from live engine state ----

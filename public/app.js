@@ -2811,16 +2811,24 @@ async function catAction(action) {
     return true;
   }
   if (action === 'cat-mailboxes') {
-    state.cat.busy = true; state.cat.task = 'mailboxes'; let searched = 0, found = 0;
+    state.cat.busy = true; state.cat.task = 'mailboxes'; let searched = 0, found = 0, batches = 0, idle = 0;
     try {
-      for (let i = 0; i < 40; i++) {
-        state.cat.progress = `Checking sites… ${found} found / ${searched} checked (${state.cat.status?.mailboxes?.toSearch ?? '?'} left)`; renderApp();
-        const r = await API('/api/leads/catalogue/mailboxes', { method: 'POST', body: JSON.stringify({ limit: 8 }) });
-        searched += r.searched; found += r.found || 0; state.cat.status = r.status;
-        if (!r.searched || !r.status.mailboxes.toSearch) break;
+      state.cat.progress = 'Checking websites…'; renderApp();
+      for (let i = 0; i < 60; i++) {
+        let r;
+        try { r = await API('/api/leads/catalogue/mailboxes', { method: 'POST', body: JSON.stringify({ limit: 6 }) }); }
+        catch (err) {
+          // A gateway timeout (504) means the host cut the batch short — the server keeps whatever it finished; ask again.
+          if ([502, 503, 504].includes(err.status) && idle < 3) { idle += 1; continue; }
+          throw err;
+        }
+        batches += 1; searched += r.searched; found += r.found || 0; state.cat.status = r.status;
+        state.cat.progress = `Checked ${searched} · found ${found} · ${r.status.mailboxes.toSearch} still to search`; renderApp();
+        if (!r.status.mailboxes.toSearch) break;
+        if (!r.searched || r.cutShort >= r.searched) { idle += 1; if (idle >= 3) break; } else idle = 0; // only slow sites left
       }
-      toast(`Mailbox finder: ${found} generic mailboxes found across ${searched} organisations — ${found} lead(s) now in the pipeline.`);
-    } catch (err) { toast(err.message, true); }
+      toast(searched ? `Checked ${searched} organisations: ${found} published mailbox${found === 1 ? '' : 'es'} found — ${found} now in the pipeline. ${state.cat.status?.mailboxes?.toSearch || 0} still to search; press again to continue.` : 'No organisations could be checked right now. Try again in a minute.', !searched);
+    } catch (err) { toast(`Mailbox finder stopped: ${err.message}. Progress so far is saved — press the button again to continue.`, true); }
     finally { state.cat.busy = false; state.cat.task = ''; state.cat.progress = ''; await refresh(); await loadCatalogue(true); }
     return true;
   }

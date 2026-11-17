@@ -36,3 +36,18 @@ test('mailbox finder: crawls contact/CSI pages, verifies, prefers published over
   const dead = createMailboxFinder({ fetchPage: async () => { throw new Error('ENOTFOUND'); }, verify: async () => ({ status: 'invalid' }) });
   assert.equal((await dead.find({ company: 'Dead', website: 'https://www.dead.co.za/' }, { tryPatterns: false })).status, 'unreachable');
 });
+
+test('mailbox finder: a time budget cuts a slow site short and marks it for retry, never as "none published"', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const slow = createMailboxFinder({
+    fetchPage: (url, { signal } = {}) => new Promise((resolve, reject) => { calls += 1; const t = setTimeout(() => resolve({ html: '<p>slow page, no emails</p>', text: '' }), 200); signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('time budget used up')); }, { once: true }); }),
+    verify: async () => ({ status: 'unknown', reason: 'port 25 blocked' })
+  });
+  setTimeout(() => controller.abort(), 50);
+  const r = await slow.find({ company: 'Slow', website: 'https://www.slow.co.za/' }, { signal: controller.signal });
+  assert.equal(r.cutShort, true);
+  assert.equal(r.status, 'unreachable', 'retry state, not a final verdict');
+  assert.ok(calls <= 2, `stopped crawling after the abort (made ${calls} page requests)`);
+  assert.ok(r.durationMs < 1000);
+});
