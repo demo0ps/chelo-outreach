@@ -152,7 +152,7 @@
   function approvalsPane(items) {
     const policy = state.auth.approvalPolicy || state.data.settings?.approvalPolicy || 'single';
     const rows = items.map(i => { const [label, icon, tone] = (typeof APPROVAL_KIND_META !== 'undefined' && APPROVAL_KIND_META[i.kind]) || [i.kind, 'info', 'tone-info']; const l = i.lead;
-      const target = i.kind === 'booking' ? `data-view="briefings"` : `data-action="ix-goto-workbench" data-id="${esc(l.id)}"`;
+      const target = i.kind === 'booking' ? `data-view="briefings"` : ['draft', 'plan', 'countersign-email', 'countersign-plan'].includes(i.kind) ? `data-action="send-preview" data-id="${esc(l.id)}"` : `data-action="ix-goto-workbench" data-id="${esc(l.id)}"`;
       return `<button type="button" class="ix-row ix-approval" ${target}><span class="ix-avatar ${tone}">${svgIcon(icon)}</span><span class="ix-row-main"><span class="ix-row-top"><strong>${esc(l.company)}</strong><span class="ix-row-when">${when(i.at)}</span></span><span class="ix-row-preview">${esc(label)}${i.booking ? ` · ${esc(i.booking.date || '')} ${esc(i.booking.time || '')}` : ''}${l.contactName ? ` · ${esc(l.contactName)}` : ''}</span></span></button>`; }).join('');
     return `<section class="panel ix-approvals"><div class="panel-header"><div><h2 class="panel-title">Waiting on a person</h2><p class="panel-description">${items.length} item${items.length === 1 ? '' : 's'} · ${policy === 'four-eyes' ? 'strict 4-eyes' : '1-person approval'}. Opening an item takes you to the step where it is approved.</p></div></div>${rows || `<div class="panel-empty">Nothing to approve. New drafts, plans and briefing requests appear here the moment the engine prepares them.</div>`}</section>`;
   }

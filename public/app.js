@@ -731,6 +731,7 @@ function renderModal() {
   if (type === 'research') return researchModal(getLead(id));
   if (type === 'staff-form') return staffFormModal(state.data.staff.find(u => u.id === id));
   if (type === 'booking-edit') return bookingEditModal(getBooking(id));
+  if (type === 'send-preview') return sendPreviewModal(getLead(id));
   return '';
 }
 function modalFrame(title, subtitle, body, footer = '', centered = false, extraClass = '') {
@@ -1134,7 +1135,7 @@ function toast(message, error = false) {
 }
 function renderAuthGate() { $('#app').innerHTML = authGateView(); $('#modal-root').innerHTML = ''; }
 async function refresh() {
-  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); }
+  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.modal?.type === 'send-preview' && !state.modal.loading) openSendPreview(state.modal.id, Number(state.modal.step || 0)); }
   catch (error) {
     if (error.status === 401) { state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false })); renderAuthGate(); return; }
     throw error;
@@ -1348,6 +1349,9 @@ async function dispatchAction(button) {
       toast(`${result.created} project(s) added, ${result.updated} updated${result.errors.length ? `, ${result.errors.length} rejected` : ''}.`, Boolean(result.errors.length)); return;
     }
     if (action === 'open-copilot') { state.copilot = { target: button.dataset.target || 'lead-form', text: '', result: null, error: '' }; const returnTo = state.modal; const leadFormDraft = $('#lead-form') ? formDataObject($('#lead-form')) : null; return openModal('copilot', null, { returnTo, leadFormDraft }); }
+    if (action === 'send-preview') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
+    if (action === 'send-preview-step') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
+    if (action === 'send-preview-edit') { state.modal = null; state.view = 'workbench'; state.wb.selectedId = button.dataset.id; state.wb.openStep = 'draft'; renderApp(); setTimeout(() => $('#email-body')?.focus(), 60); return; }
     if (action === 'prospects-mode') { state.prospectsMode = button.dataset.mode === 'board' ? 'board' : 'table'; renderApp(); return; }
     if (action === 'wb-intake') { state.wb.intake = button.dataset.intake === 'pool' ? 'pool' : 'add'; if (state.wb.intake === 'pool') loadCatalogue(); renderApp(); return; }
     if (action === 'ops-tab') { state.ops.tab = button.dataset.tab; if (!isRoot() && ROOT_ONLY_OPS_TABS.includes(state.ops.tab)) state.ops.tab = 'analytics'; if (state.ops.tab === 'analytics') loadAnalytics(state.analyticsRange); if (state.ops.tab === 'deliverability') loadDeliverability(); if (state.ops.tab === 'data') loadDataQuality(); renderApp(); return; }
@@ -1495,7 +1499,9 @@ async function dispatchAction(button) {
       await refresh(); toast('Draft saved.'); return;
     }
     if (action === 'email-approve') {
-      const fields = getEmailFields();
+      let fields = getEmailFields();
+      // From the preview screen there is no editor on the page: approve the draft exactly as previewed.
+      if ((!fields.subject || !fields.body) && state.modal?.type === 'send-preview' && getLead(id)?.emailDraft) fields = { subject: getLead(id).emailDraft.subject || '', body: getLead(id).emailDraft.body || '' };
       if (!fields.subject || !fields.body) return toast('Add a subject and email body first.', true);
       const followUp = button.dataset.followUp === 'true';
       await API(`/api/leads/${encodeURIComponent(id)}/approve-email`, { method: 'POST', body: JSON.stringify({ ...fields, kind: followUp ? 'follow-up' : 'initial', attachProposal: Boolean(followUp && followUpPdfSelected(getLead(id))) }) });
@@ -2298,7 +2304,8 @@ function wbStepper(lead) {
   const mailbox = lead.mailboxCheck;
   const projects = state.data.projects || [];
   const emailStatus = lead.emailStatus || 'None';
-  const openStep = s === 'replied' ? 'track' : s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sequence' || s === 'queued' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify';
+  const forced = state.wb.openStep; state.wb.openStep = null;
+  const openStep = forced || (s === 'replied' ? 'track' : s === 'needs-review' ? 'research' : s === 'ready' ? 'review' : s === 'approved' ? 'review' : s === 'sequence' || s === 'queued' ? 'review' : s === 'sent' ? 'track' : s === 'blocked' || s === 'dead' ? 'verify' : match?.status === 'needs-choice' ? 'match' : 'verify');
   const header = `<div class="wb-detail-head">
     <div>${stagePill(lead.stage || 'New')}<h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ' · no email yet'}</p></div>
     <div class="wb-detail-actions">${wbPill(s)}<button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button><button type="button" class="button button-secondary button-small" data-action="wb-run" data-id="${esc(lead.id)}" ${busy || s === 'running' ? 'disabled' : ''}>${svgIcon('refresh')}${busy || s === 'running' ? 'Working…' : 'Re-run flow'}</button></div>
@@ -2341,7 +2348,8 @@ function wbStepper(lead) {
       <div class="wb-step-actions">
         <button type="button" class="button button-secondary button-small" data-action="email-save-draft" data-id="${esc(lead.id)}" ${emailStatus === 'Sent' ? 'disabled' : ''}>${svgIcon('save')}Save edits</button>
         <button type="button" class="button button-ghost button-small" data-action="wb-redraft" data-id="${esc(lead.id)}" ${busy || emailStatus === 'Sent' ? 'disabled' : ''}>${svgIcon('wand')}Regenerate draft</button>
-        <button type="button" class="button button-ghost button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Proposal PDF</button>
+        <button type="button" class="button button-ghost button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}${lead.proposalFile ? 'Regenerate proposal PDF' : 'Generate proposal PDF'}</button>
+        <button type="button" class="button button-primary button-small" data-action="send-preview" data-id="${esc(lead.id)}">${svgIcon('eye')}Preview what they'll receive</button>
       </div>` : `<p class="subtle">${esc(draft?.detail || 'The draft is generated automatically once the mailbox is verified and a project is chosen.')}</p>`;
   // 5 · Review & approve the sequence (single-send kept as a fallback)
   const approvalPending = emailStatus === 'Pending second approval';
@@ -2355,7 +2363,7 @@ function wbStepper(lead) {
         ${emailStatus === 'Queued' ? `<span class="stage-pill pill-researched"><span class="wb-spinner"></span>Queued — sends in the next free slot</span><button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(lead.sendJobId || '')}" data-return-view="workbench">${svgIcon('xCircle')}Cancel send</button>` : ''}
         ${String(emailStatus).startsWith('Failed') ? `<span class="stage-pill pill-not-proceeding">${svgIcon('xCircle')}${esc(emailStatus)}</span><button type="button" class="button button-ghost button-small" data-action="email-return" data-id="${esc(lead.id)}">${svgIcon('back')}Return to draft</button>` : ''}
       </div>` : '<p class="subtle">Nothing to review yet.</p>';
-  const reviewBody = d ? `${wbSequencePanel(lead)}<details class="wb-legacy"><summary>Send a single email instead (no follow-ups)</summary>${singleSendBody}</details>` : '<p class="subtle">Nothing to review yet.</p>';
+  const reviewBody = d ? `<div class="wb-preview-cta"><div><strong>Read it the way the funder will.</strong><p class="subtle">Email and proposal PDF side by side, with the pre-flight checks and the approve button on one screen.</p></div><button type="button" class="button button-primary" data-action="send-preview" data-id="${esc(lead.id)}">${svgIcon('eye')}Preview before send</button></div>${wbSequencePanel(lead)}<details class="wb-legacy"><summary>Send a single email instead (no follow-ups)</summary>${singleSendBody}</details>` : '<p class="subtle">Nothing to review yet.</p>';
   // 6 · Track
   const events = (lead.emailEvents || []).slice(-6).reverse();
   const booking = (state.data.bookings || []).find(b => b.leadId === lead.id);
@@ -2434,6 +2442,49 @@ function wbSequencePanel(lead) {
     <ol class="seq-steps">${steps}</ol>
     <div class="wb-step-actions">${actions.join('')}</div>
   </div>`;
+}
+// ---------------------------------------------------------------------
+// Preview before send — "what the funder will receive". One screen: the email exactly as it renders, the PDF beside it,
+// a pre-flight checklist, and the single next action. Research-backed pattern: Plan → Preview → Approve; review in the
+// order the recipient experiences it (from/to/subject → body → links → attachment).
+// ---------------------------------------------------------------------
+async function openSendPreview(leadId, step = 0) {
+  state.modal = { type: 'send-preview', id: leadId, step, data: null, error: '', loading: true }; renderApp();
+  try { state.modal.data = await API(`/api/leads/${encodeURIComponent(leadId)}/preview${step ? `?step=${step}` : ''}`); }
+  catch (err) { state.modal.error = err.message || 'Could not build the preview.'; }
+  if (state.modal?.type === 'send-preview') { state.modal.loading = false; renderApp(); }
+}
+function sendPreviewModal(lead) {
+  if (!lead) return '';
+  const m = state.modal; const d = m.data;
+  const frame = (body, footer) => modalFrame('Preview before send', `${lead.company} · exactly what ${lead.contactName || 'the funder'} will receive`, body, footer, true, 'send-preview-modal');
+  if (m.loading) return frame('<div class="panel-empty">Building the preview…</div>', '');
+  if (m.error || !d) return frame(`<div class="panel-empty">${esc(m.error || 'No preview.')}</div>`, `<div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">Close</button></div>`);
+  const seqTabs = d.steps.length ? `<div class="sp-steps" role="tablist">${[{ n: 0, label: 'First touch' }, ...d.steps.filter(x => x.n > 1).map(x => ({ n: x.n, label: `Follow-up ${x.n - 1}`, status: x.status }))].map(t => `<button type="button" role="tab" class="sp-step ${Number(m.step) === t.n ? 'is-active' : ''}" data-action="send-preview-step" data-id="${esc(lead.id)}" data-step="${t.n}" aria-selected="${Number(m.step) === t.n}">${esc(t.label)}${t.status && !['planned', 'draft'].includes(t.status) ? ` <small>${esc(t.status)}</small>` : ''}</button>`).join('')}</div>` : '';
+  const srcdoc = esc(String(d.html || '').replace('<body', '<base target="_blank" rel="noopener"><body'));
+  const emailPane = `<section class="sp-email">
+    <div class="sp-head"><div class="sp-row"><span>From</span><strong>${d.from ? `${esc(d.from.name || '')} &lt;${esc(d.from.email)}&gt;` : '<em class="form-error">no active mailbox</em>'}</strong></div>
+      <div class="sp-row"><span>To</span><strong>${esc(d.to.name || '')} &lt;${esc(d.to.email || 'no email')}&gt;</strong></div>
+      <div class="sp-row"><span>Subject</span><strong>${esc(d.subject || '(empty)')}</strong></div>
+      ${d.attachments.length ? `<div class="sp-row"><span>Attached</span><strong>${d.attachments.map(a => `<a class="sp-attachment" href="${esc(a.url)}" target="_blank" rel="noopener">${svgIcon('paperclip')}${esc(a.name)} · ${a.sizeKb} KB</a>`).join('')}</strong></div>` : ''}</div>
+    <iframe class="sp-frame" title="Email as the funder sees it" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${srcdoc}"></iframe>
+    ${d.links.length ? `<div class="sp-links"><span class="subtle">Links in this email</span>${d.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="sp-link sp-link-${esc(l.kind)}">${svgIcon(l.kind === 'cta' ? 'calendar' : l.kind === 'page' ? 'external' : 'link')}${esc(l.kind === 'cta' ? 'Yes — book a briefing (one click)' : l.kind === 'page' ? 'Co-branded project page' : l.kind === 'opt-out' ? 'Opt-out' : l.url.replace(/^https?:\/\//, '').slice(0, 60))}</a>`).join('')}</div>` : ''}
+  </section>`;
+  const pdfPane = d.proposal ? `<section class="sp-pdf"><div class="sp-pdf-head"><strong>${svgIcon('proposals')}Proposal PDF</strong><span>${d.attachments.length ? 'attached to this email' : 'linked from the email — not attached'}</span><a class="button button-ghost button-small" href="${esc(d.proposal.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open full size</a><a class="button button-ghost button-small" href="${esc(d.proposal.download)}" download>${svgIcon('download')}Download</a></div><iframe class="sp-pdf-frame" title="Proposal PDF" src="${esc(d.proposal.url)}#toolbar=1&view=FitH"></iframe></section>`
+    : `<section class="sp-pdf sp-pdf-empty"><strong>${svgIcon('proposals')}No proposal PDF yet</strong><p class="subtle">This email goes out without a PDF. If you want one, generate it from step 4 and come back here — it will show up on this side.</p><button type="button" class="button button-secondary button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Generate proposal PDF</button></section>`;
+  const checks = `<ul class="sp-checks">${d.checks.map(c => `<li class="${c.ok ? 'is-ok' : 'is-bad'}">${svgIcon(c.ok ? 'checkCircle' : 'xCircle')}<span><strong>${esc(c.label)}</strong><small>${esc(c.detail)}</small></span></li>`).join('')}</ul>`;
+  const st = d.status; const seq = lead.sequence; const emailStatus = st.email;
+  let primary = '';
+  if (seq && seq.status === 'draft') primary = `<button type="button" class="button button-primary" data-action="seq-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve whole plan${st.approvalPolicy === 'four-eyes' ? ' (1 of 2)' : ' & start sending'}</button>`;
+  else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign & start sending</button>`;
+  else if (seq && ['running', 'approved'].includes(seq.status)) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Plan approved — sending on schedule</span>`;
+  else if (['Draft', 'None'].includes(emailStatus)) primary = `<button type="button" class="button button-primary" data-action="email-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve this email</button>`;
+  else if (emailStatus === 'Pending second approval') primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Countersign (4-eyes)</button>`;
+  else if (emailStatus === 'Approved') primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button>`;
+  else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Queued — sends in the next free slot</span>`;
+  else if (String(emailStatus).startsWith('Sent')) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sent</span>`;
+  const footer = `<div class="modal-footer-left">${checks}</div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="send-preview-edit" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit email</button>${primary}</div>`;
+  return frame(`${seqTabs}<div class="sp-layout">${emailPane}${pdfPane}</div>`, footer);
 }
 function wbReplyPointer(lead) {
   const t = lead.triage; if (!t) return '';

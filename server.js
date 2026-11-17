@@ -2854,6 +2854,43 @@ async function handleApi(req, res, url) {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
         return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal-${lead.id}.pdf`, 'attachment');
       }
+      // "What the funder will receive": one JSON the review screen renders verbatim — from, to, subject, the exact HTML/text,
+      // every link, the attachment, and a pre-flight checklist. ?step=N previews a sequence step; default is the first touch.
+      if (method === 'GET' && action === 'preview') {
+        const stepN = Number(url.searchParams.get('step') || 0);
+        const seq = lead.sequence; const seqStep = seq && stepN ? seq.steps.find(x => x.n === stepN) : null;
+        const draft = seqStep ? { subject: seqStep.subject, body: seqStep.body } : lead.emailDraft;
+        if (!draft) return sendJson(res, 404, { error: 'There is no draft to preview yet. Run the Workbench flow or write one in step 4.' });
+        const attachProposal = Boolean(!seqStep && lead.proposalFile && (lead.emailDraft?.attachProposal ?? false));
+        const text = (!seqStep || seqStep.n === 1) ? cleanApprovedEmailBody(draft, attachProposal) : String(draft.body || '');
+        const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
+        const mailbox = (() => { try { return sendEngine.pickMailbox(lead.mailboxId || ''); } catch { return null; } })();
+        const origin = publicOrigin(req);
+        const links = [...new Set((text.match(/https?:\/\/[^\s<)]+/g) || []).map(u => u.replace(/[),.;!?]+$/, '')))].map(u => ({ url: u, kind: /\/track\/cta\//.test(u) ? 'cta' : /\/p\/|\/proposal\//.test(u) ? 'page' : /opt-out/.test(u) ? 'opt-out' : 'link' }));
+        const placeholders = text.match(/\{\{[^}]*\}\}|\[(?:name|company|project|amount|insert[^\]]*)\]/gi) || [];
+        const pdfPath = lead.proposalFile ? path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)) : '';
+        const pdfOk = Boolean(pdfPath && fs.existsSync(pdfPath));
+        const checks = [
+          { id: 'to', ok: Boolean(lead.email) && lead.contactCheck?.emailStatus !== 'invalid' && !['invalid', 'undeliverable'].includes(lead.mailboxCheck?.status), label: 'Recipient', detail: lead.email ? `${lead.email} · mailbox ${lead.mailboxCheck?.status || 'not probed'}` : 'No email address' },
+          { id: 'from', ok: Boolean(mailbox), label: 'Sending mailbox', detail: mailbox ? `${mailbox.fromName || ''} <${mailbox.fromEmail}>${mailbox.status === 'paused' ? ' · paused' : ''}` : 'No active mailbox — add one under Ops → Deliverability' },
+          { id: 'subject', ok: subject.length > 0 && subject.length <= 90, label: 'Subject', detail: subject ? `${subject.length} characters` : 'Empty' },
+          { id: 'placeholders', ok: placeholders.length === 0, label: 'No unfilled placeholders', detail: placeholders.length ? placeholders.join(', ') : 'Every merge field is filled' },
+          { id: 'ask', ok: links.some(l => l.kind === 'cta') || /\?\s*$/m.test(text.replace(/\n\s*To stop further outreach:.*$/s, '').trim()), label: 'Clear ask', detail: links.some(l => l.kind === 'cta') ? 'One-click "Yes" button leads to the booking page' : /\?\s*$/m.test(text) ? 'Ends with a question the funder can answer by replying (meeting link comes at step 2)' : 'No question or booking link — the funder has nothing to say yes to' },
+          { id: 'suppression', ok: !lead.doNotContact, label: 'Not suppressed', detail: lead.doNotContact ? 'Contact is on the do-not-contact list' : 'Not opted out, no hard bounce' },
+          ...(attachProposal || lead.proposalFile ? [{ id: 'pdf', ok: pdfOk, label: attachProposal ? 'Proposal PDF attached' : 'Proposal PDF ready (linked, not attached)', detail: pdfOk ? `${Math.round(fs.statSync(pdfPath).size / 1024)} KB · ${lead.proposalFile}` : 'PDF file missing — generate it again' }] : [])
+        ];
+        return sendJson(res, 200, {
+          leadId: lead.id, step: seqStep ? seqStep.n : 0,
+          from: mailbox ? { name: mailbox.fromName || '', email: mailbox.fromEmail, label: mailbox.label || '' } : null,
+          to: { name: lead.contactName || '', email: lead.email || '' },
+          subject, text, html: emailHtml(text, ''), links,
+          attachments: attachProposal && pdfOk ? [{ name: 'Chelo-Partnership-Proposal.pdf', url: `/api/leads/${encodeURIComponent(lead.id)}/proposal/preview`, sizeKb: Math.round(fs.statSync(pdfPath).size / 1024) }] : [],
+          proposal: pdfOk ? { url: `/api/leads/${encodeURIComponent(lead.id)}/proposal/preview`, download: `/api/leads/${encodeURIComponent(lead.id)}/proposal/download`, shareUrl: lead.proposalToken ? `${origin}/api/public/proposal/${lead.proposalToken}` : '' } : null,
+          steps: seq ? seq.steps.map(x => ({ n: x.n, subject: x.subject, status: x.status, offsetDays: x.offsetDays, scheduledFor: x.scheduledFor || null })) : [],
+          status: { email: lead.emailStatus || 'None', sequence: seq ? seq.status : null, approvalPolicy: configStore.publicSettings().approvalPolicy || 'single' },
+          checks, ready: checks.every(c => c.ok)
+        });
+      }
       if (method === 'GET' && action === 'proposal/preview') {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
         return sendPdf(res, path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile)), `Chelo-proposal-${lead.id}.pdf`, 'inline');
@@ -3300,7 +3337,7 @@ function serveSharedProposal(res, token) {
 const EMBEDDED_PREVIEW = process.env.EMBEDDED_PREVIEW === 'true';
 const CSP = [
   "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
-  "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", EMBEDDED_PREVIEW ? 'frame-ancestors *' : "frame-ancestors 'none'",
+  "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", EMBEDDED_PREVIEW ? 'frame-ancestors *' : "frame-ancestors 'self'",
 ].join('; ');
 function applySecurityHeaders(req, res) {
   res.setHeader('Content-Security-Policy', CSP);
@@ -3308,7 +3345,7 @@ function applySecurityHeaders(req, res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   res.setHeader('Cross-Origin-Opener-Policy', EMBEDDED_PREVIEW ? 'unsafe-none' : 'same-origin');
-  if (!EMBEDDED_PREVIEW) res.setHeader('X-Frame-Options', 'DENY');
+  if (!EMBEDDED_PREVIEW) res.setHeader('X-Frame-Options', 'SAMEORIGIN'); // the review screen frames our own PDF + email render
   const https = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https' || Boolean(req.socket.encrypted);
   if (https) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 }

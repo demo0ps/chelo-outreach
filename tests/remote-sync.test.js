@@ -134,14 +134,14 @@ test('history: first push of the day writes a dated copy; old days are pruned; k
   } finally { if (prev === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY; else process.env.SETTINGS_ENCRYPTION_KEY = prev; }
 });
 
-test('security headers: CSP, nosniff, referrer, frame denial; HSTS only on https; cookie SameSite=Lax', async () => {
+test('security headers: CSP, nosniff, referrer, same-origin framing only (review screen frames our own PDF); HSTS only on https; cookie SameSite=Lax', async () => {
   process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-sec-')); process.env.NODE_ENV = 'test'; process.env.SMTP_PROBE_DISABLED = 'true';
   const app = require('../server');
   const srv = http.createServer(app.requestHandler); await new Promise(r => srv.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${srv.address().port}`;
   try {
     const res = await fetch(`${base}/api/auth/status`); const h = res.headers;
-    assert.match(h.get('content-security-policy'), /default-src 'self'/); assert.match(h.get('content-security-policy'), /frame-ancestors 'none'/);
-    assert.equal(h.get('x-content-type-options'), 'nosniff'); assert.equal(h.get('x-frame-options'), 'DENY'); assert.equal(h.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.match(h.get('content-security-policy'), /default-src 'self'/); assert.match(h.get('content-security-policy'), /frame-ancestors 'self'/);
+    assert.equal(h.get('x-content-type-options'), 'nosniff'); assert.equal(h.get('x-frame-options'), 'SAMEORIGIN'); assert.equal(h.get('referrer-policy'), 'strict-origin-when-cross-origin');
     assert.equal(h.get('strict-transport-security'), null);
     const res2 = await fetch(`${base}/api/auth/status`, { headers: { 'x-forwarded-proto': 'https' } }); assert.match(res2.headers.get('strict-transport-security'), /max-age=31536000/);
     const setup = await fetch(`${base}/api/auth/setup`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ username: 'sec@cheloapp.com', displayName: 'Sec', password: 'correct-horse-battery' }) });

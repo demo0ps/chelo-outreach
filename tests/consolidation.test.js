@@ -102,3 +102,20 @@ test('Inbox: Approvals tab is the desktop twin of the phone tab and includes bri
   await t.dispatchAction({ dataset: { action: 'ix-goto-workbench', id: 'l-draft' } });
   assert.equal(t.state.view, 'workbench'); assert.equal(t.state.wb.selectedId, 'l-draft');
 });
+
+test('Preview before send: workbench and approvals open one screen with email + PDF + checks + the single next action', async () => {
+  const { t, html } = boot(); fixtures(t);
+  t.state.view = 'workbench'; t.state.wb.selectedId = 'l-draft'; t.renderApp();
+  assert.match(html.app, /data-action="send-preview" data-id="l-draft"/, 'step 5 offers the preview');
+  // simulate the API answer and render the modal
+  t.state.modal = { type: 'send-preview', id: 'l-draft', step: 0, loading: false, error: '', data: { leadId: 'l-draft', step: 0, from: { name: 'Nandi', email: 'n@cheloapp.com' }, to: { name: 'Naledi', email: 'n@x.co' }, subject: 'Bolt + Literacy', text: 'Hi', html: '<!doctype html><html><body><p>Hi</p></body></html>', links: [{ url: 'https://x/track/cta/abc', kind: 'cta' }], attachments: [], proposal: null, steps: [], status: { email: 'Draft', sequence: null, approvalPolicy: 'single' }, checks: [{ id: 'to', ok: true, label: 'Recipient', detail: 'n@x.co' }, { id: 'cta', ok: true, label: 'Reply button present', detail: '' }], ready: true } };
+  t.renderApp();
+  assert.match(html.modal, /Preview before send/); assert.match(html.modal, /class="sp-frame"/); assert.match(html.modal, /srcdoc="/);
+  assert.match(html.modal, /No proposal PDF yet/); assert.match(html.modal, /class="sp-checks"/);
+  assert.match(html.modal, /data-action="email-approve" data-id="l-draft"/, 'single primary action for a draft');
+  assert.doesNotMatch(html.modal, /data-action="send-smtp"/);
+  t.state.modal.data.status.email = 'Approved'; t.renderApp();
+  assert.match(html.modal, /data-action="send-smtp"/); assert.doesNotMatch(html.modal, /data-action="email-approve"/);
+  t.state.modal.data.proposal = { url: '/api/leads/l-draft/proposal/preview', download: '/api/leads/l-draft/proposal/download' }; t.renderApp();
+  assert.match(html.modal, /class="sp-pdf-frame"[^>]*src="\/api\/leads\/l-draft\/proposal\/preview/);
+});
