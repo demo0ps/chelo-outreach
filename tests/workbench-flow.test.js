@@ -122,6 +122,14 @@ test('workbench flow: create → auto verify/research/match/draft, dead email qu
   assert.equal(unblocked.payload.flow.steps.verify.status, 'pending');
   assert.match(unblocked.payload.flow.steps.verify.detail, /Press Run/);
 
+  // 1e. Settings: saving an AI key then testing it with a bad key returns a plain error and the server stays up (it used to crash)
+  assert.equal((await api('PUT', '/api/settings', { aiEndpoint: 'https://api.openai.com/v1/chat/completions', aiModel: 'gpt-4o-mini', aiApiKey: 'sk-not-a-real-key' })).status, 200);
+  assert.equal((await api('GET', '/api/settings')).payload.aiConfigured, true);
+  const badTest = await api('POST', '/api/settings/test-ai', {});
+  assert.ok(badTest.status >= 400 && badTest.status < 500, JSON.stringify(badTest));
+  assert.ok(badTest.payload && badTest.payload.error, 'error text returned');
+  assert.equal((await api('GET', '/api/auth/status')).status, 200, 'server still alive after a failed AI test');
+
   // 2. Dead email (no MX) is rejected at intake; dead mailbox is quarantined by the flow
   const dead = await api('POST', '/api/leads', { company: 'Ghost Mining', contactName: 'Nobody', email: 'x@no-such-domain-zz-123456.co.za', sourceName: 's' });
   assert.equal(dead.status, 400);

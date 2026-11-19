@@ -2425,9 +2425,11 @@ async function handleApi(req, res, url) {
     if (method === 'POST' && pathname === '/api/settings/test-ai') {
       const ai = configStore.getAIConfig();
       if (!ai.apiKey) return sendJson(res, 400, { error: 'Add an AI API key in Settings before testing the connection.' });
-      const response = await fetch(ai.endpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: ai.model, max_tokens: 5, messages: [{ role: 'user', content: 'Reply with OK.' }] }), signal: AbortSignal.timeout(15000) });
+      let response;
+      try { response = await fetch(ai.endpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: ai.model, max_tokens: 5, messages: [{ role: 'user', content: 'Reply with OK.' }] }), signal: AbortSignal.timeout(15000) }); }
+      catch (err) { throw new Error(/abort|timeout/i.test(String(err.name || err.message)) ? 'The AI provider did not answer within 15 seconds. Check the endpoint address and try again.' : `Could not reach the AI provider: ${String(err.cause?.message || err.message || err).slice(0, 120)}`); }
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error?.message || `AI provider returned HTTP ${response.status}.`);
+      if (!response.ok) throw new Error(response.status === 401 ? 'The AI provider rejected the key. Check it and paste it again.' : response.status === 404 ? `The model "${ai.model}" was not found at that endpoint.` : result.error?.message || `AI provider returned HTTP ${response.status}.`);
       configStore.recordAudit({ actor: actorName(), action: 'settings.ai_tested', entityType: 'integration', summary: 'AI provider connection test succeeded' });
       return sendJson(res, 200, { ok: true, model: ai.model, message: 'AI provider connection succeeded.' });
     }
@@ -3437,8 +3439,10 @@ async function handleApi(req, res, url) {
 
     return sendJson(res, 404, { error: 'API route not found.' });
   } catch (error) {
-    if (req.authSession && method === 'POST' && pathname === '/api/settings/test-ai') configStore.recordAudit({ actor: actorName(), action: 'settings.ai_test_failed', entityType: 'integration', summary: 'AI provider connection test failed; secret values omitted' });
-    if (req.authSession && method === 'POST' && pathname === '/api/settings/test-smtp') configStore.recordAudit({ actor: actorName(), action: 'settings.smtp_test_failed', entityType: 'integration', summary: 'SMTP connection test failed; secret values omitted' });
+    // `actorName` is scoped inside the try block above — compute the label here, and never let audit logging itself throw.
+    const failedBy = req.authSession ? `${req.authSession.displayName || req.authSession.username} <${req.authSession.username}>` : 'staff';
+    if (req.authSession && method === 'POST' && pathname === '/api/settings/test-ai') configStore.recordAudit({ actor: failedBy, action: 'settings.ai_test_failed', entityType: 'integration', summary: 'AI provider connection test failed; secret values omitted' });
+    if (req.authSession && method === 'POST' && pathname === '/api/settings/test-smtp') configStore.recordAudit({ actor: failedBy, action: 'settings.smtp_test_failed', entityType: 'integration', summary: 'SMTP connection test failed; secret values omitted' });
     console.error('API error:', error.message);
     return sendJson(res, 400, { error: error.message || 'Something went wrong.' });
   }

@@ -113,3 +113,11 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   not auto-continue (staff decision). `deriveFlowStatus` also heals records that were blocked before the address arrived.
 - Mailbox finder skips department mailboxes entirely — hr@, careers@, press@, sales@, support@ … — including department
   *subdomains* such as `info@hr.ibm.com`. Prefers csi@ / foundation@ / sustainability@ / info@.
+
+## Settings: Save next to the key · failed test no longer crashes (v40)
+
+- Each Settings card (AI provider, Search provider) has its own **Save** button; **Save & test** saves what you typed and then tests it,
+  so you no longer test last week's key. Secret fields are emptied after saving.
+- Bug: a failed AI/SMTP connection test hit `actorName()` outside its scope in the error handler → `ReferenceError` → **process crash**
+  (on Vercel: the request died silently). Fixed; failed tests now return plain errors ("The AI provider rejected the key…",
+  "…did not answer within 15 seconds…").
