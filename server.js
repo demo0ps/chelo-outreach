@@ -1114,6 +1114,33 @@ function workbenchLead(lead) {
   const c = clientLead(lead);
   return { ...c, flowStatus: deriveFlowStatus(lead) };
 }
+/** The next email waiting in the queue for this lead, with whether it can be pushed out now. */
+function leadSendSlot(lead) {
+  const job = sendEngine.jobsForLead(lead.id).filter(j => j.status === 'queued').sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))[0];
+  if (!job) return null;
+  const w = sendEngine.windowState();
+  return { jobId: job.id, at: job.scheduledAt, kind: job.kind, due: job.scheduledAt <= new Date().toISOString(), windowOpen: w.open, nextOpen: w.nextOpen, windowStart: w.windowStart, windowEnd: w.windowEnd, timezone: w.timezone };
+}
+/** Runs the engine on demand: hosts without a background worker (Vercel) rely on the app nudging it while anyone is using Chelo. */
+let lastNudgeAt = 0, lastInboxNudgeAt = 0, nudgeRunning = null;
+async function nudgeEngine({ actor = 'app', force = false } = {}) {
+  if (nudgeRunning) return nudgeRunning;
+  const t = Date.now();
+  if (!force && t - lastNudgeAt < 20e3) return { ok: true, skipped: 'recent', ran: 0, inboxes: null };
+  lastNudgeAt = t;
+  nudgeRunning = (async () => {
+    const out = { ok: true, ran: 0, inboxes: null };
+    try { const r = await sendEngine.tick({ limit: 5 }); out.ran = r.ran || 0; } catch (err) { out.ok = false; out.error = String(err.message || err).slice(0, 160); }
+    const newest = sendEngine.listMailboxes().map(m => m.imap?.lastSyncAt || '').sort().pop() || '';
+    const stale = !newest || Date.now() - Date.parse(newest) > 10 * 60e3;
+    if (stale && t - lastInboxNudgeAt > 10 * 60e3 && sendEngine.listMailboxes().some(m => m.imap)) {
+      lastInboxNudgeAt = t;
+      try { const r = await syncAllInboxes(actor); out.inboxes = { checked: r.checked, matched: r.matched, ok: r.ok }; } catch (err) { out.inboxes = { ok: false, error: String(err.message || err).slice(0, 160) }; }
+    }
+    return out;
+  })();
+  try { return await nudgeRunning; } finally { nudgeRunning = null; }
+}
 
 
 // ---------------- Sequences (approve once, auto-send, halt on reply) ----------------
@@ -1149,7 +1176,7 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
     attachments: pdf ? [pdf] : [],
-    requestedBy: actor, earliest, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor, company: lead.company, openToken: null }
+    requestedBy: actor, earliest, immediate: step.n === 1, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor, company: lead.company, openToken: null }
   });
   step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
   if (step.n === 1) { lead.emailStatus = 'Queued'; lead.sendJobId = job.id; } else { lead.followUpEmailStatus = 'Queued'; lead.followUpAt = job.scheduledAt; lead.followUpStep = step.n - 1; }
@@ -1812,7 +1839,8 @@ function clientLead(lead) {
     const { openToken, ...safeDraft } = draft;
     return safeDraft;
   };
-  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft), dataQuality: dataEngine.dataQuality(lead), fit: leadFit(lead) };
+  const waiting = lead.emailStatus === 'Queued' || lead.followUpEmailStatus === 'Queued' || lead.sequence?.status === 'running';
+  return { ...lead, emailDraft: stripToken(lead.emailDraft), followUpDraft: stripToken(lead.followUpDraft), dataQuality: dataEngine.dataQuality(lead), fit: leadFit(lead), sendSlot: waiting ? leadSendSlot(lead) : null };
 }
 function safeFilename(name) { return path.basename(String(name || '')); }
 function mimeBase64(value) {
@@ -2320,6 +2348,17 @@ async function handleApi(req, res, url) {
         configStore.recordAudit({ actor: actorName(), action: `send_job.${jobRoute[2]}`, entityType: 'lead', entityId: job.leadId, summary: `Queue item ${jobRoute[2]} for ${job.to.replace(/^(.).*(@.*)$/, '$1***$2')}` });
         return sendJson(res, 200, { job: updated });
       } catch (err) { return sendJson(res, 409, { error: err.message }); }
+    }
+    if (method === 'POST' && pathname === '/api/engine/nudge') { // any signed-in staff member; cheap and throttled
+      const r = await nudgeEngine({ actor: actorName() });
+      if (r.ran || (r.inboxes && r.inboxes.matched)) saveDb();
+      return sendJson(res, 200, r);
+    }
+    const jobSendNow = pathname.match(/^\/api\/deliverability\/jobs\/([^/]+)\/send-now$/);
+    if (method === 'POST' && jobSendNow) {
+      const r = await sendEngine.sendNow(jobSendNow[1], { actor: actorName() });
+      if (r.ok) saveDb();
+      return sendJson(res, r.ok ? 200 : 409, r);
     }
     if (method === 'POST' && pathname === '/api/deliverability/tick') {
       const result = await sendEngine.tick({ limit: 10 });
@@ -3040,6 +3079,13 @@ async function handleApi(req, res, url) {
         saveDb();
         return sendJson(res, 200, { ok: true });
       }
+      if (method === 'POST' && action === 'send-now') { // push this lead's waiting email out now (window permitting)
+        const slot = leadSendSlot(lead);
+        if (!slot) return sendJson(res, 409, { error: 'No email is waiting for this funder.' });
+        const r = await sendEngine.sendNow(slot.jobId, { actor: actorName() });
+        if (r.ok) { configStore.recordAudit({ actor: actorName(), action: 'email.sent_now', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: waiting email pushed out now` }); saveDb(); }
+        return sendJson(res, r.ok ? 200 : 409, { ...r, lead: workbenchLead(lead) });
+      }
       if (method === 'POST' && action === 'proposal') {
         const contactGate = await requireContactReady(lead);
         if (!contactGate.ok) { saveDb(); return sendJson(res, 409, { error: contactGate.error, contactCheck: contactGate.contactCheck }); }
@@ -3367,7 +3413,7 @@ async function handleApi(req, res, url) {
           const job = sendEngine.enqueue({
             leadId: lead.id, kind: followUp ? 'follow-up' : 'initial', to, subject, text: emailBody, html: emailHtml(emailBody, pixelUrl), headers,
             attachments: pdfAttachment ? [pdfAttachment] : [],
-            mailboxId: body.mailboxId || '', requestedBy: actorName(), sendAt: body.sendNow === true ? new Date().toISOString() : null,
+            mailboxId: body.mailboxId || '', requestedBy: actorName(), sendAt: body.sendNow === true ? new Date().toISOString() : null, immediate: !followUp,
             meta: { openToken, followUp, attachProposal, actor: actorName(), company: lead.company }
           });
           lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Queued';

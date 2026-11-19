@@ -2213,3 +2213,5 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .dlv-dns code { word-break: break-all; }
 .dlv-mailbox-head small { display: block; }
 .rv-blocked { flex-basis: 100%; margin: 0 0 6px; font-size: 0.9rem; }
+.wb-send-slot { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wb-send-slot .icon-svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }

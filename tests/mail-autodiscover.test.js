@@ -107,3 +107,27 @@ test('send engine: per-mailbox IMAP settings persist, default to the SMTP passwo
   assert.equal(engine.getMailbox(m.id).imap, null);
   assert.throws(() => engine.setMailboxImap(m.id, { port: 993 }), /IMAP host/);
 });
+
+test('send engine: approved email goes immediately inside the window; sendNow pushes a waiting job; closed window holds', async () => {
+  const conn = new DatabaseSync(':memory:');
+  const clock = { t: new Date('2026-11-19T07:40:00Z') }; // Thursday 09:40 SAST — window open
+  const sent = [];
+  const engine = createSendEngine({ conn, encryptSecret: v => ({ v }), decryptSecret: r => r.v, isSuppressed: () => false, now: () => clock.t, random: () => 0.9, transportFactory: () => ({ sendMail: async m => { sent.push(m); return { messageId: `<${sent.length}@t>`, accepted: [m.to], rejected: [] }; } }) });
+  const m = engine.saveMailbox({ fromEmail: 'marketing@cheloapp.com', host: 'smtp.gmail.com', port: 465, secure: true, username: 'marketing@cheloapp.com', password: 'x' }, { actor: 'test' });
+  assert.equal(engine.windowState().open, true);
+  const first = engine.enqueue({ leadId: 'L1', to: 'a@example.org', subject: 'Hi', text: 'x', immediate: true });
+  assert.equal(first.scheduledAt, clock.t.toISOString(), 'immediate: no gap or jitter');
+  const second = engine.enqueue({ leadId: 'L2', to: 'b@example.org', subject: 'Hi', text: 'x', immediate: true });
+  assert.ok(second.scheduledAt > clock.t.toISOString(), 'second email keeps spacing behind the first');
+  const r = await engine.sendNow(second.id, { actor: 'test' });
+  assert.equal(r.ok, true); assert.equal(r.job.status, 'sent'); assert.equal(sent.length, 1);
+  // Closed window: Saturday
+  clock.t = new Date('2026-11-21T10:00:00Z');
+  const w = engine.windowState(); assert.equal(w.open, false); assert.match(w.nextOpen, /^2026-11-23T06:30/);
+  const held = engine.enqueue({ leadId: 'L3', to: 'c@example.org', subject: 'Hi', text: 'x', immediate: true });
+  assert.match(held.scheduledAt, /^2026-11-23T06:3/, 'held for Monday 08:30 SAST');
+  const r2 = await engine.sendNow(held.id, { actor: 'test' });
+  assert.equal(r2.ok, false); assert.match(r2.error, /window is closed/);
+  assert.equal(engine.getJob(held.id).status, 'queued');
+  assert.equal(m.id, engine.getJob(held.id).mailboxId);
+});

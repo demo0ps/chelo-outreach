@@ -147,3 +147,18 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   `data-action` in the UI and fails if any has no handler, and asserts `seq-` is routed.
 - Also (v42): "Make the PDF now" on the review page builds the PDF from the project instead of demanding the proposal form; when
   Send is greyed out the page now says which checks block it.
+
+## Emails go when approved; the app nudges the engine (v44)
+
+- Root cause of "I approved it and nothing arrived": on Vercel there is no background worker and the cron runs once a day
+  (09:00 SAST, Mon–Fri). A due email sat in the queue until something touched the engine.
+- **Auto-nudge**: the browser calls `POST /api/engine/nudge` after each data refresh (≤1/min), every 5 minutes while the tab is
+  visible and when the tab regains focus. The server (throttled to 20 s, single-flight) sends what is due (≤5) and reads every
+  mailbox's inbox if the newest read is older than 10 minutes. The daily cron stays as a backstop.
+- **Immediate first email**: `enqueue({ immediate: true })` — used for the first email of a sequence and a single approved email —
+  skips the random delay inside the open window but keeps the 90 s minimum gap after the previous email. Follow-ups keep full
+  spacing. Outside the window everything still waits for the next opening (staff decision).
+- **Send now**: `sendEngine.sendNow(jobId)` → `POST /api/leads/:id/send-now` (any staff) and `POST /api/deliverability/jobs/:id/send-now`
+  (root queue). Refuses when the window is closed or the mailbox hit today's cap. Leads carry `sendSlot` (next waiting job, due?,
+  window open?, next opening) and the lead page/review page show "Email sends at 09:44 — Send now" or "waits for the sending window —
+  goes Mon 08:30". The Send queue header has "Send what is due" (visible inside Health → Email delivery too, where the page header is hidden).

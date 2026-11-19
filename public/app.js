@@ -1142,8 +1142,18 @@ function toast(message, error = false) {
   setTimeout(() => el.remove(), 3600);
 }
 function renderAuthGate() { $('#app').innerHTML = authGateView(); $('#modal-root').innerHTML = ''; }
+// Hosts without a background worker (Vercel) rely on the app nudging the engine: send what is due, read inboxes every 10 min.
+let lastNudge = 0;
+function nudgeEngine(force = false) {
+  if (!state.auth?.authenticated && !state.data) return;
+  if (!force && Date.now() - lastNudge < 60e3) return;
+  lastNudge = Date.now();
+  API('/api/engine/nudge', { method: 'POST', body: '{}' }).then(r => { if (r && ((r.ran || 0) > 0 || (r.inboxes && r.inboxes.matched > 0))) refresh().catch(() => {}); }).catch(() => {});
+}
+setInterval(() => { if (document.visibilityState === 'visible') nudgeEngine(); }, 5 * 60e3);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') nudgeEngine(); });
 async function refresh() {
-  try { state.data = await API('/api/init'); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.view === 'review' && state.review && !state.review.loading) openSendPreview(state.review.id, Number(state.review.step || 0)); }
+  try { state.data = await API('/api/init'); setTimeout(() => nudgeEngine(), 1500); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.view === 'review' && state.review && !state.review.loading) openSendPreview(state.review.id, Number(state.review.step || 0)); }
   catch (error) {
     if (error.status === 401) { state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false })); renderAuthGate(); return; }
     throw error;
@@ -2399,6 +2409,19 @@ function wbSendCard(lead, s, busy) {
     ${seq && seq.status !== 'draft' ? wbSequencePanel(lead) : ''}`;
   return wbCard('mail', "What we'll send", body);
 }
+
+/** "Sends at 09:44 — Send now" for an email waiting in the queue; outside the window it says when the window opens. */
+function wbSendSlot(lead, { small = false } = {}) {
+  const slot = lead.sendSlot; if (!slot) return '';
+  const when = new Date(slot.at); const today = new Date().toDateString() === when.toDateString();
+  const t = when.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+  const label = slot.kind === 'follow-up' ? 'Follow-up' : 'Email';
+  if (!slot.windowOpen) {
+    const open = slot.nextOpen ? new Date(slot.nextOpen) : null;
+    return `<span class="wb-send-slot subtle">${svgIcon('clock')}${label} waits for the sending window — ${open ? `goes ${open.toLocaleDateString('en-ZA', { weekday: 'short' })} ${open.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}` : `opens ${slot.windowStart} on a weekday`} (${slot.windowStart}–${slot.windowEnd} ${slot.timezone.replace('Africa/', '')}).</span>`;
+  }
+  return `<span class="wb-send-slot"><span class="subtle">${svgIcon('clock')}${label} ${slot.due ? 'is due now' : `sends at ${today ? t : `${when.toLocaleDateString('en-ZA', { weekday: 'short' })} ${t}`}`}</span><button type="button" class="button button-secondary ${small ? 'button-small' : ''}" data-action="wb-send-now" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button></span>`;
+}
 function wbActionCard(lead, s, busy) {
   const d = lead.emailDraft; const emailStatus = lead.emailStatus || 'None'; const seq = lead.sequence;
   const booking = (state.data.bookings || []).find(b => b.leadId === lead.id);
@@ -2412,9 +2435,9 @@ function wbActionCard(lead, s, busy) {
     else primary = `<button type="button" class="button button-primary" data-action="wb-run" data-id="${id}" ${busy ? 'disabled' : ''}>${svgIcon('spark')}${s === 'new' ? 'Start' : 'Try again'}</button>`;
   }
   else if (seq && seq.status === 'pending-approval') { primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${id}">${svgIcon('shield')}Approve as second person & send</button>`; note = 'A teammate approved it. A second person must approve before it goes.'; }
-  else if (seq && seq.status === 'running') { primary = `<button type="button" class="button button-danger" data-action="seq-stop" data-id="${id}">${svgIcon('xCircle')}Stop follow-ups</button>`; note = wbSequenceStepDetail(lead, emailStatus); }
+  else if (seq && seq.status === 'running') { primary = `${wbSendSlot(lead)}<button type="button" class="button button-danger" data-action="seq-stop" data-id="${id}">${svgIcon('xCircle')}Stop follow-ups</button>`; note = wbSequenceStepDetail(lead, emailStatus); }
   else if (seq && seq.status === 'completed') { note = 'All emails sent. No reply yet.'; }
-  else if (emailStatus === 'Queued') { primary = `<button type="button" class="button button-ghost" data-action="dlv-cancel-job" data-id="${esc(lead.sendJobId || '')}" data-return-view="workbench">${svgIcon('xCircle')}Cancel</button>`; }
+  else if (emailStatus === 'Queued') { primary = `${wbSendSlot(lead)}<button type="button" class="button button-ghost" data-action="dlv-cancel-job" data-id="${esc(lead.sendJobId || '')}" data-return-view="workbench">${svgIcon('xCircle')}Cancel</button>`; }
   else if (emailStatus === 'Pending second approval') { primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${id}">${svgIcon('shield')}Approve as second person & send</button>`; }
   else if (emailStatus === 'Approved') { primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${id}">${svgIcon('send')}Send now</button>`; }
   else if (emailStatus === 'Sent' && !(seq && ['running', 'approved'].includes(seq.status))) { primary = `<button type="button" class="button button-secondary" data-action="follow-up" data-id="${id}">${svgIcon('send')}Write a follow-up</button>`; note = 'Sent. Waiting for a reply.'; }
@@ -2521,11 +2544,11 @@ function reviewView() {
   let primary = '';
   if (seq && seq.status === 'draft') primary = `<button type="button" class="button button-primary" data-action="seq-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('send')}${st.approvalPolicy === 'four-eyes' ? 'Approve (1 of 2)' : 'Send & follow up'}</button>`;
   else if (seq && seq.status === 'pending-approval') primary = `<button type="button" class="button button-primary" data-action="seq-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person & send</button>`;
-  else if (seq && ['running', 'approved'].includes(seq.status)) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sending — Chelo follows up for you</span>`;
+  else if (seq && ['running', 'approved'].includes(seq.status)) primary = lead.sendSlot ? wbSendSlot(lead) : `<span class="stage-pill pill-won">${svgIcon('check')}Sending — Chelo follows up for you</span>`;
   else if (['Draft', 'None'].includes(emailStatus)) primary = `<button type="button" class="button button-primary" data-action="email-approve" data-id="${esc(lead.id)}" ${d.ready ? '' : 'disabled title="Fix the red checks first"'}>${svgIcon('checkCircle')}Approve this email</button>`;
   else if (emailStatus === 'Pending second approval') primary = `<button type="button" class="button button-primary" data-action="email-countersign" data-id="${esc(lead.id)}">${svgIcon('shield')}Approve as second person</button>`;
   else if (emailStatus === 'Approved') primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button>`;
-  else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Scheduled — sends in the next free slot</span>`;
+  else if (emailStatus === 'Queued') primary = lead.sendSlot ? wbSendSlot(lead) : `<span class="stage-pill pill-researched">Scheduled — sends in the next free slot</span>`;
   else if (String(emailStatus).startsWith('Sent')) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sent</span>`;
   const blockers = d.ready ? [] : d.checks.filter(c => !c.ok);
   const blockNote = blockers.length && /disabled/.test(primary) ? `<p class="rv-blocked form-error">Can't send yet — fix: ${esc(blockers.map(c => c.label).join(', '))}.</p>` : '';
@@ -2950,6 +2973,13 @@ async function wbAction(action, button) {
   if (action === 'wb-filter') { state.wb.filter = button.dataset.filter; state.wb.selectedId = null; renderApp(); return true; }
   if (action === 'wb-sort') { state.wb.sort = button.dataset.sort; renderApp(); return true; }
   if (action === 'wb-select') { state.wb.selectedId = id; renderApp(); return true; }
+  if (action === 'wb-send-now') {
+    button.disabled = true; button.textContent = 'Sending…';
+    try { const r = await API(`/api/leads/${encodeURIComponent(id)}/send-now`, { method: 'POST', body: '{}' }); toast(r.ok ? 'Sent.' : r.error || 'Not sent.', !r.ok); }
+    catch (err) { toast(err.message, true); }
+    await refresh(); if (state.view === 'review' && state.review) { state.review.cache = {}; await openSendPreview(id, state.review.step || 0); }
+    return true;
+  }
   if (action.startsWith('seq-') || action === 'triage-apply' || action === 'wb-send-all') return wbSequenceAction(action, button);
   if (action === 'wb-mailbox') { state.wb.busy[id] = true; renderApp(); try { const r = await API(`/api/leads/${encodeURIComponent(id)}/find-mailbox`, { method: 'POST', body: '{}' }); const ms = r.mailboxSearch; toast(ms.status === 'published' || ms.status === 'pattern-verified' ? `Mailbox found and set: ${r.lead.email}` : ms.status === 'unconfirmed' ? 'No published mailbox; pattern guesses listed for you to confirm.' : ms.status === 'unreachable' ? 'Website unreachable from the server.' : 'No generic mailbox published on the pages checked.'); } catch (err) { toast(err.message, true); } finally { delete state.wb.busy[id]; await refresh(); } return true; }
   if (action === 'wb-use-mailbox') { try { const r = await API(`/api/leads/${encodeURIComponent(id)}/use-mailbox`, { method: 'POST', body: JSON.stringify({ email: button.dataset.email }) }); toast(`Using ${r.lead.email}.`); } catch (err) { toast(err.message, true); } await refresh(); return true; }
@@ -3153,8 +3183,8 @@ function dlvPolicyPanel(p) {
 }
 function dlvQueuePanel(jobs) {
   const rows = jobs.slice(0, 60);
-  return `<section class="panel"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('send')}</span><div><h2>Send queue</h2><p>Every approved email passes through here: suppression gate → mailbox cap → window → SMTP. Rejected addresses are quarantined automatically.</p></div></div>
-    ${rows.length ? `<div class="table-wrap"><table class="data-table dlv-queue"><thead><tr><th>When</th><th>To</th><th>Subject</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(j => `<tr><td>${dlvWhen(j.status === 'sent' ? j.sentAt : j.scheduledAt)}</td><td><strong>${esc(j.meta?.company || '')}</strong><br><small>${esc(j.to)}</small></td><td>${esc(j.subject)}${j.lastError ? `<br><small class="form-error">${esc(j.lastError.slice(0, 120))}</small>` : ''}</td><td>${dlvJobPill(j.status)}${j.attempts > 1 ? `<small class="subtle"> ×${j.attempts}</small>` : ''}</td><td class="dlv-queue-actions">${['queued', 'held', 'failed'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(j.id)}">${svgIcon('xCircle')}Cancel</button>` : ''}${['held', 'failed', 'dead'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-retry-job" data-id="${esc(j.id)}">${svgIcon('refresh')}Retry</button>` : ''}${j.leadId ? `<button type="button" class="button button-ghost button-small" data-action="wb-open" data-id="${esc(j.leadId)}">${svgIcon('external')}Lead</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="subtle">Queue is empty.</p>`}</section>`;
+  return `<section class="panel"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('send')}</span><div><h2>Send queue</h2><p>Every approved email passes through here: suppression gate → mailbox cap → window → SMTP. Rejected addresses are quarantined automatically.</p></div><button type="button" class="button button-secondary button-small" data-action="dlv-tick">${svgIcon('play')}Send what is due</button></div>
+    ${rows.length ? `<div class="table-wrap"><table class="data-table dlv-queue"><thead><tr><th>When</th><th>To</th><th>Subject</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(j => `<tr><td>${dlvWhen(j.status === 'sent' ? j.sentAt : j.scheduledAt)}</td><td><strong>${esc(j.meta?.company || '')}</strong><br><small>${esc(j.to)}</small></td><td>${esc(j.subject)}${j.lastError ? `<br><small class="form-error">${esc(j.lastError.slice(0, 120))}</small>` : ''}</td><td>${dlvJobPill(j.status)}${j.attempts > 1 ? `<small class="subtle"> ×${j.attempts}</small>` : ''}</td><td class="dlv-queue-actions">${j.status === 'queued' ? `<button type="button" class="button button-secondary button-small" data-action="dlv-send-now" data-id="${esc(j.id)}">${svgIcon('send')}Send now</button>` : ''}${['queued', 'held', 'failed'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-cancel-job" data-id="${esc(j.id)}">${svgIcon('xCircle')}Cancel</button>` : ''}${['held', 'failed', 'dead'].includes(j.status) ? `<button type="button" class="button button-ghost button-small" data-action="dlv-retry-job" data-id="${esc(j.id)}">${svgIcon('refresh')}Retry</button>` : ''}${j.leadId ? `<button type="button" class="button button-ghost button-small" data-action="wb-open" data-id="${esc(j.leadId)}">${svgIcon('external')}Lead</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<p class="subtle">Queue is empty.</p>`}</section>`;
 }
 async function dlvAction(action, button) {
   const id = button.dataset.id;
@@ -3180,6 +3210,7 @@ async function dlvAction(action, button) {
     if (action === 'dlv-resume') { const r = await call(`/api/deliverability/mailboxes/${id}/resume`); toast(r.warning || 'Mailbox resumed.', Boolean(r.warning)); await loadDeliverability(true); return true; }
     if (action === 'dlv-restart-ramp') { await call(`/api/deliverability/mailboxes/${id}/restart-ramp`); toast('Ramp restarted from week 1.'); await loadDeliverability(true); return true; }
     if (action === 'dlv-delete') { if (!confirm('Remove this mailbox? Queued emails on it will be held.')) return true; await call(`/api/deliverability/mailboxes/${id}`, {}, 'DELETE'); await loadDeliverability(true); return true; }
+    if (action === 'dlv-send-now') { button.disabled = true; try { const r = await call(`/api/deliverability/jobs/${id}/send-now`); toast(r.ok ? 'Sent.' : r.error, !r.ok); } catch (err) { toast(err.message, true); } await loadDeliverability(true); await refresh(); return true; }
     if (action === 'dlv-cancel-job') { await call(`/api/deliverability/jobs/${id}/cancel`); await loadDeliverability(true); await refresh(); return true; }
     if (action === 'dlv-retry-job') { await call(`/api/deliverability/jobs/${id}/retry`); toast('Re-queued in the next free slot.'); await loadDeliverability(true); await refresh(); return true; }
     if (action === 'wb-open') { state.wb.selectedId = id; state.wb.filter = 'all'; setView('workbench'); return true; }
