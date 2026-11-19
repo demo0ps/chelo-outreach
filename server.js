@@ -2425,13 +2425,19 @@ async function handleApi(req, res, url) {
     if (method === 'POST' && pathname === '/api/settings/test-ai') {
       const ai = configStore.getAIConfig();
       if (!ai.apiKey) return sendJson(res, 400, { error: 'Add an AI API key in Settings before testing the connection.' });
+      // Say exactly which key was used, so "is it our side?" can be answered from the message alone.
+      const used = `key ending …${ai.apiKey.slice(-4)} (${ai.keySource === 'environment' ? 'from the server environment OPENAI_API_KEY — this overrides the one saved in Settings' : 'saved in Settings'}), model ${ai.model}, endpoint ${(() => { try { return new URL(ai.endpoint).host; } catch { return ai.endpoint; } })()}`;
       let response;
       try { response = await fetch(ai.endpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: ai.model, max_tokens: 5, messages: [{ role: 'user', content: 'Reply with OK.' }] }), signal: AbortSignal.timeout(15000) }); }
       catch (err) { throw new Error(/abort|timeout/i.test(String(err.name || err.message)) ? 'The AI provider did not answer within 15 seconds. Check the endpoint address and try again.' : `Could not reach the AI provider: ${String(err.cause?.message || err.message || err).slice(0, 120)}`); }
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(response.status === 401 ? 'The AI provider rejected the key. Check it and paste it again.' : response.status === 404 ? `The model "${ai.model}" was not found at that endpoint.` : result.error?.message || `AI provider returned HTTP ${response.status}.`);
-      configStore.recordAudit({ actor: actorName(), action: 'settings.ai_tested', entityType: 'integration', summary: 'AI provider connection test succeeded' });
-      return sendJson(res, 200, { ok: true, model: ai.model, message: 'AI provider connection succeeded.' });
+      if (!response.ok) {
+        const providerSaid = String(result.error?.message || result.message || '').slice(0, 240);
+        const why = response.status === 401 ? 'The AI provider rejected the key.' : response.status === 404 ? `The model "${ai.model}" was not found at that endpoint.` : response.status === 429 && /quota|billing|credit/i.test(providerSaid) ? 'The provider says this account has no credit or quota left — that is on the provider\'s side, not Chelo\'s. Add billing there, or use a different key.' : response.status === 429 ? 'The provider is rate-limiting this key right now. Wait a minute and try again.' : `AI provider returned HTTP ${response.status}.`;
+        throw new Error(`${why} Tested ${used}.${providerSaid ? ` Provider said: "${providerSaid}"` : ''}`);
+      }
+      configStore.recordAudit({ actor: actorName(), action: 'settings.ai_tested', entityType: 'integration', summary: `AI provider connection test succeeded (${ai.keySource}, ${ai.model})` });
+      return sendJson(res, 200, { ok: true, model: ai.model, keySource: ai.keySource, message: `AI provider connection succeeded — ${used}.` });
     }
     if (method === 'POST' && pathname === '/api/settings/test-search') {
       const searchConfig = configStore.getSearchConfig();
