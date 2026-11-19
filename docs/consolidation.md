@@ -162,3 +162,15 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   (root queue). Refuses when the window is closed or the mailbox hit today's cap. Leads carry `sendSlot` (next waiting job, due?,
   window open?, next opening) and the lead page/review page show "Email sends at 09:44 — Send now" or "waits for the sending window —
   goes Mon 08:30". The Send queue header has "Send what is due" (visible inside Health → Email delivery too, where the page header is hidden).
+
+## Warm Vercel instances reload when the shared snapshot moves (v45)
+
+- Symptom family: "the draft is gone", "no draft to preview yet", "PDF generator stopped working", data reverting. Cause: Vercel runs
+  several warm instances; each pulled the Supabase snapshot once at cold start and never again. A request landing on a different
+  instance saw old data — and that instance's next save pushed the old data back over the new (last writer wins).
+- Fix (`api/index.js`): before any `/api`, `/track`, `/proposal`, `/book`, `/opt-out` request the entry compares the shared manifest
+  version with the version this instance loaded (`remoteSync.checkFresh()`, one small read; GETs throttled to every 2 s, mutating
+  requests always). When behind: `app.close()` (releases SQLite), purge the require cache for the repo's modules, `pull()`, re-require
+  `server.js`. Single-flight. The sync object lives on `globalThis` so version state survives the reload.
+- Test: `tests/vercel-entry.test.js` drives the handler with a fake sync — a bump in the remote version makes the next request
+  `check → pull` before serving; POSTs check even inside the throttle window.

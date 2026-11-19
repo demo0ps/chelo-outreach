@@ -12,11 +12,41 @@ const { fromEnv } = require('../lib/remote-sync');
 const DATA_DIR = path.resolve(process.env.DATA_DIR || '/tmp/chelo-data');
 process.env.DATA_DIR = DATA_DIR;
 const PUSH_BUDGET_MS = Number(process.env.SYNC_PUSH_BUDGET_MS) || 40000; // < Vercel maxDuration (60 s)
-const booted = (async () => {
+const ROOT = path.resolve(__dirname, '..');
+function loadApp() { return require('../server'); }
+let booted = (async () => {
   const sync = fromEnv(DATA_DIR);
   if (sync) { try { await sync.ensureBucket(); await sync.pull(); } catch (err) { console.error('[remote-sync] cold-start pull failed; continuing with local data:', err.message); } }
-  return require('../server');
+  return loadApp();
 })();
+
+// Several warm instances serve one workspace. Each loads the snapshot at cold start; if another instance pushed since,
+// this one is stale (drafts/PDFs "missing", and its next save would overwrite newer data). So before handling a request we
+// compare the shared manifest version with ours (one small read, throttled for GETs) and, when behind, pull and re-require
+// the app so every module re-reads SQLite/settings from disk. Costs ~1 s only when somebody else actually wrote.
+const CHECK_EVERY_MS = Number(process.env.SYNC_CHECK_INTERVAL_MS) || 2000;
+let lastCheckAt = 0, reloading = null;
+function needsFreshness(req) { return /^\/(api|track|proposal|book|opt-out|p)\b/.test(req.url) && !/^\/api\/(health|auth\/status)\b/.test(req.url); }
+async function ensureFresh(req) {
+  const app = await booted;
+  if (!app.remoteSync || !needsFreshness(req)) return app;
+  const mutating = isMutating(req);
+  if (!mutating && Date.now() - lastCheckAt < CHECK_EVERY_MS) return app;
+  lastCheckAt = Date.now();
+  const check = await app.remoteSync.checkFresh();
+  if (!check.stale) return app;
+  if (!reloading) {
+    reloading = (async () => {
+      console.log(`[remote-sync] snapshot v${check.remoteVersion} is newer than local v${check.localVersion}; reloading`);
+      try { app.close(); } catch (err) { console.error('[remote-sync] close before reload failed:', err.message); }
+      for (const key of Object.keys(require.cache)) if (key.startsWith(ROOT) && !key.includes('node_modules') && !key.startsWith(path.join(ROOT, 'api'))) delete require.cache[key];
+      try { await app.remoteSync.pull(); } catch (err) { console.error('[remote-sync] reload pull failed:', err.message); }
+      return loadApp();
+    })();
+    booted = reloading.finally(() => { reloading = null; });
+  }
+  return booted;
+}
 
 function isMutating(req) { return !['GET', 'HEAD', 'OPTIONS'].includes(req.method) || /^\/api\/cron\//.test(req.url) || /^\/track\//.test(req.url); }
 
@@ -40,7 +70,7 @@ function deferEndUntilPersisted(app, res) {
 }
 
 module.exports = async (req, res) => {
-  const app = await booted;
+  const app = await ensureFresh(req);
   const mutating = isMutating(req);
   if (mutating && app.remoteSync) deferEndUntilPersisted(app, res);
   await new Promise(resolve => { res.once('finish', resolve); res.once('close', resolve); Promise.resolve(app.requestHandler(req, res)).catch(err => { console.error(err); if (!res.headersSent) { res.statusCode = 500; res.end('Internal error'); } else if (!res.writableEnded) res.end(); resolve(); }); });

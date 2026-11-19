@@ -3105,7 +3105,7 @@ async function handleApi(req, res, url) {
         const stepN = Number(url.searchParams.get('step') || 0);
         const seq = lead.sequence; const seqStep = seq && stepN ? seq.steps.find(x => x.n === stepN) : null;
         const draft = seqStep ? { subject: seqStep.subject, body: seqStep.body } : lead.emailDraft;
-        if (!draft) return sendJson(res, 404, { error: 'There is no draft to preview yet. Run the Workbench flow or write one in step 4.' });
+        if (!draft) return sendJson(res, 404, { error: 'There is no email written for this funder yet. Go back and press Start, or Edit email to write one.' });
         const attachProposal = (!seqStep || seqStep.n === 1) ? shouldAttachProposal(lead, false) : false;
         const text = (!seqStep || seqStep.n === 1) ? cleanApprovedEmailBody(draft, attachProposal) : String(draft.body || '');
         const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
@@ -3669,4 +3669,6 @@ const remoteSyncLib = require('./lib/remote-sync');
 const remoteSync = remoteSyncLib.fromEnv(DATA_DIR);
 if (remoteSync) remoteSync.setBeforeSnapshot(() => { if (savePending) flushDb(); try { store.conn.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} });
 if (require.main === module || process.env.CHELO_AUTO_LISTEN === 'true') listen();
-module.exports = { server, requestHandler, remoteSync, DATA_DIR, listen, flushPendingWrites: () => { if (savePending) flushDb(); } };
+/** Release the SQLite connection so a newer snapshot can be pulled and the app re-required (serverless hot reload). */
+function close() { try { if (savePending) flushDb(); } catch {} try { store.close(); } catch {} }
+module.exports = { server, requestHandler, remoteSync, DATA_DIR, listen, close, flushPendingWrites: () => { if (savePending) flushDb(); } };
