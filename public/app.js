@@ -1219,7 +1219,7 @@ async function dispatchAction(button) {
   const action = button.dataset.action;
   if (String(action || '').startsWith('m-') && typeof window.mobileAction === 'function') { if (await window.mobileAction(action, button)) return; }
   if (String(button.dataset.action || '').startsWith('ix-') && typeof window.inboxAction === 'function') { if (await window.inboxAction(button.dataset.action, button)) return; }
-  if (String(button.dataset.action || '').startsWith('wb-')) { if (await wbAction(button.dataset.action, button)) return; }
+  if (/^(wb-|seq-)/.test(String(action || '')) || action === 'triage-apply') { if (await wbAction(action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dlv-')) { if (await dlvAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('dq-')) { if (await dqAction(button.dataset.action, button)) return; }
   if (String(button.dataset.action || '').startsWith('rel-')) { if (await relAction(button.dataset.action, button)) return; }

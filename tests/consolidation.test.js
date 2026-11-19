@@ -121,3 +121,17 @@ test('Preview before send: workbench and approvals open one screen with email + 
   t.state.review.cache[0].proposal = { url: '/api/leads/l-draft/proposal/preview', download: '/api/leads/l-draft/proposal/download' }; t.renderApp();
   assert.match(html.app, /class="sp-pdf-frame"[^>]*src="\/api\/leads\/l-draft\/proposal\/preview/);
 });
+
+test('every data-action button in the UI has a click handler (dead-button guard)', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const src = ['app.js', 'inbox.js', 'mobile.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
+  const used = new Set([...src.matchAll(/data-action=\\?"([a-z0-9-]+)"/g)].map(m => m[1]));
+  const handled = new Set([...src.matchAll(/action\s*===\s*'([a-z0-9-]+)'/g)].map(m => m[1]));
+  for (const m of src.matchAll(/\[((?:'[a-z0-9-]+',?\s*)+)\]\.includes\(action\)/g)) for (const a of m[1].matchAll(/'([a-z0-9-]+)'/g)) handled.add(a[1]);
+  for (const m of src.matchAll(/closest\('\[data-action="([a-z0-9-]+)"\]'\)/g)) handled.add(m[1]);
+  const dead = [...used].filter(a => !handled.has(a));
+  assert.deepEqual(dead, [], `buttons with no handler: ${dead.join(', ')}`);
+  // Prefix routing in dispatchAction must forward every family that wbAction serves.
+  const dispatch = src.slice(src.indexOf('async function dispatchAction'), src.indexOf('async function dispatchAction') + 1500);
+  assert.match(dispatch, /seq-/, 'seq-* actions (Send & follow up, Stop follow-ups) must reach wbAction');
+});

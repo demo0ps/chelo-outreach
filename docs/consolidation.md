@@ -138,3 +138,12 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   Apps → Gmail → Authenticate email; DMARC `p=quarantine` already exists.
 - Bug caught by the new test: rows now carry `imap_json`, which the named-parameter UPDATE rejected ("Unknown named parameter") —
   `bindable()` strips it before `setMailboxHealth` / `setMailboxStatus`.
+
+## Dead "Send & follow up" button (v43)
+
+- Symptom: on the review page, **Send & follow up** (and *Stop follow-ups*, *Approve as second person*) did nothing — no request,
+  no error. The click dispatcher only forwarded `wb-*` actions to `wbAction`, but those buttons use `seq-*`.
+- Fix: dispatcher forwards `wb-*`, `seq-*` and `triage-apply`. New test in `tests/consolidation.test.js` scans every
+  `data-action` in the UI and fails if any has no handler, and asserts `seq-` is routed.
+- Also (v42): "Make the PDF now" on the review page builds the PDF from the project instead of demanding the proposal form; when
+  Send is greyed out the page now says which checks block it.
