@@ -1150,10 +1150,10 @@ function nudgeEngine(force = false) {
   lastNudge = Date.now();
   API('/api/engine/nudge', { method: 'POST', body: '{}' }).then(r => { if (r && ((r.ran || 0) > 0 || (r.inboxes && r.inboxes.matched > 0))) refresh().catch(() => {}); }).catch(() => {});
 }
-setInterval(() => { if (document.visibilityState === 'visible') nudgeEngine(); }, 5 * 60e3);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') nudgeEngine(); });
+if (typeof setInterval === 'function') setInterval(() => { if (document.visibilityState === 'visible') nudgeEngine(); }, 5 * 60e3);
+if (typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') nudgeEngine(); });
 async function refresh() {
-  try { state.data = await API('/api/init'); setTimeout(() => nudgeEngine(), 1500); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.view === 'review' && state.review && !state.review.loading) openSendPreview(state.review.id, Number(state.review.step || 0)); }
+  try { state.data = await API('/api/init'); if (typeof setTimeout === 'function') setTimeout(() => nudgeEngine(), 1500); renderApp(); if (typeof window.inboxLoad === 'function' && state.ix?.data) window.inboxLoad({ silent: true }); if (state.view === 'review' && state.review && !state.review.loading) openSendPreview(state.review.id, Number(state.review.step || 0)); }
   catch (error) {
     if (error.status === 401) { state.auth = await API('/api/auth/status').catch(() => ({ authenticated: false, setupRequired: false })); renderAuthGate(); return; }
     throw error;
