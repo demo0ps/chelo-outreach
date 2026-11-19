@@ -1388,6 +1388,12 @@ async function dispatchAction(button) {
     if (action === 'send-preview') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
     if (action === 'send-preview-step') { await openSendPreview(button.dataset.id, Number(button.dataset.step || 0)); return; }
     if (action === 'send-preview-close') { closeSendPreview(); return; }
+    if (action === 'rv-make-pdf') { // builds the PDF from the chosen project — same as Send does — then refreshes the preview
+      button.disabled = true; button.textContent = 'Making the PDF…';
+      try { await API(`/api/leads/${encodeURIComponent(button.dataset.id)}/proposal`, { method: 'POST', body: '{}' }); toast('PDF ready — it is attached to the first email.'); await refresh(); if (state.review) state.review.cache = {}; await openSendPreview(button.dataset.id, Number(state.review?.step || 0)); }
+      catch (err) { toast(err.message, true); button.disabled = false; button.textContent = 'Make the PDF now'; }
+      return;
+    }
     if (action === 'send-preview-edit') { state.modal = null; state.view = 'workbench'; state.wb.selectedId = button.dataset.id; state.wb.openStep = 'draft'; renderApp(); setTimeout(() => $('#email-body')?.focus(), 60); return; }
     if (action === 'prospects-mode') { state.prospectsMode = button.dataset.mode === 'board' ? 'board' : 'table'; renderApp(); return; }
     if (action === 'wb-intake') { state.wb.intake = button.dataset.intake === 'pool' ? 'pool' : 'add'; if (state.wb.intake === 'pool') loadCatalogue(); renderApp(); return; }
@@ -2509,7 +2515,7 @@ function reviewView() {
     ${d.links.length ? `<div class="sp-links"><span class="subtle">Links in this email</span>${d.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="sp-link sp-link-${esc(l.kind)}">${svgIcon(l.kind === 'cta' ? 'calendar' : l.kind === 'page' ? 'external' : 'link')}${esc(l.kind === 'cta' ? 'Yes — book a briefing (one click)' : l.kind === 'page' ? 'Co-branded project page' : l.kind === 'opt-out' ? 'Opt-out' : l.url.replace(/^https?:\/\//, '').slice(0, 60))}</a>`).join('')}</div>` : ''}
   </section>`;
   const pdfPane = d.proposal ? `<section class="sp-pdf"><div class="sp-pdf-head"><strong>${svgIcon('proposals')}Proposal PDF</strong><span>${d.attachments.length ? 'attached to this email' : rv.step > 0 ? 'sent with the first email' : 'will be attached'}</span><a class="button button-ghost button-small" href="${esc(d.proposal.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open full size</a><a class="button button-ghost button-small" href="${esc(d.proposal.download)}" download>${svgIcon('download')}Download</a></div><iframe class="sp-pdf-frame" title="Proposal PDF" src="${esc(d.proposal.url)}#toolbar=1&view=FitH"></iframe></section>`
-    : `<section class="sp-pdf sp-pdf-empty"><strong>${svgIcon('proposals')}No proposal PDF yet</strong><p class="subtle">Chelo makes the PDF from the chosen project when you press Send. Make it now if you want to read it first.</p><button type="button" class="button button-secondary button-small" data-action="proposal-draft" data-id="${esc(lead.id)}">${svgIcon('proposals')}Make the PDF now</button></section>`;
+    : `<section class="sp-pdf sp-pdf-empty"><strong>${svgIcon('proposals')}No proposal PDF yet</strong><p class="subtle">Chelo makes the PDF from the chosen project when you press Send. Make it now if you want to read it first.</p><button type="button" class="button button-secondary button-small" data-action="rv-make-pdf" data-id="${esc(lead.id)}">${svgIcon('proposals')}Make the PDF now</button></section>`;
   const checks = `<ul class="sp-checks">${d.checks.map(c => `<li class="${c.ok ? 'is-ok' : 'is-bad'}">${svgIcon(c.ok ? 'checkCircle' : 'xCircle')}<span><strong>${esc(c.label)}</strong><small>${esc(c.detail)}</small></span></li>`).join('')}</ul>`;
   const st = d.status; const seq = lead.sequence; const emailStatus = st.email;
   let primary = '';
@@ -2521,7 +2527,9 @@ function reviewView() {
   else if (emailStatus === 'Approved') primary = `<button type="button" class="button button-primary" data-action="send-smtp" data-id="${esc(lead.id)}">${svgIcon('send')}Send now</button>`;
   else if (emailStatus === 'Queued') primary = `<span class="stage-pill pill-researched">Scheduled — sends in the next free slot</span>`;
   else if (String(emailStatus).startsWith('Sent')) primary = `<span class="stage-pill pill-won">${svgIcon('check')}Sent</span>`;
-  const footer = `<div class="rv-footer"><div class="rv-footer-left">${checks}</div><div class="rv-footer-right"><button type="button" class="button button-secondary" data-action="send-preview-edit" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit email</button>${primary}</div></div>`;
+  const blockers = d.ready ? [] : d.checks.filter(c => !c.ok);
+  const blockNote = blockers.length && /disabled/.test(primary) ? `<p class="rv-blocked form-error">Can't send yet — fix: ${esc(blockers.map(c => c.label).join(', '))}.</p>` : '';
+  const footer = `<div class="rv-footer"><div class="rv-footer-left">${checks}</div><div class="rv-footer-right">${blockNote}<button type="button" class="button button-secondary" data-action="send-preview-edit" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit email</button>${primary}</div></div>`;
   return `<div class="rv-page ${rv.loading ? 'is-loading' : ''}">${head}${seqTabs}<div class="sp-layout">${emailPane}${pdfPane}</div>${footer}</div>`;
 }
 function wbReplyPointer(lead) {

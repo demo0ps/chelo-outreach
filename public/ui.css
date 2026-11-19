@@ -2212,3 +2212,4 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .dlv-dns th, .dlv-dns td { text-align: left; vertical-align: top; padding: 6px 8px; border-top: 1px solid var(--border, #e2e4ea); }
 .dlv-dns code { word-break: break-all; }
 .dlv-mailbox-head small { display: block; }
+.rv-blocked { flex-basis: 100%; margin: 0 0 6px; font-size: 0.9rem; }
