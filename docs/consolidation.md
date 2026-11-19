@@ -174,3 +174,25 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
   `server.js`. Single-flight. The sync object lives on `globalThis` so version state survives the reload.
 - Test: `tests/vercel-entry.test.js` drives the handler with a fake sync — a bump in the remote version makes the next request
   `check → pull` before serving; POSTs check even inside the throttle window.
+
+## Connect with Google (OAuth) for Workspace mailboxes (v46)
+
+- **Settings → Google**: Client ID + Client secret of an *Internal* OAuth client created in the company's Google Cloud project
+  (`PUT /api/settings/google`, secret encrypted; env `GOOGLE_CLIENT_ID/SECRET` override). The card prints the exact origin and
+  redirect URI to paste into Google (`/api/oauth/google/callback`).
+- **Add mailbox → Connect with Google** (`GET /api/oauth/google/start[?mailbox=id]`, admin): redirects to Google with scopes
+  `gmail.send` + `gmail.readonly` + `openid email`, `access_type=offline`, `prompt=consent`, `hd=<hostedDomain>` if set. State is
+  HMAC-signed with a per-workspace key (`configStore.deriveKey`) and expires in 15 min — stateless across serverless instances.
+  Callback exchanges the code, reads the address from the id_token, refuses if a permission was unticked, then
+  `sendEngine.connectGoogleMailbox()` creates/re-links the mailbox (`auth_type='google'`, refresh token encrypted in
+  `password_json`, `host='gmail-api'`, imap marker `gmail-api`) and redirects to `/?google=connected&email=…`.
+- **Sending**: `lib/google-mail.js` `transport(mailbox)` mirrors nodemailer's interface — MIME built by nodemailer's MailComposer
+  (same headers, List-Unsubscribe, PDF attachment, Message-ID) and posted to `users/me/messages/send`. Access tokens cached per
+  mailbox and refreshed with the stored refresh token.
+- **Reading**: `checkInbox()` lists `in:inbox after:<cursor> -from:me` and fetches metadata headers only (never bodies); same
+  `signals` shape as the IMAP reader; cursor + recent ids kept in `imap_json.lastSync` to de-duplicate across reads.
+- **Revocation**: `invalid_grant`/401 → error flagged `disconnected` → engine class `auth` → mailbox paused "Google disconnected —
+  press Reconnect"; the card shows a primary **Reconnect Google** button; reconnecting re-links the same mailbox id and resumes it.
+- `api/index.js`: `/api/oauth/*` counted as mutating so the new mailbox is pushed to Supabase before the redirect completes.
+- Tests: `tests/google-mail.test.js` (auth URL/scopes/state, code exchange + unticked permissions, MIME + Gmail send with cached
+  token, revoked → paused → reconnect, metadata-only inbox read).

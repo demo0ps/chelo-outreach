@@ -2215,3 +2215,9 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .rv-blocked { flex-basis: 100%; margin: 0 0 6px; font-size: 0.9rem; }
 .wb-send-slot { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wb-send-slot .icon-svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
+.dlv-google-connect { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.dlv-google-connect .subtle { max-width: 520px; font-size: 0.85rem; }
+.dlv-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; color: var(--z-500, #6b7280); font-size: 0.8rem; }
+.dlv-or::before, .dlv-or::after { content: ''; flex: 1; border-top: 1px solid var(--border, #e2e4ea); }
+.settings-steps { margin: 4px 0 0; padding-left: 18px; font-size: 0.9rem; display: grid; gap: 4px; }
+.settings-steps code { word-break: break-all; }

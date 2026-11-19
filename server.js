@@ -19,6 +19,7 @@ const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
 const conversion = require('./lib/conversion');
 const mailAutodiscover = require('./lib/mail-autodiscover');
+const createGoogleMail = require('./lib/google-mail');
 const relationships = require('./lib/relationships');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
@@ -40,7 +41,9 @@ const SMTP_PROBE_DISABLED = process.env.SMTP_PROBE_DISABLED === 'true';
 const flowRuns = new Map(); // leadId -> Promise (dedupes concurrent runs)
 const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SEND_WORKER === 'off');
 const domainHealth = createDomainHealth();
+const googleMail = createGoogleMail({ getConfig: () => configStore.getGoogleConfig(), signingKey: configStore.deriveKey('google-oauth-state'), log: m => console.log(`[google] ${m}`) });
 function mailboxTransport(mailbox) {
+  if (mailbox.authType === 'google') return googleMail.transport(mailbox);
   return nodemailer.createTransport({
     host: mailbox.host, port: mailbox.port, secure: mailbox.secure,
     ...(mailbox.username ? { auth: { user: mailbox.username, pass: mailbox.password } } : {}),
@@ -993,14 +996,25 @@ async function syncMailboxInbox(mailboxId, actor = 'system') {
   const box = sendEngine.getMailbox(mailboxId, { secrets: true });
   if (!box || !box.imap) return { ok: false, mailboxId, error: 'This mailbox has no reply-reading (IMAP) settings.' };
   try {
-    const result = await inbound.checkImapInbox({ host: box.imap.host, port: box.imap.port, username: box.imap.username, password: box.imap.password });
-    const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '' }, 'imap'));
+    let result; let extra = {};
+    if (box.authType === 'google') {
+      const prev = box.imap.lastSync || {}; const recent = new Set(prev.recentIds || []);
+      const since = prev.cursor ? new Date((Number(prev.cursor) - 120) * 1000).toISOString() : null; // 2-minute overlap, de-duplicated by Gmail id
+      const g = await googleMail.checkInbox(box, { since });
+      result = { checked: g.checked, signals: g.signals.filter(sg => !recent.has(sg.gmailId)) };
+      const newest = Math.max(prev.cursor || 0, ...g.seen.map(x => Math.floor(x.internalDate / 1000)));
+      extra = { cursor: newest || Math.floor(Date.now() / 1000), recentIds: [...new Set([...(prev.recentIds || []), ...g.seen.map(x => x.id)])].slice(-300) };
+    } else {
+      result = await inbound.checkImapInbox({ host: box.imap.host, port: box.imap.port, username: box.imap.username, password: box.imap.password });
+    }
+    const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '', mailboxId: box.id }, box.authType === 'google' ? 'gmail' : 'imap'));
     const matched = applied.filter(a => a.matched).length;
-    sendEngine.recordImapSync(box.id, { ok: true, checked: result.checked, matched });
+    sendEngine.recordImapSync(box.id, { ok: true, checked: result.checked, matched, ...extra });
     configStore.recordAudit({ actor, action: 'inbound.imap_synced', entityType: 'mailbox', entityId: box.id, summary: `${box.fromEmail}: read ${result.checked} new message(s); ${matched} matched funders` });
     return { ok: true, mailboxId: box.id, email: box.fromEmail, checked: result.checked, matched, results: applied };
   } catch (err) {
     sendEngine.recordImapSync(box.id, { ok: false, error: String(err.message || err).slice(0, 200) });
+    if (err.disconnected && box.authType === 'google') sendEngine.setMailboxStatus(box.id, 'paused', `auto: Google disconnected this mailbox — press Reconnect (${String(err.message).slice(0, 80)})`);
     return { ok: false, mailboxId: box.id, email: box.fromEmail, error: String(err.message || err).slice(0, 200) };
   }
 }
@@ -2529,6 +2543,44 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/bookings') return sendJson(res, 200, db.bookings);
 
     if (method === 'GET' && pathname === '/api/settings') return sendJson(res, 200, configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) }));
+    // ---- Google (OAuth client for "Connect with Google") ----
+    if (method === 'GET' && pathname === '/api/settings/google') {
+      const g = configStore.getGoogleConfig();
+      return sendJson(res, 200, { configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source, hostedDomain: g.hostedDomain, updatedAt: g.updatedAt, redirectUri: googleMail.redirectUri(configStore.getPublicBaseUrl() || publicOrigin(req)), origin: configStore.getPublicBaseUrl() || publicOrigin(req), scopes: googleMail.SCOPE_LABELS });
+    }
+    if (method === 'PUT' && pathname === '/api/settings/google') {
+      const body = await readBody(req);
+      if (body.clientId !== undefined && body.clientId && !/\.apps\.googleusercontent\.com$/.test(String(body.clientId).trim())) return sendJson(res, 400, { error: 'That does not look like a Google Client ID (it ends in .apps.googleusercontent.com).' });
+      const g = configStore.saveGoogleConfig(body);
+      configStore.recordAudit({ actor: actorName(), action: 'settings.google', entityType: 'settings', summary: body.clear ? 'Google OAuth client removed' : `Google OAuth client saved (${g.clientId.slice(0, 14)}…)` });
+      return sendJson(res, 200, { ok: true, configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source });
+    }
+    if (method === 'GET' && pathname === '/api/oauth/google/start') {
+      if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+      const mailbox = url.searchParams.get('mailbox') ? sendEngine.getMailbox(url.searchParams.get('mailbox')) : null;
+      try {
+        const target = googleMail.authUrl({ baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req), actor: actorName(), mailboxId: mailbox?.id || '', loginHint: mailbox?.fromEmail || url.searchParams.get('email') || '' });
+        res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' }); return res.end();
+      } catch (err) { return sendJson(res, 409, { error: err.message }); }
+    }
+    if (method === 'GET' && pathname === '/api/oauth/google/callback') {
+      const back = (params) => { res.writeHead(302, { Location: `/?${new URLSearchParams(params)}`, 'Cache-Control': 'no-store' }); return res.end(); };
+      const state = googleMail.verifyState(url.searchParams.get('state'));
+      if (!state) return back({ google: 'error', message: 'The sign-in link expired or was tampered with. Start again from Add mailbox.' });
+      if (url.searchParams.get('error')) return back({ google: 'error', message: `Google said: ${url.searchParams.get('error')}. Nothing was connected.` });
+      try {
+        const got = await googleMail.exchangeCode({ code: url.searchParams.get('code'), baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req) });
+        if (got.missing.length) return back({ google: 'error', message: `Google connected, but without: ${got.missing.join('; ')}. Connect again and tick every box.` });
+        const hd = configStore.getGoogleConfig().hostedDomain; if (hd && !got.email.endsWith(`@${hd}`)) return back({ google: 'error', message: `${got.email} is not a ${hd} mailbox. Sign in with a company account.` });
+        const mailbox = sendEngine.connectGoogleMailbox({ email: got.email, refreshToken: got.refreshToken, actor: actorName() });
+        googleMail.forget(mailbox.id);
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.google_connected', entityType: 'mailbox', entityId: mailbox.id, summary: `${mailbox.fromEmail} connected with Google (send + read-only)` });
+        const health = await domainHealth.check(mailbox.fromEmail, { selectors: ['google'], force: true }).catch(() => null);
+        if (health) sendEngine.setMailboxHealth(mailbox.id, health);
+        saveDb();
+        return back({ google: 'connected', email: mailbox.fromEmail });
+      } catch (err) { configStore.recordAudit({ actor: actorName(), action: 'mailbox.google_failed', entityType: 'mailbox', summary: String(err.message).slice(0, 200) }); return back({ google: 'error', message: String(err.message || err).slice(0, 300) }); }
+    }
     if (method === 'PUT' && pathname === '/api/settings') {
       const rawBody = await readBody(req);
       const body = req.authSession?.isRoot ? rawBody : configStore.governanceOnly(rawBody);
