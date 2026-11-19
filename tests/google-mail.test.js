@@ -110,3 +110,21 @@ test('google: inbox read (metadata only) yields the same reply / bounce signals 
   assert.match(decodeURIComponent(list), /in:inbox after:\d+ -from:me/);
   assert.ok(calls.filter(c => /messages\/[abc]\?/.test(c.url)).every(c => /format=metadata/.test(c.url)), 'never downloads bodies');
 });
+
+test('google settings: accepts pasted JSON, swapped fields and stray quotes; rejects a non-ID with a plain explanation', async () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const { spawn } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-g-')); const port = 3200 + Math.floor(Math.random() * 500);
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir, DEMO_OPEN_ACCESS: 'true', NODE_ENV: 'development', SMTP_PROBE_DISABLED: 'true', HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  await new Promise((resolve, reject) => { let out = ''; const t = setTimeout(() => reject(new Error(out)), 15000); child.stdout.on('data', c => { out += c; if (/running at/.test(out)) { clearTimeout(t); resolve(); } }); child.stderr.on('data', c => { out += c; }); });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    const st = await fetch(`${base}/api/auth/status`); const cookie = (st.headers.get('set-cookie') || '').split(';')[0]; const { csrfToken } = await st.json();
+    const put = async body => { const r = await fetch(`${base}/api/settings/google`, { method: 'PUT', headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken }, body: JSON.stringify(body) }); return { status: r.status, json: await r.json() }; };
+    const id = '123456789-abcdefg.apps.googleusercontent.com', secret = 'GOCSPX-abcdefghijklmnopqrstuvwxyz';
+    let r = await put({ clientId: ` "${id}" \n`, clientSecret: `'${secret}'` }); assert.equal(r.status, 200); assert.equal(r.json.clientIdHint, `${id.slice(0, 14)}…`);
+    r = await put({ clientId: secret, clientSecret: id }); assert.equal(r.status, 200, 'swapped fields are corrected');
+    r = await put({ clientId: JSON.stringify({ web: { client_id: id, client_secret: secret, redirect_uris: ['x'] } }), clientSecret: '' }); assert.equal(r.status, 200, 'downloaded JSON accepted');
+    r = await put({ clientId: `Client ID: ${id}`, clientSecret: secret }); assert.equal(r.status, 200, 'label prefix stripped');
+    r = await put({ clientId: 'my-project-12345', clientSecret: secret }); assert.equal(r.status, 400); assert.match(r.json.error, /not a Google Client ID.*GOCSPX/);
+  } finally { child.kill('SIGTERM'); }
+});

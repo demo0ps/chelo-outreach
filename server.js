@@ -1034,6 +1034,27 @@ async function syncAllInboxes(actor = 'system') {
   const checked = perMailbox.reduce((n, r) => n + (r.checked || 0), 0), matched = perMailbox.reduce((n, r) => n + (r.matched || 0), 0);
   return { ok: perMailbox.every(r => r.ok), checked, matched, mailboxes: perMailbox, results: perMailbox.flatMap(r => r.results || []), message: perMailbox.length ? `Read ${checked} new message(s) across ${perMailbox.length} inbox${perMailbox.length === 1 ? '' : 'es'}; ${matched} matched funders.` : 'No mailbox has reply-reading set up yet. Add a mailbox under Deliverability.' };
 }
+/** Accept what people actually paste: the downloaded client JSON, the two values swapped, quotes/spaces/newlines around them. */
+function normaliseGoogleClientInput(body = {}) {
+  const clean = v => String(v ?? '').replace(/^[\s"'`]+|[\s"'`,;]+$/g, '').trim();
+  let clientId = clean(body.clientId), clientSecret = clean(body.clientSecret);
+  const out = { ...body };
+  for (const raw of [clientId, clientSecret]) { // a pasted JSON file ({"web":{"client_id":…}} or {"installed":…}) carries both values
+    if (/^\{/.test(raw)) { try { const j = JSON.parse(raw); const w = j.web || j.installed || j; if (w.client_id) clientId = clean(w.client_id); if (w.client_secret) clientSecret = clean(w.client_secret); } catch {} }
+  }
+  const looksId = v => /\.apps\.googleusercontent\.com$/i.test(v);
+  const looksSecret = v => /^GOCSPX-/.test(v) || (v.length >= 20 && !looksId(v) && !/\s/.test(v));
+  if (clientId && clientSecret && looksSecret(clientId) && looksId(clientSecret)) [clientId, clientSecret] = [clientSecret, clientId]; // swapped fields
+  if (!clientId && looksId(clientSecret)) { clientId = clientSecret; clientSecret = ''; }
+  if (clientId) {
+    const m = clientId.match(/[\w.-]+\.apps\.googleusercontent\.com/i); // "Client ID: 123-abc.apps.googleusercontent.com" → the id itself
+    if (m) clientId = m[0];
+    if (!looksId(clientId)) return { error: `"${clientId.slice(0, 40)}${clientId.length > 40 ? '…' : ''}" is not a Google Client ID. In the Google Cloud console the Client ID is the long value ending in .apps.googleusercontent.com (the Client secret starts with GOCSPX-). You can also paste the whole downloaded JSON into either box.` };
+  }
+  if (body.clientId !== undefined || clientId) out.clientId = clientId;
+  if (body.clientSecret !== undefined || clientSecret) out.clientSecret = clientSecret;
+  return out;
+}
 /** An email address arrived (typed, chosen from the finder, or found automatically): a "needs-email" block is no longer true.
  *  Per staff decision the flow does not auto-continue — the lead goes back to "Run" and the person presses it. */
 function unblockForEmail(lead) {
@@ -2549,8 +2570,8 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source, hostedDomain: g.hostedDomain, updatedAt: g.updatedAt, redirectUri: googleMail.redirectUri(configStore.getPublicBaseUrl() || publicOrigin(req)), origin: configStore.getPublicBaseUrl() || publicOrigin(req), scopes: googleMail.SCOPE_LABELS });
     }
     if (method === 'PUT' && pathname === '/api/settings/google') {
-      const body = await readBody(req);
-      if (body.clientId !== undefined && body.clientId && !/\.apps\.googleusercontent\.com$/.test(String(body.clientId).trim())) return sendJson(res, 400, { error: 'That does not look like a Google Client ID (it ends in .apps.googleusercontent.com).' });
+      const body = normaliseGoogleClientInput(await readBody(req));
+      if (body.error) return sendJson(res, 400, { error: body.error });
       const g = configStore.saveGoogleConfig(body);
       configStore.recordAudit({ actor: actorName(), action: 'settings.google', entityType: 'settings', summary: body.clear ? 'Google OAuth client removed' : `Google OAuth client saved (${g.clientId.slice(0, 14)}…)` });
       return sendJson(res, 200, { ok: true, configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source });
