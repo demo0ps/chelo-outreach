@@ -701,7 +701,7 @@ function settingsView() {
 /** Settings → Google: the OAuth client that powers "Connect with Google" (no passwords for Workspace mailboxes). */
 function googleSettingsCard(settings) {
   const g = state.googleStatus; // loaded lazily: redirect URL, scopes
-  if (!g && !state.googleStatusLoading) { state.googleStatusLoading = true; API('/api/settings/google').then(r => { state.googleStatus = r; state.googleStatusLoading = false; if (state.view === 'settings') renderApp(); }).catch(() => { state.googleStatusLoading = false; }); }
+  if (!g && !state.googleStatusLoading) { state.googleStatusLoading = true; API('/api/settings/google').then(r => { state.googleStatus = r; state.googleStatusLoading = false; renderApp(); }).catch(() => { state.googleStatusLoading = false; }); }
   const configured = g ? g.configured : settings.googleConfigured;
   return `<section class="panel settings-card" id="settings-google"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('key')}</span><div><h2>Google</h2><p>Lets staff add a company Gmail / Google Workspace mailbox with <strong>Connect with Google</strong> instead of a password. Chelo asks Google for two permissions only: send email as that mailbox, and read email (read-only) to notice replies and bounces. The company can revoke it any time from the Google account.</p></div></div>
     <div class="settings-fields">
@@ -1417,11 +1417,12 @@ async function dispatchAction(button) {
       const clientId = $('#google-client-id')?.value.trim() || ''; const clientSecret = $('#google-client-secret')?.value || '';
       if (!clientId && !clientSecret) return toast('Paste the Client ID and Client secret first.', true);
       const body = {}; if (clientId) body.clientId = clientId; if (clientSecret) body.clientSecret = clientSecret;
-      try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify(body) }); state.googleStatus = null; await refresh(); toast('Google saved. Staff can now use Connect with Google on Add mailbox.'); }
+      try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify(body) }); state.googleStatus = null; state.dlv.googleSetupOpen = false; await refresh(); if (state.dlv.data) await loadDeliverability(true); toast('Google saved. Press Connect with Google to add the mailbox.'); }
       catch (err) { toast(err.message, true); }
       return;
     }
     if (action === 'google-clear') { if (!confirm('Remove the Google client? Mailboxes already connected stop working until it is added again.')) return; try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify({ clear: true }) }); state.googleStatus = null; await refresh(); toast('Google client removed.'); } catch (err) { toast(err.message, true); } return; }
+    if (action === 'google-setup-toggle') { state.dlv.googleSetupOpen = !state.dlv.googleSetupOpen; renderApp(); document.getElementById('settings-google')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
     if (action === 'google-connect') { const mb = button.dataset.mailbox ? `?mailbox=${encodeURIComponent(button.dataset.mailbox)}` : ''; location.href = `/api/oauth/google/start${mb}`; return; }
     if (action === 'rv-make-pdf') { // builds the PDF from the chosen project — same as Send does — then refreshes the preview
       button.disabled = true; button.textContent = 'Making the PDF…';
@@ -3143,7 +3144,9 @@ function dlvMailboxForm(m) {
   if (!edit) {
     const google = state.data?.settings?.googleConfigured || state.googleStatus?.configured;
     return `<section class="panel dlv-form"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>Add a mailbox</h2><p>${google ? 'For a company Google mailbox, press Connect with Google — no password needed. For anything else, type the email address and its password.' : 'Type the email address and its password. Chelo finds the sending and reply-reading servers itself and proves the login before saving.'}</p></div></div>
-    ${google ? `<div class="dlv-google-connect"><button type="button" class="button button-primary" data-action="google-connect">${svgIcon('key')}Connect with Google</button><span class="subtle">Google asks you to sign in to the mailbox and tick two boxes: send email, read email (read-only). Nothing is stored except Google's connection token, encrypted.</span></div><div class="dlv-or"><span>or use a password</span></div>` : ''}
+    ${google ? `<div class="dlv-google-connect"><button type="button" class="button button-primary" data-action="google-connect">${svgIcon('key')}Connect with Google</button><span class="subtle">Google asks you to sign in to the mailbox and tick two boxes: send email, read email (read-only). Nothing is stored except Google's connection token, encrypted.</span><button type="button" class="button button-ghost button-small" data-action="google-setup-toggle">${svgIcon('settings')}Google settings</button></div>` : `<div class="dlv-google-connect"><span class="subtle">Company Google mailbox? Set up Google once (two values from the Google Cloud console) and staff can connect mailboxes without passwords.</span><button type="button" class="button button-secondary" data-action="google-setup-toggle">${svgIcon('key')}Set up Google</button></div>`}
+    ${state.dlv.googleSetupOpen ? googleSettingsCard(state.data?.settings || {}) : ''}
+    <div class="dlv-or"><span>${google ? 'or use a password' : 'add with email + password'}</span></div>
     <form data-form="dlv-mailbox-connect" class="settings-form">
       <div class="settings-fields">
         <div class="form-group"><label>Email address</label><input class="form-control" name="email" type="email" required autocomplete="username" value="${esc(found?.email || '')}" placeholder="partnerships@cheloapp.com" /></div>
