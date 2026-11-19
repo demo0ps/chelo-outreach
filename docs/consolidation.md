@@ -121,3 +121,20 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Bug: a failed AI/SMTP connection test hit `actorName()` outside its scope in the error handler → `ReferenceError` → **process crash**
   (on Vercel: the request died silently). Fixed; failed tests now return plain errors ("The AI provider rejected the key…",
   "…did not answer within 15 seconds…").
+
+## Add a mailbox with just email + password · every mailbox reads its own replies (v41)
+
+- **Add mailbox** form is now: email address, password, name shown to funders, "start slowly" tick. **Find settings** looks up the
+  domain's MX → provider (Google Workspace / Microsoft 365 / Zoho / self-hosted cPanel) → tries the known SMTP and IMAP servers in
+  order with the typed login (8 s each; a password refusal stops the search) and shows what worked. **Connect mailbox** does the same
+  and saves sending + reply-reading in one go. "Server details" stays available behind a disclosure for the rare manual case.
+  (`lib/mail-autodiscover.js`; `POST /api/deliverability/mailboxes/autodiscover|connect`.)
+- Per-mailbox IMAP: `mailboxes.imap_json` (migrated in place). `POST …/mailboxes/:id/imap` sets/clears it, `…/:id/sync-inbox` reads
+  it now, `POST /api/inbound/imap-sync` reads **every** mailbox (plus the legacy shared IMAP setting if it is different). The
+  send-tick cron and the 10-minute worker timer also read inboxes, so a funder reply stops follow-ups before the next send.
+  The password defaults to the SMTP one; a separate IMAP password can be stored.
+- DNS advice per provider (`GET …/mailboxes/:id/dns`): SPF include, DKIM selector + where to generate it, DMARC. For cheloapp.com
+  (Google Workspace, Afrihost DNS): add TXT `v=spf1 include:_spf.google.com ~all`; DKIM selector `google` from Admin console →
+  Apps → Gmail → Authenticate email; DMARC `p=quarantine` already exists.
+- Bug caught by the new test: rows now carry `imap_json`, which the named-parameter UPDATE rejected ("Unknown named parameter") —
+  `bindable()` strips it before `setMailboxHealth` / `setMailboxStatus`.

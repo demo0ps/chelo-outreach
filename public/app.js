@@ -6,7 +6,7 @@ const API = async (url, options = {}) => {
   const response = await fetch(url, { credentials: 'same-origin', ...options, method, headers });
   const contentType = response.headers.get('content-type') || '';
   const payload = contentType.includes('application/json') ? await response.json() : null;
-  if (!response.ok) { const error = new Error(payload?.error || `Request failed (${response.status})`); error.status = response.status; error.code = payload?.code || ''; error.duplicates = payload?.duplicates || null; throw error; }
+  if (!response.ok) { const error = new Error(payload?.error || `Request failed (${response.status})`); error.status = response.status; error.code = payload?.code || ''; error.duplicates = payload?.duplicates || null; error.payload = payload; throw error; }
   return payload;
 };
 
@@ -1596,6 +1596,7 @@ async function handleSubmit(event) {
   event.preventDefault();
   if (type === 'wb-add') return wbAddSubmit(form);
   if (type === 'dlv-mailbox') return dlvMailboxSubmit(form);
+  if (type === 'dlv-mailbox-connect') return dlvMailboxConnect(form);
   if (type === 'dlv-policy') return dlvPolicySubmit(form);
   try {
     if (type === 'auth-setup' || type === 'auth-login') {
@@ -3048,7 +3049,7 @@ function dlvMailboxCard(m) {
   const checks = h.checks || {};
   return `<article class="panel dlv-mailbox ${m.status === 'paused' ? 'is-paused' : ''}">
     <header class="dlv-mailbox-head">
-      <div><strong>${esc(m.label)}</strong><small>${esc(m.fromName)} &lt;${esc(m.fromEmail)}&gt; · ${esc(m.host)}:${m.port}${m.secure ? ' TLS' : ' STARTTLS'}</small></div>
+      <div><strong>${esc(m.label)}</strong><small>${esc(m.fromName)} &lt;${esc(m.fromEmail)}&gt; · sends via ${esc(m.host)}:${m.port}${m.secure ? ' TLS' : ' STARTTLS'}</small><small>${m.imap ? `${svgIcon('mail')} Reads replies via ${esc(m.imap.host)}:${m.imap.port}${m.imap.lastSyncAt ? ` · last read ${dlvWhen(m.imap.lastSyncAt)}${m.imap.lastSync && m.imap.lastSync.ok === false ? ` — failed: ${esc(m.imap.lastSync.error || '')}` : m.imap.lastSync ? ` · ${m.imap.lastSync.checked} new, ${m.imap.lastSync.matched} matched` : ''}` : ' · not read yet'}` : `${svgIcon('info')} Replies are not read for this mailbox — edit it and add the reply server.`}</small></div>
       <div class="dlv-mailbox-status">${m.status === 'paused' ? `<span class="stage-pill pill-not-proceeding">${svgIcon('ban')}Paused</span>` : `<span class="stage-pill pill-won">${svgIcon('check')}Active</span>`}${dlvHealthPill(h)}</div>
     </header>
     ${m.status === 'paused' ? `<p class="form-error">${esc(m.pausedReason || 'Paused')}${m.pausedAt ? ` · ${dlvWhen(m.pausedAt)}` : ''}</p>` : ''}
@@ -3059,6 +3060,7 @@ function dlvMailboxCard(m) {
     <div class="wb-step-actions">
       <button type="button" class="button button-secondary button-small" data-action="dlv-check" data-id="${esc(m.id)}">${svgIcon('refresh')}Re-check domain</button>
       <button type="button" class="button button-secondary button-small" data-action="dlv-test" data-id="${esc(m.id)}">${svgIcon('activity')}Test login</button>
+      ${m.imap ? `<button type="button" class="button button-secondary button-small" data-action="dlv-sync-inbox" data-id="${esc(m.id)}">${svgIcon('mail')}Read replies now</button>` : ''}
       ${m.status === 'paused' ? `<button type="button" class="button button-primary button-small" data-action="dlv-resume" data-id="${esc(m.id)}">${svgIcon('play')}Resume</button>` : `<button type="button" class="button button-ghost button-small" data-action="dlv-pause" data-id="${esc(m.id)}">${svgIcon('ban')}Pause</button>`}
       <button type="button" class="button button-ghost button-small" data-action="dlv-edit" data-id="${esc(m.id)}">${svgIcon('edit')}Edit</button>
       <button type="button" class="button button-ghost button-small" data-action="dlv-restart-ramp" data-id="${esc(m.id)}">${svgIcon('trendingUp')}Restart ramp</button>
@@ -3068,23 +3070,63 @@ function dlvMailboxCard(m) {
 }
 function dlvMailboxForm(m) {
   const edit = Boolean(m.id);
-  return `<section class="panel dlv-form"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>${edit ? 'Edit mailbox' : 'Add sending mailbox'}</h2><p>Use an app password where your provider requires it (Google Workspace: Security → App passwords; Microsoft 365: SMTP AUTH must be enabled). Secrets are encrypted at rest and never returned to the browser.</p></div></div>
-    <form data-form="dlv-mailbox" class="settings-form">${edit ? `<input type="hidden" name="id" value="${esc(m.id)}" />` : ''}
+  const adv = Boolean(state.dlv.showServerDetails || (edit && !m.imap));
+  const found = state.dlv.found; // last autodiscover result (new mailbox only)
+  const ramp = (state.dlv.data?.policy?.ramp || []).join(' → ');
+  if (!edit) {
+    return `<section class="panel dlv-form"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>Add a mailbox</h2><p>Type the email address and its password. Chelo finds the sending and reply-reading servers itself and proves the login before saving.</p></div></div>
+    <form data-form="dlv-mailbox-connect" class="settings-form">
+      <div class="settings-fields">
+        <div class="form-group"><label>Email address</label><input class="form-control" name="email" type="email" required autocomplete="username" value="${esc(found?.email || '')}" placeholder="partnerships@cheloapp.com" /></div>
+        <div class="form-group"><label>Password</label><input class="form-control" name="password" type="password" required autocomplete="new-password" /><span class="form-hint">Google Workspace and Microsoft 365 need an <strong>app password</strong>, not the normal login. Google: Account → Security → 2-Step Verification → App passwords.</span></div>
+        <div class="form-group"><label>Name shown to funders</label><input class="form-control" name="fromName" value="${esc(m.fromName || 'Chelo Partnerships')}" /></div>
+        <label class="check-row"><input type="checkbox" name="rampEnabled" checked /> Start slowly (${ramp} emails a day, week by week)</label>
+      </div>
+      ${found ? dlvFoundSummary(found) : ''}
+      <details class="dlv-advanced" ${adv ? 'open' : ''}><summary>Server details (only if the automatic search fails)</summary>
+        <div class="settings-fields">
+          <div class="form-group"><label>Sending server (SMTP)</label><input class="form-control" name="host" value="${esc(found?.smtp?.host || '')}" placeholder="smtp.gmail.com" /></div>
+          <div class="form-group"><label>Sending port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="${found?.smtp?.port || ''}" placeholder="465" /></div>
+          <div class="form-group"><label>Reply server (IMAP)</label><input class="form-control" name="imapHost" value="${esc(found?.imap?.host || '')}" placeholder="imap.gmail.com" /></div>
+          <div class="form-group"><label>Reply port</label><input class="form-control" name="imapPort" type="number" min="1" max="65535" value="${found?.imap?.port || ''}" placeholder="993" /></div>
+        </div></details>
+      <div class="settings-card-actions"><button type="button" class="button button-ghost" data-action="dlv-cancel-edit">${svgIcon('xCircle')}Cancel</button><button type="button" class="button button-secondary" data-action="dlv-autodiscover">${svgIcon('search')}Find settings</button><button type="submit" class="button button-primary">${svgIcon('check')}Connect mailbox</button></div>
+    </form></section>`;
+  }
+  return `<section class="panel dlv-form"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('mail')}</span><div><h2>Edit mailbox</h2><p>Passwords are encrypted and never shown again. Leave the password blank to keep the stored one.</p></div></div>
+    <form data-form="dlv-mailbox" class="settings-form"><input type="hidden" name="id" value="${esc(m.id)}" />
       <div class="settings-fields">
         <div class="form-group"><label>Label</label><input class="form-control" name="label" value="${esc(m.label || '')}" placeholder="Partnerships inbox" /></div>
-        <div class="form-group"><label>From name</label><input class="form-control" name="fromName" value="${esc(m.fromName || 'Chelo Partnerships Team')}" /></div>
-        <div class="form-group"><label>From email</label><input class="form-control" name="fromEmail" type="email" required value="${esc(m.fromEmail || '')}" placeholder="partnerships@yourdomain.org" /></div>
-        <div class="form-group"><label>SMTP host</label><input class="form-control" name="host" required value="${esc(m.host || '')}" placeholder="smtp.gmail.com / smtp.office365.com" /></div>
-        <div class="form-group"><label>Port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="${m.port || 587}" /></div>
-        <div class="form-group"><label>Username</label><input class="form-control" name="username" autocomplete="username" value="${esc(m.username || '')}" /></div>
-        <div class="form-group"><label>Password / app password</label><input class="form-control" name="password" type="password" autocomplete="new-password" placeholder="${m.hasPassword ? 'Stored — leave blank to keep' : ''}" /></div>
-        <div class="form-group"><label>Daily cap (full, after ramp)</label><input class="form-control" name="dailyCap" type="number" min="1" max="500" value="${m.dailyCap || (state.dlv.data?.policy?.defaultDailyCap || 25)}" /><span class="form-hint">Practitioners keep Workspace/365 mailboxes at 20–40 cold sends a day. Add mailboxes rather than raising this.</span></div>
-        <div class="form-group"><label>DKIM selector <span class="optional">(optional)</span></label><input class="form-control" name="dkimSelector" value="${esc(m.dkimSelector || '')}" placeholder="google / selector1" /></div>
-        <label class="check-row"><input type="checkbox" name="secure" ${m.secure ? 'checked' : ''} /> Implicit TLS (port 465)</label>
-        <label class="check-row"><input type="checkbox" name="rampEnabled" ${m.rampEnabled === false ? '' : 'checked'} /> Ramp a new mailbox slowly (${(state.dlv.data?.policy?.ramp || []).join(' → ')} per day, week by week)</label>
+        <div class="form-group"><label>Name shown to funders</label><input class="form-control" name="fromName" value="${esc(m.fromName || 'Chelo Partnerships')}" /></div>
+        <div class="form-group"><label>Email address</label><input class="form-control" name="fromEmail" type="email" required value="${esc(m.fromEmail || '')}" /></div>
+        <div class="form-group"><label>Password</label><input class="form-control" name="password" type="password" autocomplete="new-password" placeholder="${m.hasPassword ? 'Stored — leave blank to keep' : ''}" /></div>
+        <div class="form-group"><label>Emails a day (full, after the slow start)</label><input class="form-control" name="dailyCap" type="number" min="1" max="500" value="${m.dailyCap || (state.dlv.data?.policy?.defaultDailyCap || 25)}" /><span class="form-hint">20–40 a day keeps a mailbox trusted. Add another mailbox rather than raising this.</span></div>
+        <label class="check-row"><input type="checkbox" name="rampEnabled" ${m.rampEnabled === false ? '' : 'checked'} /> Start slowly (${ramp} a day, week by week)</label>
       </div>
-      <div class="settings-card-actions"><button type="button" class="button button-ghost" data-action="dlv-cancel-edit">${svgIcon('xCircle')}Cancel</button><button type="submit" class="button button-primary">${svgIcon('check')}${edit ? 'Save mailbox' : 'Add & check domain'}</button></div>
+      <details class="dlv-advanced" ${adv ? 'open' : ''}><summary>Server details</summary>
+        <div class="settings-fields">
+          <div class="form-group"><label>Sending server (SMTP)</label><input class="form-control" name="host" required value="${esc(m.host || '')}" /></div>
+          <div class="form-group"><label>Sending port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="${m.port || 587}" /></div>
+          <div class="form-group"><label>Login name</label><input class="form-control" name="username" autocomplete="username" value="${esc(m.username || '')}" /></div>
+          <div class="form-group"><label>DKIM selector <span class="optional">(optional)</span></label><input class="form-control" name="dkimSelector" value="${esc(m.dkimSelector || '')}" placeholder="google / selector1" /></div>
+          <div class="form-group"><label>Reply server (IMAP)</label><input class="form-control" name="imapHost" value="${esc(m.imap?.host || '')}" placeholder="imap.gmail.com" /></div>
+          <div class="form-group"><label>Reply port</label><input class="form-control" name="imapPort" type="number" min="1" max="65535" value="${m.imap?.port || 993}" /></div>
+          <label class="check-row"><input type="checkbox" name="secure" ${m.secure ? 'checked' : ''} /> Encrypted from the start (port 465)</label>
+        </div></details>
+      <div class="settings-card-actions"><button type="button" class="button button-ghost" data-action="dlv-cancel-edit">${svgIcon('xCircle')}Cancel</button><button type="submit" class="button button-primary">${svgIcon('check')}Save mailbox</button></div>
     </form></section>`;
+}
+function dlvFoundSummary(f) {
+  const row = (label, ok, text) => `<li class="${ok ? 'ok' : 'bad'}">${svgIcon(ok ? 'check' : 'xCircle')}<span><strong>${label}</strong> ${esc(text)}</span></li>`;
+  return `<div class="dlv-found ${f.smtp ? 'is-ok' : 'is-bad'}"><p>${esc(f.summary)}</p><ul class="dlv-found-list">
+    ${row('Provider', true, f.providerLabel)}
+    ${row('Sending', Boolean(f.smtp), f.smtp ? `${f.smtp.host}:${f.smtp.port} — login works` : f.authRefused ? 'password refused' : 'no server answered')}
+    ${row('Replies', Boolean(f.imap), f.imap ? `${f.imap.host}:${f.imap.port} — Chelo will read replies and bounces here` : 'not found; replies will not stop follow-ups automatically')}
+  </ul>${f.passwordHint && !f.smtp ? `<p class="form-hint">${esc(f.passwordHint)}</p>` : ''}${f.dns ? dlvDnsAdvice(f.dns) : ''}</div>`;
+}
+function dlvDnsAdvice(d) {
+  if (!d || !d.records?.length) return '';
+  return `<details class="dlv-advanced"><summary>DNS records for ${esc(d.domain)} (so emails land in the inbox)</summary><p class="form-hint">${esc(d.note || '')}</p><table class="dlv-dns"><thead><tr><th>Type</th><th>Name</th><th>Value</th></tr></thead><tbody>${d.records.map(r => `<tr><td>${esc(r.type)}</td><td><code>${esc(r.name)}</code></td><td><code>${esc(r.value)}</code>${r.note ? `<br><span class="subtle">${esc(r.note)}</span>` : ''}</td></tr>`).join('')}</tbody></table></details>`;
 }
 function dlvPolicyPanel(p) {
   return `<section class="panel"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('clock')}</span><div><h2>Sending policy</h2><p>Applies to every mailbox. Emails are spaced with a minimum gap plus random jitter inside the window; nothing goes out on excluded days.</p></div></div>
@@ -3112,11 +3154,20 @@ async function dlvAction(action, button) {
   try {
     if (action === 'dlv-refresh') { await loadDeliverability(true); return true; }
     if (action === 'dlv-new-mailbox') { state.dlv.editing = {}; renderApp(); document.querySelector('.dlv-form')?.scrollIntoView({ behavior: 'smooth' }); return true; }
-    if (action === 'dlv-cancel-edit') { state.dlv.editing = null; renderApp(); return true; }
+    if (action === 'dlv-cancel-edit') { state.dlv.editing = null; state.dlv.found = null; state.dlv.showServerDetails = false; renderApp(); return true; }
     if (action === 'dlv-edit') { state.dlv.editing = (state.dlv.data.mailboxes || []).find(m => m.id === id) || {}; renderApp(); return true; }
     if (action === 'dlv-tick') { const r = await call('/api/deliverability/tick'); toast(r.ran ? `Processed ${r.ran} queued email(s).` : 'Nothing is due right now.'); await loadDeliverability(true); await refresh(); return true; }
     if (action === 'dlv-check') { const r = await call(`/api/deliverability/mailboxes/${id}/check`); toast(`Domain ${r.health.domain}: ${r.health.status}${r.health.issues.length ? ` — ${r.health.issues.map(i => i.title).join(', ')} need attention` : ''}`, r.health.status === 'fail'); await loadDeliverability(true); return true; }
     if (action === 'dlv-test') { const r = await call(`/api/deliverability/mailboxes/${id}/test`); toast(r.message); return true; }
+    if (action === 'dlv-sync-inbox') { button.disabled = true; try { const r = await call(`/api/deliverability/mailboxes/${id}/sync-inbox`); toast(r.ok ? `Read ${r.checked} new message(s); ${r.matched} matched funders.` : `Could not read replies: ${r.error}`, !r.ok); } finally { button.disabled = false; } await loadDeliverability(true); await refresh(); return true; }
+    if (action === 'dlv-autodiscover') {
+      const form = button.closest('form'); const email = form.querySelector('[name="email"]').value.trim(); const password = form.querySelector('[name="password"]').value;
+      if (!email || !password) { toast('Type the email address and password first.', true); return true; }
+      button.disabled = true; button.textContent = 'Looking… (up to a minute)';
+      try { const r = await call('/api/deliverability/mailboxes/autodiscover', { email, password }); state.dlv.found = r; state.dlv.showServerDetails = !r.smtp; renderApp(); toast(r.summary, !r.smtp); }
+      catch (err) { toast(err.message, true); button.disabled = false; button.textContent = 'Find settings'; }
+      return true;
+    }
     if (action === 'dlv-pause') { await call(`/api/deliverability/mailboxes/${id}/pause`, { reason: 'paused by staff' }); await loadDeliverability(true); return true; }
     if (action === 'dlv-resume') { const r = await call(`/api/deliverability/mailboxes/${id}/resume`); toast(r.warning || 'Mailbox resumed.', Boolean(r.warning)); await loadDeliverability(true); return true; }
     if (action === 'dlv-restart-ramp') { await call(`/api/deliverability/mailboxes/${id}/restart-ramp`); toast('Ramp restarted from week 1.'); await loadDeliverability(true); return true; }
@@ -3127,12 +3178,35 @@ async function dlvAction(action, button) {
   } catch (err) { toast(err.message, true); return true; }
   return false;
 }
+async function dlvMailboxConnect(form) {
+  const data = formDataObject(form);
+  data.rampEnabled = form.querySelector('[name="rampEnabled"]').checked;
+  if (!data.host) { delete data.host; delete data.port; } else data.port = Number(data.port) || 465;
+  if (!data.imapHost) { delete data.imapHost; delete data.imapPort; } else data.imapPort = Number(data.imapPort) || 993;
+  const submit = form.querySelector('[type="submit"]'); submit.disabled = true; submit.textContent = 'Connecting… (up to a minute)';
+  try {
+    const r = await API('/api/deliverability/mailboxes/connect', { method: 'POST', body: JSON.stringify(data) });
+    state.dlv.editing = null; state.dlv.found = null; state.dlv.showServerDetails = false; state.dlv.lastDns = r.dns;
+    toast(`${r.mailbox.fromEmail} connected. ${r.repliesRead ? 'Replies will be read automatically.' : 'Replies are not read yet.'} Domain: ${r.mailbox.health?.status || 'checked'}.`, r.mailbox.health?.status === 'fail');
+    await loadDeliverability(true); await refresh();
+  } catch (err) {
+    toast(err.message, true); submit.disabled = false; submit.textContent = 'Connect mailbox';
+    if (err.payload?.found) { state.dlv.found = { ...err.payload.found, dns: null }; state.dlv.showServerDetails = true; renderApp(); }
+  }
+}
 async function dlvMailboxSubmit(form) {
   const data = formDataObject(form);
   data.secure = form.querySelector('[name="secure"]').checked; data.rampEnabled = form.querySelector('[name="rampEnabled"]').checked;
   data.port = Number(data.port); data.dailyCap = Number(data.dailyCap);
   if (!data.password) delete data.password;
-  try { const r = await API('/api/deliverability/mailboxes', { method: 'POST', body: JSON.stringify(data) }); state.dlv.editing = null; toast(`Mailbox saved. Domain ${r.mailbox.domain}: ${r.mailbox.health?.status || 'checked'}.`, r.mailbox.health?.status === 'fail'); await loadDeliverability(true); await refresh(); }
+  const imapHost = data.imapHost, imapPort = Number(data.imapPort) || 993; delete data.imapHost; delete data.imapPort;
+  try {
+    const r = await API('/api/deliverability/mailboxes', { method: 'POST', body: JSON.stringify(data) });
+    const prevImap = state.dlv.editing?.imap;
+    if (imapHost && (imapHost !== prevImap?.host || imapPort !== prevImap?.port || data.password)) await API(`/api/deliverability/mailboxes/${r.mailbox.id}/imap`, { method: 'POST', body: JSON.stringify({ host: imapHost, port: imapPort, username: data.username || data.fromEmail, password: data.password || '' }) });
+    else if (!imapHost && prevImap) await API(`/api/deliverability/mailboxes/${r.mailbox.id}/imap`, { method: 'POST', body: JSON.stringify({ clear: true }) });
+    state.dlv.editing = null; toast(`Mailbox saved. Domain ${r.mailbox.domain}: ${r.mailbox.health?.status || 'checked'}.`, r.mailbox.health?.status === 'fail'); await loadDeliverability(true); await refresh();
+  }
   catch (err) { toast(err.message, true); }
 }
 async function dlvPolicySubmit(form) {

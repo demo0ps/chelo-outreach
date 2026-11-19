@@ -18,6 +18,7 @@ const createSendEngine = require('./lib/send-engine');
 const createDomainHealth = require('./lib/domain-health');
 const sequences = require('./lib/sequences');
 const conversion = require('./lib/conversion');
+const mailAutodiscover = require('./lib/mail-autodiscover');
 const relationships = require('./lib/relationships');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
@@ -987,6 +988,38 @@ function flowStep(lead, name, patch) {
   lead.flow.step = name;
   lead.flow.updatedAt = new Date().toISOString();
 }
+// ---- Inbox reading: every mailbox with IMAP settings reads its own replies/bounces; the legacy shared IMAP setting still works ----
+async function syncMailboxInbox(mailboxId, actor = 'system') {
+  const box = sendEngine.getMailbox(mailboxId, { secrets: true });
+  if (!box || !box.imap) return { ok: false, mailboxId, error: 'This mailbox has no reply-reading (IMAP) settings.' };
+  try {
+    const result = await inbound.checkImapInbox({ host: box.imap.host, port: box.imap.port, username: box.imap.username, password: box.imap.password });
+    const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '' }, 'imap'));
+    const matched = applied.filter(a => a.matched).length;
+    sendEngine.recordImapSync(box.id, { ok: true, checked: result.checked, matched });
+    configStore.recordAudit({ actor, action: 'inbound.imap_synced', entityType: 'mailbox', entityId: box.id, summary: `${box.fromEmail}: read ${result.checked} new message(s); ${matched} matched funders` });
+    return { ok: true, mailboxId: box.id, email: box.fromEmail, checked: result.checked, matched, results: applied };
+  } catch (err) {
+    sendEngine.recordImapSync(box.id, { ok: false, error: String(err.message || err).slice(0, 200) });
+    return { ok: false, mailboxId: box.id, email: box.fromEmail, error: String(err.message || err).slice(0, 200) };
+  }
+}
+async function syncAllInboxes(actor = 'system') {
+  const boxes = sendEngine.listMailboxes().filter(m => m.imap && m.status !== 'deleted');
+  const perMailbox = [];
+  for (const m of boxes) perMailbox.push(await syncMailboxInbox(m.id, actor));
+  const legacy = configStore.getInboundConfig();
+  if (legacy.imapHost && legacy.imapUsername && !boxes.some(m => m.imap.host === legacy.imapHost && m.imap.username === legacy.imapUsername)) {
+    try {
+      const result = await inbound.checkImapInbox({ host: legacy.imapHost, port: legacy.imapPort, username: legacy.imapUsername, password: legacy.imapPassword });
+      const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '' }, 'imap'));
+      perMailbox.push({ ok: true, mailboxId: 'shared', email: legacy.imapUsername, checked: result.checked, matched: applied.filter(a => a.matched).length, results: applied });
+    } catch (err) { perMailbox.push({ ok: false, mailboxId: 'shared', email: legacy.imapUsername, error: String(err.message || err).slice(0, 200) }); }
+  }
+  if (perMailbox.some(r => r.ok && r.matched)) saveDb();
+  const checked = perMailbox.reduce((n, r) => n + (r.checked || 0), 0), matched = perMailbox.reduce((n, r) => n + (r.matched || 0), 0);
+  return { ok: perMailbox.every(r => r.ok), checked, matched, mailboxes: perMailbox, results: perMailbox.flatMap(r => r.results || []), message: perMailbox.length ? `Read ${checked} new message(s) across ${perMailbox.length} inbox${perMailbox.length === 1 ? '' : 'es'}; ${matched} matched funders.` : 'No mailbox has reply-reading set up yet. Add a mailbox under Deliverability.' };
+}
 /** An email address arrived (typed, chosen from the finder, or found automatically): a "needs-email" block is no longer true.
  *  Per staff decision the flow does not auto-continue — the lead goes back to "Run" and the person presses it. */
 function unblockForEmail(lead) {
@@ -1936,8 +1969,9 @@ async function handleApi(req, res, url) {
       if (!secret || supplied.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))) return sendJson(res, 401, { error: 'Cron secret required.' });
       const result = await sendEngine.tick({ limit: 25 });
       await refreshMailboxHealth().catch(() => {});
-      configStore.recordAudit({ actor: 'cron', action: 'cron.send-tick', entityType: 'workspace', summary: `Send tick ran ${result.ran} job(s)` });
-      return sendJson(res, 200, { ok: true, ran: result.ran });
+      const inboxes = await syncAllInboxes('cron').catch(err => ({ ok: false, error: err.message, checked: 0, matched: 0 })); // replies stop follow-ups before the next send
+      configStore.recordAudit({ actor: 'cron', action: 'cron.send-tick', entityType: 'workspace', summary: `Send tick ran ${result.ran} job(s); inboxes read ${inboxes.checked || 0} message(s), ${inboxes.matched || 0} matched` });
+      return sendJson(res, 200, { ok: true, ran: result.ran, inboxes: { checked: inboxes.checked || 0, matched: inboxes.matched || 0 } });
     }
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/data-tick') {
       const secret = process.env.CRON_SECRET || '';
@@ -2135,10 +2169,8 @@ async function handleApi(req, res, url) {
     }
     if (method === 'GET' && pathname === '/api/followups/digest') return sendJson(res, 200, inbound.buildFollowUpDigest(db.leads));
     if (method === 'POST' && pathname === '/api/inbound/imap-sync') {
-      const result = await inbound.checkImapInbox({ host: configStore.getInboundConfig().imapHost, port: configStore.getInboundConfig().imapPort, username: configStore.getInboundConfig().imapUsername, password: configStore.getInboundConfig().imapPassword });
-      const applied = result.signals.map(sig => handleInboundSignal({ ...sig, providerMessageId: '' }, 'imap'));
-      configStore.recordAudit({ actor: actorName(), action: 'inbound.imap_synced', entityType: 'integration', summary: `IMAP sync checked ${result.checked} message(s); ${applied.filter(a => a.matched).length} matched prospects` });
-      return sendJson(res, 200, { ok: true, checked: result.checked, matched: applied.filter(a => a.matched).length, results: applied });
+      const result = await syncAllInboxes(actorName());
+      return sendJson(res, 200, result);
     }
     if (method === 'GET' && pathname === '/api/inbound/webhook-info') {
       return sendJson(res, 200, { url: `${publicOrigin(req)}/api/inbound/webhook`, header: 'X-Chelo-Signature', algorithm: 'HMAC-SHA256 hex digest of raw JSON body', secret: roleAllows(req.authSession, ['admin']) ? configStore.getInboundConfig().webhookSecret : '' });
@@ -2186,6 +2218,38 @@ async function handleApi(req, res, url) {
       const metrics = sendEngine.metrics({ days: 14 });
       return sendJson(res, 200, { ...metrics, jobs: sendEngine.recentJobs(150), serverless: SERVERLESS, workerIntervalSeconds: SERVERLESS ? null : SEND_TICK_SECONDS, openTrackingEnabled: configStore.publicSettings().openTrackingEnabled });
     }
+    // Email + password → find SMTP and IMAP servers and prove the login. Saves nothing.
+    if (method === 'POST' && pathname === '/api/deliverability/mailboxes/autodiscover') {
+      const body = await readBody(req);
+      try {
+        const found = await mailAutodiscover.discover({
+          email: body.email, password: body.password,
+          smtpVerify: async c => { const t = mailboxTransport({ host: c.host, port: c.port, secure: c.secure, username: c.username, password: c.password }); try { await t.verify(); } finally { try { t.close(); } catch {} } },
+          log: m => console.log(`[autodiscover] ${m}`)
+        });
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.autodiscover', entityType: 'mailbox', summary: `${found.email}: ${found.providerLabel}; smtp ${found.smtp ? `${found.smtp.host}:${found.smtp.port}` : 'none'}; imap ${found.imap ? `${found.imap.host}:${found.imap.port}` : 'none'}` });
+        return sendJson(res, 200, { ...found, dns: mailAutodiscover.dnsAdvice(found.domain, found.provider) });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
+    // One step: autodiscover, then save sending + reply-reading together (used by the simple Add mailbox form).
+    if (method === 'POST' && pathname === '/api/deliverability/mailboxes/connect') {
+      const body = await readBody(req);
+      try {
+        let smtp = body.host ? { host: String(body.host), port: Number(body.port) || 465, secure: body.secure !== undefined ? Boolean(body.secure) : Number(body.port) === 465 } : null;
+        let imap = body.imapHost ? { host: String(body.imapHost), port: Number(body.imapPort) || 993 } : null;
+        let found = null;
+        if (!smtp || !imap) {
+          found = await mailAutodiscover.discover({ email: body.email, password: body.password, smtpVerify: async c => { const t = mailboxTransport({ host: c.host, port: c.port, secure: c.secure, username: c.username, password: c.password }); try { await t.verify(); } finally { try { t.close(); } catch {} } } });
+          smtp = smtp || found.smtp; imap = imap || found.imap;
+        }
+        if (!smtp) return sendJson(res, 409, { error: found ? found.summary : 'Sending server not found.', found });
+        const mailbox = sendEngine.saveMailbox({ id: body.id || undefined, fromEmail: body.email, fromName: body.fromName || 'Chelo Partnerships', label: body.label || body.email, host: smtp.host, port: smtp.port, secure: smtp.secure, username: body.email, password: body.password, dkimSelector: body.dkimSelector || found?.dkimSelector || '' }, { actor: actorName() });
+        if (imap) sendEngine.setMailboxImap(mailbox.id, { host: imap.host, port: imap.port, username: body.email });
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.connected', entityType: 'mailbox', entityId: mailbox.id, summary: `${mailbox.fromEmail} connected: send ${smtp.host}:${smtp.port}${imap ? `, read ${imap.host}:${imap.port}` : ', replies not read'}` });
+        const health = await domainHealth.check(mailbox.fromEmail, { selectors: [mailbox.dkimSelector], force: true }).catch(err => ({ status: 'needs-work', issues: [{ code: 'dns', severity: 'warn', title: 'DNS', detail: err.message }] }));
+        return sendJson(res, 201, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health), found, dns: mailAutodiscover.dnsAdvice(mailbox.domain, found?.provider || 'self-hosted'), repliesRead: Boolean(imap), message: found ? found.summary : `Saved ${mailbox.fromEmail}.` });
+      } catch (err) { return sendJson(res, 400, { error: err.message }); }
+    }
     if (method === 'POST' && pathname === '/api/deliverability/mailboxes') {
       const body = await readBody(req);
       try {
@@ -2195,7 +2259,7 @@ async function handleApi(req, res, url) {
         return sendJson(res, body.id ? 200 : 201, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health) });
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
-    const mailboxRoute = pathname.match(/^\/api\/deliverability\/mailboxes\/([^/]+)(?:\/(pause|resume|check|test|restart-ramp))?$/);
+    const mailboxRoute = pathname.match(/^\/api\/deliverability\/mailboxes\/([^/]+)(?:\/(pause|resume|check|test|restart-ramp|sync-inbox|imap|dns))?$/);
     if (mailboxRoute) {
       const mailbox = sendEngine.getMailbox(mailboxRoute[1]);
       if (!mailbox) return sendJson(res, 404, { error: 'Mailbox not found.' });
@@ -2217,6 +2281,19 @@ async function handleApi(req, res, url) {
       if (method === 'POST' && sub === 'check') {
         const health = await domainHealth.check(mailbox.fromEmail, { selectors: [mailbox.dkimSelector], force: true }).catch(err => ({ status: 'needs-work', issues: [{ code: 'dns', severity: 'warn', title: 'DNS', detail: err.message, fix: 'Retry the check.' }], checks: {}, checkedAt: new Date().toISOString() }));
         return sendJson(res, 200, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health), health });
+      }
+      if (method === 'GET' && sub === 'dns') {
+        const mx = await require('node:dns').promises.resolveMx(mailbox.domain).catch(() => []);
+        return sendJson(res, 200, mailAutodiscover.dnsAdvice(mailbox.domain, mailAutodiscover.providerFromMx(mx)));
+      }
+      if (method === 'POST' && sub === 'imap') {
+        const body = await readBody(req);
+        try { return sendJson(res, 200, { mailbox: sendEngine.setMailboxImap(mailbox.id, body.clear ? null : { host: body.host, port: body.port, username: body.username || mailbox.fromEmail, password: body.password || '', keepPassword: !body.password }) }); }
+        catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+      if (method === 'POST' && sub === 'sync-inbox') {
+        const r = await syncMailboxInbox(mailbox.id, actorName());
+        return sendJson(res, r.ok ? 200 : 502, r);
       }
       if (method === 'POST' && sub === 'test') {
         const secretBox = sendEngine.getMailbox(mailbox.id, { secrets: true });
@@ -3528,6 +3605,7 @@ if (!SERVERLESS && process.env.NODE_ENV !== 'test') {
   const timer = setInterval(() => { sendEngine.tick({ limit: 10 }).catch(err => console.warn(`[send-engine] tick failed: ${err.message}`)); }, SEND_TICK_SECONDS * 1000);
   timer.unref();
   const healthTimer = setInterval(() => refreshMailboxHealth().catch(() => {}), 60 * 60e3);
+  const inboxTimer = setInterval(() => syncAllInboxes("worker").catch(() => {}), 10 * 60e3); inboxTimer.unref(); // long-running hosts: read replies every 10 minutes
   healthTimer.unref();
   setTimeout(() => refreshMailboxHealth().catch(() => {}), 5000).unref();
 }

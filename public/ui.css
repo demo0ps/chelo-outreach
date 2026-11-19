@@ -2194,3 +2194,21 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .candidate-pick { display: inline-flex; align-items: center; margin-right: 10px; }
 .candidate-pick input { width: 16px; height: 16px; margin: 0; accent-color: #5945e8; cursor: pointer; }
 .candidate-card.is-added { opacity: .72; }
+
+/* Add mailbox: autodiscover result, server-details disclosure, DNS table */
+.dlv-advanced { border: 1px solid var(--border, #e2e4ea); border-radius: 8px; padding: 10px 14px; margin-top: 12px; }
+.dlv-advanced > summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.dlv-advanced > summary:focus-visible { outline: 2px solid var(--brand, #5945e8); outline-offset: 2px; }
+.dlv-advanced .settings-fields { margin-top: 12px; }
+.dlv-found { border: 1px solid var(--border, #e2e4ea); border-left: 3px solid #1f8f5a; border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+.dlv-found.is-bad { border-left-color: #c23b3b; }
+.dlv-found > p { margin: 0 0 8px; }
+.dlv-found-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dlv-found-list li { display: flex; gap: 8px; align-items: flex-start; font-size: 0.9rem; }
+.dlv-found-list li .icon-svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.dlv-found-list li.ok .icon-svg { color: #1f8f5a; }
+.dlv-found-list li.bad .icon-svg { color: #c23b3b; }
+.dlv-dns { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px; }
+.dlv-dns th, .dlv-dns td { text-align: left; vertical-align: top; padding: 6px 8px; border-top: 1px solid var(--border, #e2e4ea); }
+.dlv-dns code { word-break: break-all; }
+.dlv-mailbox-head small { display: block; }
