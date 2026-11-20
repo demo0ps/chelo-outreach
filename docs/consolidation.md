@@ -196,3 +196,10 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - `api/index.js`: `/api/oauth/*` counted as mutating so the new mailbox is pushed to Supabase before the redirect completes.
 - Tests: `tests/google-mail.test.js` (auth URL/scopes/state, code exchange + unticked permissions, MIME + Gmail send with cached
   token, revoked → paused → reconnect, metadata-only inbox read).
+
+## v49 — My mailbox: one Google setup, every staff member connects their own mailbox (2026-11-20)
+- Settings → **My mailbox** (all roles, default tab): Connect with Google, per-person list with state, "Check for replies now", Reconnect, Remove. Admins also find the Google client settings there (collapsed); Integrations stays root-only.
+- Mailboxes gain an `owner` (staff login). `/api/oauth/google/start` is open to every signed-in user; the callback assigns the mailbox to the person who connected it and refuses re-connecting a colleague's mailbox unless admin. `/api/me/mailboxes` (+ `DELETE`, `/check`, `/sync-inbox`) are owner-scoped.
+- Sending: `pickMailbox(preferred, { owner })` — approver's own mailbox first, then shared (unowned), then any active. Sequence steps pin `seq.mailboxId` so follow-ups stay in the same thread/mailbox; the first approver's login is carried in `meta.actor`.
+- Company lock: hosted domain defaults to `cheloapp.com` (`GOOGLE_HOSTED_DOMAIN` or Settings override); `hd=` on the Google chooser and re-checked on callback.
+- Next: v50 Sign in with Google (`openid email profile`, same client, @cheloapp.com auto-provision as member, password login kept).

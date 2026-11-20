@@ -1210,9 +1210,10 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdf)) : step.body;
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
-    attachments: pdf ? [pdf] : [],
-    requestedBy: actor, earliest, immediate: step.n === 1, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor, company: lead.company, openToken: null }
+    attachments: pdf ? [pdf] : [], mailboxId: seq.mailboxId || lead.mailboxId || '',
+    requestedBy: actor, earliest, immediate: step.n === 1, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor: seq.approval?.firstApprover || actor, company: lead.company, openToken: null }
   });
+  seq.mailboxId = job.mailboxId; // follow-ups stay in the same mailbox so the thread holds together
   step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
   if (step.n === 1) { lead.emailStatus = 'Queued'; lead.sendJobId = job.id; } else { lead.followUpEmailStatus = 'Queued'; lead.followUpAt = job.scheduledAt; lead.followUpStep = step.n - 1; }
   seq.status = 'running'; seq.updatedAt = new Date().toISOString(); lead.updatedAt = seq.updatedAt;
@@ -2130,7 +2131,7 @@ async function handleApi(req, res, url) {
       req.authSession.isRoot = isRootSession(req.authSession);
       res.maskRoot = !req.authSession.isRoot;
       if (isTechnicalPath(pathname) && !req.authSession.isRoot) return sendJson(res, 403, { error: 'This area is reserved for the root account.' });
-      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract' && !pathname.startsWith('/api/inbox/conversations/')) {
+      if (req.authSession.role === 'reviewer' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !/\/(approve-email|return-draft|sequence\/approve)$/.test(pathname) && pathname !== '/api/copilot/extract' && !pathname.startsWith('/api/inbox/conversations/') && !pathname.startsWith('/api/me/')) {
         return sendJson(res, 403, { error: 'Reviewer accounts can approve or return drafts but cannot edit pipeline records.' });
       }
     }
@@ -2243,7 +2244,7 @@ async function handleApi(req, res, url) {
       const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
       const leads = visibleLeads().map(clientLead);
       const settings = configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) });
-      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
+      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
     if (method === 'GET' && pathname === '/api/discovery/search') {
@@ -2576,9 +2577,30 @@ async function handleApi(req, res, url) {
       configStore.recordAudit({ actor: actorName(), action: 'settings.google', entityType: 'settings', summary: body.clear ? 'Google OAuth client removed' : `Google OAuth client saved (${g.clientId.slice(0, 14)}…)` });
       return sendJson(res, 200, { ok: true, configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source });
     }
+    // ---- My mailbox: every staff member connects and manages their own Google mailbox ----
+    const myLogin = String(req.authSession?.username || '').toLowerCase();
+    const mine = m => m.owner && m.owner === myLogin;
+    const canManageMailbox = m => mine(m) || roleAllows(req.authSession, ['admin']);
+    if (method === 'GET' && pathname === '/api/me/mailboxes') {
+      const g = configStore.getGoogleConfig();
+      return sendJson(res, 200, { mailboxes: sendEngine.listMailboxes().filter(mine), googleConfigured: g.configured, hostedDomain: g.hostedDomain, login: myLogin });
+    }
+    const meMailbox = pathname.match(/^\/api\/me\/mailboxes\/([^/]+)(?:\/(check|sync-inbox))?$/);
+    if (meMailbox) {
+      const box = sendEngine.getMailbox(decodeURIComponent(meMailbox[1]));
+      if (!box || !canManageMailbox(box)) return sendJson(res, 404, { error: 'Mailbox not found.' });
+      if (method === 'DELETE') {
+        sendEngine.deleteMailbox(box.id); googleMail.forget(box.id);
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.removed', entityType: 'mailbox', entityId: box.id, summary: `${box.fromEmail} removed by its owner` });
+        return sendJson(res, 200, { ok: true });
+      }
+      if (method === 'POST' && meMailbox[2] === 'sync-inbox') return sendJson(res, 200, await syncMailboxInbox(box.id, actorName()));
+      if (method === 'POST' && meMailbox[2] === 'check') { const health = await domainHealth.check(box.fromEmail, { selectors: box.authType === 'google' ? ['google'] : undefined, force: true }).catch(() => null); if (health) sendEngine.setMailboxHealth(box.id, health); return sendJson(res, 200, { mailbox: sendEngine.getMailbox(box.id) }); }
+    }
     if (method === 'GET' && pathname === '/api/oauth/google/start') {
-      if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+      // Any signed-in staff member may connect a company mailbox; it becomes theirs. Reconnecting someone else's mailbox needs admin.
       const mailbox = url.searchParams.get('mailbox') ? sendEngine.getMailbox(url.searchParams.get('mailbox')) : null;
+      if (mailbox && !canManageMailbox(mailbox)) return sendJson(res, 403, { error: 'That mailbox belongs to another staff member.' });
       try {
         const target = googleMail.authUrl({ baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req), actor: actorName(), mailboxId: mailbox?.id || '', loginHint: mailbox?.fromEmail || url.searchParams.get('email') || '' });
         res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' }); return res.end();
@@ -2593,7 +2615,9 @@ async function handleApi(req, res, url) {
         const got = await googleMail.exchangeCode({ code: url.searchParams.get('code'), baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req) });
         if (got.missing.length) return back({ google: 'error', message: `Google connected, but without: ${got.missing.join('; ')}. Connect again and tick every box.` });
         const hd = configStore.getGoogleConfig().hostedDomain; if (hd && !got.email.endsWith(`@${hd}`)) return back({ google: 'error', message: `${got.email} is not a ${hd} mailbox. Sign in with a company account.` });
-        const mailbox = sendEngine.connectGoogleMailbox({ email: got.email, refreshToken: got.refreshToken, actor: actorName() });
+        const before = sendEngine.listMailboxes().find(m => m.fromEmail === got.email);
+        if (before && before.owner && before.owner !== myLogin && !roleAllows(req.authSession, ['admin'])) return back({ google: 'error', message: `${got.email} is already connected by another staff member.` });
+        const mailbox = sendEngine.connectGoogleMailbox({ email: got.email, refreshToken: got.refreshToken, actor: actorName(), owner: before?.owner || myLogin, fromName: before ? undefined : (req.authSession?.displayName || undefined) });
         googleMail.forget(mailbox.id);
         configStore.recordAudit({ actor: actorName(), action: 'mailbox.google_connected', entityType: 'mailbox', entityId: mailbox.id, summary: `${mailbox.fromEmail} connected with Google (send + read-only)` });
         const health = await domainHealth.check(mailbox.fromEmail, { selectors: ['google'], force: true }).catch(() => null);

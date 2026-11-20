@@ -128,3 +128,21 @@ test('google settings: accepts pasted JSON, swapped fields and stray quotes; rej
     r = await put({ clientId: 'my-project-12345', clientSecret: secret }); assert.equal(r.status, 400); assert.match(r.json.error, /not a Google Client ID.*GOCSPX/);
   } finally { child.kill('SIGTERM'); }
 });
+
+test('mailbox ownership: each person sends from their own mailbox; shared mailboxes serve everyone else; follow-ups keep the first mailbox', () => {
+  const conn = new DatabaseSync(':memory:');
+  const clock = { t: new Date('2026-11-20T08:00:00Z') }; // 10:00 SAST, Friday
+  const engine = createSendEngine({ conn, encryptSecret: v => ({ v }), decryptSecret: r => r.v, isSuppressed: () => false, now: () => clock.t, random: () => 0.5, transportFactory: () => ({ sendMail: async o => ({ messageId: 'x', accepted: [o.to], rejected: [] }) }) });
+  const shared = engine.saveMailbox({ fromEmail: 'marketing@cheloapp.com', fromName: 'Chelo', host: 'smtp.gmail.com', port: 465, secure: true, username: 'marketing@cheloapp.com', password: 'p', rampEnabled: false }, { actor: 'test' });
+  const thandi = engine.connectGoogleMailbox({ email: 'thandi@cheloapp.com', refreshToken: 'rt', owner: 'Thandi@cheloapp.com', actor: 'test' });
+  assert.equal(thandi.owner, 'thandi@cheloapp.com'); assert.equal(engine.getMailbox(shared.id).owner, '');
+  assert.equal(engine.actorLogin('Thandi M <thandi@cheloapp.com>'), 'thandi@cheloapp.com'); assert.equal(engine.actorLogin('sequence'), '');
+  const own = engine.enqueue({ leadId: 'l1', to: 'a@funder.org', subject: 's', text: 't', requestedBy: 'Thandi M <thandi@cheloapp.com>' });
+  assert.equal(own.mailboxId, thandi.id, 'approver with a mailbox sends from it');
+  const other = engine.enqueue({ leadId: 'l2', to: 'b@funder.org', subject: 's', text: 't', requestedBy: 'Sipho <sipho@cheloapp.com>' });
+  assert.equal(other.mailboxId, shared.id, 'someone without a mailbox falls back to the shared one, never a colleague\'s');
+  const auto = engine.enqueue({ leadId: 'l1', to: 'a@funder.org', subject: 'Re: s', text: 't', requestedBy: 'sequence', mailboxId: own.mailboxId });
+  assert.equal(auto.mailboxId, thandi.id, 'a follow-up pinned to the first mailbox stays there');
+  engine.setMailboxOwner(shared.id, 'sipho@cheloapp.com');
+  assert.ok(engine.pickMailbox('', { owner: 'nobody@cheloapp.com' }), 'with no shared mailbox left, any active one is used rather than failing');
+});

@@ -2221,3 +2221,9 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .dlv-or::before, .dlv-or::after { content: ''; flex: 1; border-top: 1px solid var(--border, #e2e4ea); }
 .settings-steps { margin: 4px 0 0; padding-left: 18px; font-size: 0.9rem; display: grid; gap: 4px; }
 .settings-steps code { word-break: break-all; }
+
+/* Settings → My mailbox */
+.my-mailbox.is-paused { border-color: var(--warning, #b7791f); }
+.settings-card-details { margin-top: 16px; }
+.settings-card-details > summary { cursor: pointer; font-size: 13px; color: var(--text-muted, #6b6f80); padding: 6px 0; }
+.settings-card-details > summary:focus-visible { outline: 2px solid var(--brand, #5945e8); outline-offset: 2px; border-radius: 4px; }

@@ -21,7 +21,7 @@ const state = {
   data: { leads: [], candidates: [], partners: [], bookings: [], activities: [], messages: [], emailEvents: [], projects: [], provinces: [], videoPlatforms: [], staff: [], currentUser: null, stages: [], aiConfigured: false, aiModel: '', emailProviderConfigured: false, settings: {}, analytics: null, radar: null },
   auth: { authenticated: false, setupRequired: false, username: '', csrfToken: '' }, authError: '',
   view: 'workbench', query: '', stageFilter: 'All stages', candidateFilter: 'All candidates', modal: null,
-  settingsSection: 'integrations', auditLogs: null, auditQuery: '', analyticsRange: 30, analyticsLoading: false,
+  settingsSection: 'mailbox', myMailboxes: null, myMailboxesLoading: false, auditLogs: null, auditQuery: '', analyticsRange: 30, analyticsLoading: false,
   bookingInfo: null, bookingLoading: false, bookingSubmitted: false, bookingError: '',
   optOutInfo: null, optOutDone: false,
   importInput: null, importReport: null, csvImportPreview: null, currentDate: new Date(), mobileMoreOpen: false,
@@ -289,7 +289,7 @@ function navItem(view, title, icon, count = null) {
   </button>`;
 }
 function isMac() { return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || ''); }
-function settingsSectionLabel(section) { return ({ integrations: 'Integrations', team: 'Team & governance', briefings: 'Briefings', audit: 'Audit trail', research: 'Research', general: 'General' })[section] || (section ? section.charAt(0).toUpperCase() + section.slice(1) : ''); }
+function settingsSectionLabel(section) { return ({ mailbox: 'My mailbox', integrations: 'Integrations', team: 'Team & governance', briefings: 'Briefings', audit: 'Audit trail', research: 'Research', general: 'General' })[section] || (section ? section.charAt(0).toUpperCase() + section.slice(1) : ''); }
 
 // ---- Command palette (⌘K / Ctrl+K) ----
 const VIEW_META = [
@@ -683,7 +683,7 @@ async function saveSettingsForm(form) {
 }
 function settingsView() {
   const settings = state.data.settings || {};
-  if (!isRoot() && state.settingsSection === 'integrations') state.settingsSection = 'governance';
+  if (!isRoot() && state.settingsSection === 'integrations') state.settingsSection = 'mailbox';
   const aiState = settings.aiConfigured ? `Configured · ${settings.aiKeySource === 'environment' ? 'server environment' : 'encrypted Settings'}` : 'Not configured';
   const smtpState = settings.smtpConfigured ? `Configured · ${settings.smtpHost}:${settings.smtpPort}` : 'Not configured';
   const content = state.settingsSection === 'audit' ? auditView() : `<div class="settings-status-grid"><div class="settings-status-card"><span class="metric-icon">${svgIcon('spark')}</span><div><strong>AI drafting</strong><small>${esc(aiState)}</small></div><span class="status-dot ${settings.aiConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('mail')}</span><div><strong>SMTP sending</strong><small>${esc(smtpState)}</small></div><span class="status-dot ${settings.smtpConfigured ? 'is-on' : ''}"></span></div><div class="settings-status-card"><span class="metric-icon">${svgIcon('eye')}</span><div><strong>Open measurement</strong><small>${settings.openTrackingReady ? 'Pixel ready · public HTTPS URL set' : settings.openTrackingEnabled ? 'Enabled · needs public HTTPS URL' : 'Disabled'}</small></div><span class="status-dot ${settings.openTrackingReady ? 'is-on' : ''}"></span></div></div>
@@ -693,8 +693,8 @@ function settingsView() {
       ${googleSettingsCard(settings)}
       <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('eye')}</span><div><h2>Analytics & tracking</h2><p>First-party CTA hits are counted by Chelo. Open measurement uses a 1×1 tracking pixel and is approximate; image proxies, privacy features and blockers may distort it.</p></div></div><div class="settings-fields"><label class="check-row"><input type="checkbox" name="openTrackingEnabled" ${settings.openTrackingEnabled ? 'checked' : ''} /> Add open-tracking pixel to SMTP and .eml emails</label><div class="form-group full"><label for="setting-public-url">Public HTTPS app URL</label><input class="form-control" id="setting-public-url" name="publicBaseUrl" type="url" value="${esc(settings.publicBaseUrl || (location.protocol === 'https:' ? location.origin : ''))}" placeholder="https://partnerships.example.org" /><span class="form-hint">The recipient’s mail client must be able to reach this HTTPS address to load the pixel and CTA. Localhost and private preview URLs will not track opens for external recipients.</span></div></div><div class="settings-card-actions"><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section></form>`;
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
-  const sectionContent = state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
-  const tabs = `<div class="settings-tabs" role="tablist">${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button><button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
+  const sectionContent = state.settingsSection === 'mailbox' ? myMailboxView(settings, isAdmin) : state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
+  const tabs = `<div class="settings-tabs" role="tablist"><button type="button" class="settings-tab ${state.settingsSection === 'mailbox' ? 'active' : ''}" data-settings-tab="mailbox">${svgIcon('mail')} My mailbox</button>${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button><button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
   return `${pageHead('Settings', 'Settings', '', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
 }
 
@@ -710,6 +710,31 @@ function googleSettingsCard(settings) {
       <div class="form-group full"><label>Where to get them</label><ol class="settings-steps"><li>console.cloud.google.com, signed in with a company account → APIs &amp; Services → <strong>Credentials</strong> → Create credentials → <strong>OAuth client ID</strong> → Web application.</li><li>Authorised JavaScript origin: <code>${esc(g?.origin || location.origin)}</code></li><li>Authorised redirect URI: <code>${esc(g?.redirectUri || `${location.origin}/api/oauth/google/callback`)}</code></li><li>OAuth consent screen → User type <strong>Internal</strong>. APIs &amp; Services → Library → <strong>Gmail API</strong> → Enable.</li><li>Paste the Client ID and Client secret here → Save. Then Deliverability → Add mailbox → <strong>Connect with Google</strong>.</li></ol></div>
     </div>
     <div class="settings-card-actions"><button class="button button-primary" type="button" data-action="google-save">${svgIcon('check')} Save</button>${configured ? `<button class="button button-ghost" type="button" data-action="google-clear">${svgIcon('trash')} Remove</button>` : ''}<span class="subtle">${configured ? `Set up (${g?.source === 'environment' || settings.googleSource === 'environment' ? 'server environment' : 'encrypted'})` : 'Not set up yet'}</span></div></section>`;
+}
+/** Settings → My mailbox: each staff member connects their own company Google mailbox and sees its state. */
+function loadMyMailboxes(force) {
+  if (state.myMailboxes && !force) return;
+  if (state.myMailboxesLoading) return;
+  state.myMailboxesLoading = true;
+  API('/api/me/mailboxes').then(r => { state.myMailboxes = r; state.myMailboxesLoading = false; renderApp(); }).catch(err => { state.myMailboxesLoading = false; toast(err.message, true); });
+}
+function myMailboxView(settings, isAdmin) {
+  loadMyMailboxes();
+  const r = state.myMailboxes;
+  const configured = r ? r.googleConfigured : settings.googleConfigured;
+  const domain = r?.hostedDomain || '';
+  const boxes = r?.mailboxes || [];
+  const when = iso => iso ? new Date(iso).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'not yet';
+  const card = m => {
+    const paused = m.status !== 'active';
+    const needsReconnect = paused && /google|reconnect|revoked|token/i.test(m.pausedReason || '');
+    return `<article class="panel settings-card my-mailbox ${paused ? 'is-paused' : ''}"><div class="settings-section-head"><span class="settings-section-icon ${paused ? 'gold' : 'blue'}">${svgIcon('mail')}</span><div><h2>${esc(m.fromEmail)}</h2><p>${paused ? `<strong>Paused.</strong> ${esc(m.pausedReason || '')}` : `Working. Sent ${m.today?.used ?? 0} of ${m.today?.cap ?? m.dailyCap} allowed today.`} Replies last checked: ${esc(when(m.imap?.lastSyncAt))}.${m.health?.status === 'fail' ? ' Domain checks are failing — tell an admin.' : ''}</p></div></div>
+      <div class="settings-card-actions">${needsReconnect || paused ? `<button type="button" class="button button-primary" data-action="google-connect" data-mailbox="${esc(m.id)}">${svgIcon('key')} Reconnect Google</button>` : `<button type="button" class="button button-secondary" data-action="me-mailbox-sync" data-id="${esc(m.id)}">${svgIcon('refresh')} Check for replies now</button>`}<button type="button" class="button button-ghost" data-action="me-mailbox-remove" data-id="${esc(m.id)}">${svgIcon('trash')} Remove</button><span class="subtle">Emails you approve go out from this mailbox. Replies still arrive in Gmail as normal.</span></div></article>`;
+  };
+  const connect = configured
+    ? `<section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon blue">${svgIcon('key')}</span><div><h2>${boxes.length ? 'Connect another mailbox' : 'Connect your mailbox'}</h2><p>Press the button, sign in to your ${esc(domain || 'company')} Google account and tick the two boxes. Chelo can then send the emails you approve from your address and notice when a funder replies. Nothing about your Gmail changes — you keep receiving and reading mail there as always.</p></div></div><div class="settings-card-actions"><button type="button" class="button button-primary" data-action="google-connect">${svgIcon('key')} Connect with Google</button>${domain ? `<span class="subtle">Only @${esc(domain)} accounts are accepted.</span>` : ''}</div></section>`
+    : `<section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('key')}</span><div><h2>Google is not set up yet</h2><p>${isAdmin ? 'Add the Google Client ID and secret below once; after that every staff member can connect their own mailbox here.' : 'Ask an administrator to set up Google under Settings → My mailbox. After that you can connect your mailbox here with one click.'}</p></div></div></section>${isAdmin ? googleSettingsCard(settings) : ''}`;
+  return `${boxes.map(card).join('')}${connect}${configured && isAdmin ? `<details class="dlv-advanced settings-card-details"><summary>Google client settings (administrators)</summary>${googleSettingsCard(settings)}</details>` : ''}`;
 }
 function authGateView() {
   const setup = Boolean(state.auth.setupRequired);
@@ -1417,12 +1442,14 @@ async function dispatchAction(button) {
       const clientId = $('#google-client-id')?.value.trim() || ''; const clientSecret = $('#google-client-secret')?.value || '';
       if (!clientId && !clientSecret) return toast('Paste the Client ID and Client secret first.', true);
       const body = {}; if (clientId) body.clientId = clientId; if (clientSecret) body.clientSecret = clientSecret;
-      try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify(body) }); state.googleStatus = null; state.dlv.googleSetupOpen = false; await refresh(); if (state.dlv.data) await loadDeliverability(true); toast('Google saved. Press Connect with Google to add the mailbox.'); }
+      try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify(body) }); state.googleStatus = null; state.myMailboxes = null; if (state.dlv) state.dlv.googleSetupOpen = false; await refresh(); if (state.dlv?.data) await loadDeliverability(true); toast('Google saved. Press Connect with Google to add the mailbox.'); }
       catch (err) { toast(err.message, true); }
       return;
     }
     if (action === 'google-clear') { if (!confirm('Remove the Google client? Mailboxes already connected stop working until it is added again.')) return; try { await API('/api/settings/google', { method: 'PUT', body: JSON.stringify({ clear: true }) }); state.googleStatus = null; await refresh(); toast('Google client removed.'); } catch (err) { toast(err.message, true); } return; }
     if (action === 'google-setup-toggle') { state.dlv.googleSetupOpen = !state.dlv.googleSetupOpen; renderApp(); document.getElementById('settings-google')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    if (action === 'me-mailbox-sync') { button.disabled = true; try { const r = await API(`/api/me/mailboxes/${encodeURIComponent(button.dataset.id)}/sync-inbox`, { method: 'POST', body: '{}' }); toast(r.ok ? `Checked ${r.checked} new message${r.checked === 1 ? '' : 's'}; ${r.matched} matched a funder.` : r.error, !r.ok); } catch (err) { toast(err.message, true); } loadMyMailboxes(true); return; }
+    if (action === 'me-mailbox-remove') { if (!confirm('Remove this mailbox from Chelo? Emails already queued from it will stop. Your Gmail itself is untouched.')) return; try { await API(`/api/me/mailboxes/${encodeURIComponent(button.dataset.id)}`, { method: 'DELETE' }); toast('Mailbox removed.'); state.myMailboxes = null; await refresh(); loadMyMailboxes(true); } catch (err) { toast(err.message, true); } return; }
     if (action === 'google-connect') { const mb = button.dataset.mailbox ? `?mailbox=${encodeURIComponent(button.dataset.mailbox)}` : ''; location.href = `/api/oauth/google/start${mb}`; return; }
     if (action === 'rv-make-pdf') { // builds the PDF from the chosen project — same as Send does — then refreshes the preview
       button.disabled = true; button.textContent = 'Making the PDF…';
@@ -1901,7 +1928,7 @@ async function initPublicOptOut() {
 // Delegated UI events keep the workspace lightweight and dependency-free.
 document.addEventListener('click', async event => {
   const settingsTab = event.target.closest('[data-settings-tab]');
-  if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
+  if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; if (state.settingsSection === 'mailbox') loadMyMailboxes(true); renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
   const viewButton = event.target.closest('[data-view]');
   if (viewButton) { event.preventDefault(); if (typeof window.isPhone === 'function' && window.isPhone() && state.auth?.authenticated) { state.m.tab = ({ briefings: 'inbox', partners: 'more', prospects: 'leads', pipeline: 'leads', workbench: 'approvals' })[viewButton.dataset.view] || 'inbox'; state.m.leadId = null; if (state.m.tab === 'more') state.m.section = 'relationships'; renderApp(); return; } setView(viewButton.dataset.view); return; }
   const ppBook = event.target.closest('[data-action="pp-book"]');
@@ -2017,7 +2044,7 @@ async function init() {
     if (!state.auth.authenticated) { renderAuthGate(); return; }
     state.data = await API('/api/init');
     const q = new URLSearchParams(location.search);
-    if (q.get('google')) { history.replaceState(null, '', location.pathname); if (q.get('google') === 'connected') { toast(`${q.get('email')} connected with Google. It sends through Gmail and reads replies itself.`); setView('deliverability'); } else toast(q.get('message') || 'Google connection failed.', true); }
+    if (q.get('google')) { history.replaceState(null, '', location.pathname); if (q.get('google') === 'connected') { toast(`${q.get('email')} connected with Google. Emails you approve now go out from it.`); state.myMailboxes = null; state.settingsSection = 'mailbox'; setView('settings'); } else toast(q.get('message') || 'Google connection failed.', true); }
     renderApp(); loadRadar(); if (state.view === 'workbench') wbRunPending();
   } catch (err) { $('#app').innerHTML = `<main class="booking-screen"><article class="booking-card"><div class="booking-card-header"><div class="booking-brand"><span class="booking-brand-icon">${BRAND_MARK}</span>Chelo</div><div class="eyebrow">Workspace unavailable</div><h1>Could not load the partnerships workspace.</h1><p>${esc(err.message)}</p></div><div class="booking-card-body">Refresh the page in a moment. Check that the local app server is running.</div></article></main>`; }
 }
