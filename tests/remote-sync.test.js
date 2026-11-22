@@ -52,7 +52,7 @@ test('remote-sync: push uploads only changed files with a versioned manifest; pu
   // Both instances write: B pushes v3, then A (still at v2) pushes → conflict counted, last writer wins at v4
   fs.writeFileSync(path.join(dirB, 'settings.json'), '{"a":2}'); assert.equal((await b.push()).version, 3);
   fs.writeFileSync(path.join(dirA, 'settings.json'), '{"a":3}'); const r = await a.push(); assert.equal(r.version, 4); assert.equal(a.status().conflicts, 1);
-  assert.equal(TRACKED.length, 5);
+  assert.equal(TRACKED.length, 6); assert.ok(TRACKED.includes("schools.sqlite"));
   // Fresh bucket → pull reports fresh, no throw
   const c = createRemoteSync({ url, serviceKey: 'service-key', bucket: 'chelo-data', prefix: 'other', dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'rs-c-')) });
   assert.equal((await c.pull()).fresh, true);

@@ -260,3 +260,10 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Same engine, one record: media targets are leads with `kind = 'media'`, `pitchTrack`, `outcomes`. The flow dispatches at two points only: `gatherBrief()` (coverage brief vs funder brief) and `generateOutreachEmail()` (kit pitch vs funder email). Sequences use `media.FOLLOW_UP_OFFSETS` (two follow-ups). No proposal PDF on pitches.
 - Discovery on the Marketing desk (`X-Chelo-Desk: marketing`) returns outlets instead of funders; CSV rows and promoted candidates inherit the desk's kind; candidates are desk-scoped.
 - Outcomes: `PUT /api/leads/:id/outcome {outcome: booked|published|signed, on}` — booked → Interested, the track's goal outcome → Won.
+
+## v62 — Four Desks, Release 3: Schools desk
+- `lib/schools.js` is the single home: DBE CSV parser (official headers or our compact ones), `schools.sqlite` store (`createSchoolsStore(conn)`), tree/list, `leadFromSchool`, `dbeBrief`, `emailStep`, `callScript`, call outcomes, needs → project body.
+- `data-seeds/dbe-schools-2025q2.csv.gz` (1 MB): the DBE national master list Q2 2025, open schools only, 20 columns, sourced from a public GitHub mirror of the DBE Excel. `POST /api/schools/load` loads it; `POST /api/schools/import` (text/csv, ≤40 MB) takes a newer quarter straight from the DBE site.
+- Routes: `GET /api/schools/status|tree|?province&district&circuit&contact&q`, `POST /api/schools/:natemis/add`, `POST /api/leads/:id/call`, `POST /api/leads/:id/needs`, `POST /api/leads/:id/needs/:needId/project`.
+- Same engine: a school is a lead with `kind = 'school'`, `natemis`, `school{…}`, `callTask`, `needs`. Flow dispatch: no email → call task (flow status `call` / `call-booked`), email → "15-minute call with the principal" ask (two follow-ups, no PDF); research step = DBE facts brief; project match not required.
+- `vercel.json` includes `data-seeds/**`; remote-sync tracks `schools.sqlite`.

@@ -16,3 +16,8 @@ with its status. Release 5 (final clean-up) closes or consciously parks every op
 | 9 | v61 | Marketing | Outlet discovery needs the web-search key; without it the Discover box returns the same "add a key" message as CSI. "What you covered" without a key uses only articles captured at discovery. | by design |
 | 10 | v61 | Marketing | Research-review auto-redraft still requires a project; a partnership-track target without a project redrafts on the next "Run" instead of immediately after ticking facts. | open |
 | 11 | v61 | Marketing | Sidebar "Funders" count/labels follow the desk, but the Leads table columns (amount, grant window, FYE) are funder-shaped on the Marketing desk. Cosmetic. | open |
+| 12 | v62 | Schools | DBE Q2 2025 list publishes emails for KwaZulu-Natal only (5 710) and no phones for Free State. Other provinces are phone-only → call tasks. A newer DBE quarter can be uploaded any time (3-step guide on the Schools desk). | data (DBE) |
+| 13 | v62 | Schools | About half the circuits are "Unknown" in the DBE file; those schools sit under "(no circuit)" in their district. District-first working is unaffected. | data (DBE) |
+| 14 | v62 | Schools | `schools.sqlite` is a second database file (kept out of the main DB so pushes stay small). On Vercel it is synced like the main file; first use on a fresh instance needs "Load the DBE list" once (≈1.3 s). | by design |
+| 15 | v62 | Schools | Call-back dates are free text ("Tue 10:00"), not calendar reminders. The To do list shows the school as "Your turn" until the call is logged; no nudge at the agreed time yet. | open |
+| 16 | v62 | Schools | The need → Verified Project step creates the project with the estimate as target and no picture; finish it under Projects. | by design |

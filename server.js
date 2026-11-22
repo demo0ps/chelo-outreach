@@ -25,6 +25,7 @@ const access = require('./lib/access');
 const voice = require('./lib/voice');
 const desks = require('./lib/desks');
 const media = require('./lib/media');
+const schools = require('./lib/schools');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -70,12 +71,15 @@ const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape', 'National'];
-const ALLOWED_LEAD_FIELDS = new Set(['pitchTrack', 'website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
+const ALLOWED_LEAD_FIELDS = new Set(['pitchTrack', 'contactChannel', 'website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
+// R3: the DBE master list (25k rows) lives in its own SQLite file so the main database — pushed to durable storage on every
+// change — stays small; schools.sqlite only re-uploads when a list is loaded or imported.
+const schoolsStore = schools.createSchoolsStore(new (require('node:sqlite').DatabaseSync)(path.join(DATA_DIR, 'schools.sqlite')));
 function mediaKit() { return { ...media.EMPTY_KIT, ...(store.getDoc('mediaKit') || {}) }; }
 function saveMediaKit(kit) { store.setDoc('mediaKit', kit); return kit; }
 if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
@@ -278,6 +282,14 @@ function projectFunding(project) {
 }
 function clientProject(project) {
   return { ...project, funding: projectFunding(project), linkedProspects: db.leads.filter(l => l.projectId === project.id).length, linkedPartners: db.partners.filter(p => p.projectId === project.id).length };
+}
+function readLargeBody(req, max = 40_000_000) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on('data', chunk => { size += chunk.length; if (size > max) { reject(new Error('File is too large (max 40 MB).')); req.destroy(); return; } chunks.push(chunk); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
@@ -644,7 +656,7 @@ function shouldAttachProposal(lead, followUp, draft) {
 }
 /** Make sure the PDF exists before the first email is approved; never throws — a missing PDF just means no attachment. */
 function ensureProposalPdf(lead, actor = 'staff') {
-  if (desks.kindOfLead(lead) === 'media') return false; // R2: pitches never carry the funder proposal PDF
+  if (desks.kindOfLead(lead) !== 'funder') return false; // R2/R3: only funder emails carry the proposal PDF
   if (proposalPdfPath(lead)) return true;
   try { createProposal(lead, {}, actor); return Boolean(proposalPdfPath(lead)); }
   catch (err) { console.warn(`[proposal] could not auto-generate the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return false; }
@@ -854,11 +866,13 @@ function mediaDraftResult(lead, origin) {
 async function gatherBrief(lead, website) {
   const searchConfig = configStore.getSearchConfig(); const aiConfig = configStore.getAIConfig();
   const projects = db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province }));
+  if (desks.kindOfLead(lead) === 'school') return schools.dbeBrief(lead);
   if (desks.kindOfLead(lead) === 'media') return media.coverageBrief({ outlet: lead.company, website, knownArticles: lead.discovery?.articles || [] }, { runSearch: research.runSearch, fetchPublicText: research.fetchPublicText, searchConfig, aiConfig, projects });
   return research.researchFunder({ company: lead.company, website, sector: lead.sector, knownArticles: lead.discovery?.articles || [] }, { searchConfig, aiConfig, projects });
 }
 async function generateOutreachEmail(lead, input, origin) {
   if (desks.kindOfLead(lead) === 'media') return mediaDraftResult(lead, origin);
+  if (desks.kindOfLead(lead) === 'school') return { draft: schools.emailStep({ step: 1, lead, links: outreachLinks(lead, origin), staff: staffSignature(lead) }), mode: 'school-call-ask', message: 'Email drafted: one ask, a 15-minute call with the principal.' };
   const rewrite = Boolean(input.rewriteNotes) || input.differently === true;
   const exclude = rewrite && lead.voice?.last ? [lead.voice.last] : [];
   let strategy = input.opening || voice.pickOpening(lead, 1, { exclude });
@@ -1137,7 +1151,11 @@ function unblockForEmail(lead) {
 }
 function deriveFlowStatus(lead) {
   const f = lead.flow; if (!f) return 'new';
+  if (lead.callTask && !normalizeEmail(lead.email) && f.status !== 'running') { // R3: phone-only schools live in call states
+    const st = lead.callTask.status; if (['open', 'call-back'].includes(st)) return 'call'; if (st === 'booked') return 'call-booked'; if (['declined', 'exhausted', 'wrong-number'].includes(st)) return 'dead';
+  }
   if (f.status === 'blocked' && f.steps?.verify?.status === 'needs-email' && normalizeEmail(lead.email)) return 'new'; // heals records blocked before the address arrived
+  if (f.status === 'call' && normalizeEmail(lead.email)) return 'new'; // an email arrived after the call task opened
   if (f.status === 'running' || f.status === 'dead' || f.status === 'error' || f.status === 'blocked') return f.status;
   if (lead.triage && !lead.triage.handled) return 'replied';
   if (lead.sequence && ['running', 'pending-approval'].includes(lead.sequence.status)) return lead.sequence.status === 'pending-approval' ? 'approved' : 'sequence';
@@ -1157,6 +1175,10 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
       // 1 · Verify
       flowStep(lead, 'verify', { status: 'running' });
       if (lead.doNotContact || isSuppressedEmail(lead.email)) { flowStep(lead, 'verify', { status: 'blocked', detail: 'On the do-not-contact list.' }); lead.flow.status = 'blocked'; return lead.flow; }
+      if (!normalizeEmail(lead.email) && desks.kindOfLead(lead) === 'school') { // R3: no published email → a call task with a script, not a web hunt
+        if (lead.phone) { schools.openCallTask(lead, { actor, staff: staffSignature(lead) }); flowStep(lead, 'verify', { status: 'phone-only', detail: `No published email. Call ${lead.phone} — the script is below.` }); lead.flow.status = 'call'; return lead.flow; }
+        flowStep(lead, 'verify', { status: 'needs-email', detail: 'The DBE list has no email or phone for this school. Add one from the school, the circuit office or the district, then press Run again.' }); lead.flow.status = 'blocked'; return lead.flow;
+      }
       if (!normalizeEmail(lead.email) && (lead.website || lead.sourceUrl || lead.company)) {
         flowStep(lead, 'verify', { status: 'running', detail: 'No email yet — looking for their published mailbox.' });
         try { await findLeadMailbox(lead, actor); } catch (err) { flowStep(lead, 'verify', { status: 'running', detail: `Mailbox search failed: ${String(err.message || err).slice(0, 120)}` }); }
@@ -1185,12 +1207,14 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
         flowStep(lead, 'match', { status: 'suggested', detail: `Suggested from research: ${lead.project}`, projectId: lead.projectId });
       } else if (lead.projectId) flowStep(lead, 'match', { status: 'set', detail: lead.project, projectId: lead.projectId });
       else if (desks.kindOfLead(lead) === 'media' && media.trackOf(lead) === 'partnership') flowStep(lead, 'match', { status: 'set', detail: 'Partnership pitch — no single project needed.' });
+      else if (desks.kindOfLead(lead) === 'school') flowStep(lead, 'match', { status: 'set', detail: 'Needs are captured on the principal call and become Verified Projects.' });
       else flowStep(lead, 'match', { status: 'needs-choice', detail: desks.kindOfLead(lead) === 'media' ? 'Pick the Verified Project that is the story.' : 'Pick the Chelo project that best matches their CSI focus.' });
       if (lead.stage === 'New' && lead.research) updateLead(lead, { stage: 'Researched' }, actor);
       // 4 · Draft
       const isMedia = desks.kindOfLead(lead) === 'media';
       const kitBlock = isMedia ? media.kitBlockReason(mediaKit()) : '';
-      const canDraft = contact.status === 'ready' && !kitBlock && (lead.projectId || (isMedia && media.trackOf(lead) === 'partnership'));
+      const isSchool = desks.kindOfLead(lead) === 'school';
+      const canDraft = contact.status === 'ready' && !kitBlock && (lead.projectId || (isMedia && media.trackOf(lead) === 'partnership') || isSchool);
       if (canDraft && (redraft || !lead.emailDraft || force) && lead.emailStatus !== 'Sent' && lead.emailStatus !== 'Approved') {
         const emailResult = await generateOutreachEmail(lead, { userNotes: '', rewriteNotes: '', differently: redraft }, origin);
         lead.proposalData = { ...(lead.proposalData || {}), company: lead.company, contactName: lead.contactName, project: lead.project, amount: Number(lead.amount || 0) };
@@ -1199,7 +1223,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
         flowStep(lead, 'draft', { status: 'drafted', detail: emailResult.message || `Draft generated (${emailResult.mode})`, mode: emailResult.mode, usedApprovedResearch: lead.research.status === 'approved' });
         addActivity(`Outreach draft auto-generated for ${lead.company}`, 'email', actor);
       } else if (lead.emailDraft) flowStep(lead, 'draft', { status: lead.emailStatus === 'Sent' ? 'sent' : lead.emailStatus === 'Approved' ? 'approved' : 'drafted', detail: `Draft ${String(lead.emailStatus || 'Draft').toLowerCase()}` });
-      else flowStep(lead, 'draft', { status: 'blocked', detail: kitBlock || (!lead.projectId && !(isMedia && media.trackOf(lead) === 'partnership') ? (isMedia ? 'Choose the project that is the story first.' : 'Choose a project first.') : `Complete contact details: ${(contact.issues || []).join(', ') || 'contact name / source'}.`) });
+      else flowStep(lead, 'draft', { status: 'blocked', detail: kitBlock || (!lead.projectId && !isSchool && !(isMedia && media.trackOf(lead) === 'partnership') ? (isMedia ? 'Choose the project that is the story first.' : 'Choose a project first.') : `Complete contact details: ${(contact.issues || []).join(', ') || 'contact name / source'}.`) });
       lead.flow.status = lead.emailDraft ? 'ready' : 'blocked';
       lead.flow.step = 'review';
       return lead.flow;
@@ -1258,6 +1282,7 @@ function buildLeadSequence(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
   const links = outreachLinks(lead, origin);
   const ladder = outreachStyle() === 'ladder' ? step => conversion.ladderStep({ step, lead, project, links, slots: conversion.proposedSlots(new Date()), staff: staffSignature(lead), facts: approvedFactsFor(lead) }) : null;
+  if (desks.kindOfLead(lead) === 'school') return sequences.buildPlan({ lead, links, project, offsets: schools.FOLLOW_UP_OFFSETS, ladder: step => schools.emailStep({ step, lead, links, staff: staffSignature(lead) }) });
   if (desks.kindOfLead(lead) === 'media') return sequences.buildPlan({ lead, links, project, offsets: media.FOLLOW_UP_OFFSETS, ladder: step => makeMediaPitch(lead, origin, step) });
   return sequences.buildPlan({ lead, links, project, facts: approvedFactsFor(lead), ladder });
 }
@@ -2415,6 +2440,85 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { leads, candidates: visibleCandidates(req.authSession), mediaKit: req.authSession?.desk === 'marketing' ? mediaKit() : undefined, partners: db.partners.filter(inScope), bookings: db.bookings.filter(inScope), activities: db.activities.filter(inScope), messages, emailEvents: db.emailEvents.filter(inScope), projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], directory: staffDirectory(), canSeeAll: all, currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
+    // ---------------- R3 Schools desk: DBE list, call tasks, needs ----------------
+    if (pathname.startsWith('/api/schools')) {
+      if (method === 'GET' && pathname === '/api/schools/status') return sendJson(res, 200, schoolsStore.status());
+      if (method === 'GET' && pathname === '/api/schools/tree') return sendJson(res, 200, schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '' }));
+      if (method === 'GET' && pathname === '/api/schools') {
+        const out = schoolsStore.list({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '', circuit: url.searchParams.get('circuit') || '', phase: url.searchParams.get('phase') || '', contact: url.searchParams.get('contact') || '', q: clampText(url.searchParams.get('q'), 80), limit: url.searchParams.get('limit') || 100, offset: url.searchParams.get('offset') || 0 });
+        const tracked = new Map(db.leads.filter(l => l.natemis).map(l => [String(l.natemis), l]));
+        return sendJson(res, 200, { ...out, items: out.items.map(sch => { const l = tracked.get(sch.natemis); return { ...sch, tracked: l ? { id: l.id, stage: l.stage, visible: leadVisible(req.authSession, l) } : null }; }) });
+      }
+      if (method === 'POST' && pathname === '/api/schools/load') {
+        if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+        const r = schoolsStore.loadBundled();
+        configStore.recordAudit({ actor: actorName(), action: 'schools.loaded', entityType: 'system', summary: `DBE list loaded: ${r.imported} schools` });
+        return sendJson(res, 200, { ok: true, ...r, status: schoolsStore.status() });
+      }
+      if (method === 'POST' && pathname === '/api/schools/import') {
+        if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+        const text = await readLargeBody(req);
+        let r; try { r = schoolsStore.importCsv(text, { source: `Upload ${new Date().toISOString().slice(0, 10)}` }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        configStore.recordAudit({ actor: actorName(), action: 'schools.imported', entityType: 'system', summary: `DBE CSV uploaded: ${r.imported} schools (${r.skipped} rows skipped)` });
+        return sendJson(res, 200, { ok: true, ...r, status: schoolsStore.status() });
+      }
+      const addRoute = pathname.match(/^\/api\/schools\/(\d{6,12})\/add$/);
+      if (addRoute && method === 'POST') {
+        const sch = schoolsStore.get(addRoute[1]);
+        if (!sch) return sendJson(res, 404, { error: 'School not found in the DBE list.' });
+        const existing = db.leads.find(l => String(l.natemis || '') === sch.natemis);
+        if (existing) return sendJson(res, 200, { ok: true, alreadyAdded: true, lead: leadVisible(req.authSession, existing) ? workbenchLead(existing) : { id: '', company: existing.company, private: true } });
+        const seed = schools.leadFromSchool(sch);
+        const contactCheck = await inspectContactRecord(seed);
+        const lead = safeLead(seed, contactCheck);
+        Object.assign(lead, { kind: 'school', natemis: seed.natemis, school: seed.school, contactChannel: seed.contactChannel, phone: seed.phone });
+        addLead(lead, req.authSession);
+        configStore.recordAudit({ actor: actorName(), action: 'school.added', entityType: 'lead', entityId: lead.id, summary: `${lead.company} (${sch.district}) added from the DBE list · ${seed.contactChannel}` });
+        addActivity(`${lead.company} added from the DBE list`, 'lead', actorName());
+        saveDb();
+        const body = await readBody(req).catch(() => ({}));
+        if (body.run !== false) { const origin = publicOrigin(req); setTimeout(() => runLeadFlow(lead, { actor: actorName(), origin }).catch(() => {}), 0); }
+        return sendJson(res, 201, { ok: true, lead: workbenchLead(lead) });
+      }
+      return sendJson(res, 404, { error: 'Not found.' });
+    }
+    const callRoute = pathname.match(/^\/api\/leads\/([^/]+)\/call$/);
+    if (callRoute && method === 'POST') {
+      const lead = findLead(decodeURIComponent(callRoute[1]));
+      if (!lead || !leadVisible(req.authSession, lead)) return sendJson(res, 404, { error: 'Target not found.' });
+      const body = await readBody(req);
+      let task; try { task = schools.recordCall(lead, { outcome: String(body.outcome || ''), notes: body.notes, callBackAt: clampText(body.callBackAt, 40), bookedAt: clampText(body.bookedAt, 40), actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      lead.updatedAt = new Date().toISOString();
+      configStore.recordAudit({ actor: actorName(), action: 'call.logged', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: call ${body.outcome}${body.notes ? ` — ${clampText(body.notes, 120)}` : ''}` });
+      addActivity(`${lead.company}: call ${body.outcome}`, 'lead', actorName());
+      saveDb();
+      return sendJson(res, 200, { ok: true, callTask: task, lead: workbenchLead(lead) });
+    }
+    const needRoute = pathname.match(/^\/api\/leads\/([^/]+)\/needs(?:\/([^/]+)\/project)?$/);
+    if (needRoute && method === 'POST') {
+      const lead = findLead(decodeURIComponent(needRoute[1]));
+      if (!lead || !leadVisible(req.authSession, lead)) return sendJson(res, 404, { error: 'Target not found.' });
+      const body = await readBody(req);
+      if (!needRoute[2]) {
+        let need; try { need = schools.addNeed(lead, { text: body.text, category: body.category, estimate: body.estimate, actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        lead.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'need.captured', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: need captured — ${need.text}` });
+        saveDb();
+        return sendJson(res, 201, { ok: true, need, lead: workbenchLead(lead) });
+      }
+      const need = (lead.needs || []).find(n => n.id === needRoute[2]);
+      if (!need) return sendJson(res, 404, { error: 'Need not found.' });
+      if (need.projectId && db.projects.some(p => p.id === need.projectId)) return sendJson(res, 200, { ok: true, alreadyCreated: true, project: clientProject(db.projects.find(p => p.id === need.projectId)), lead: workbenchLead(lead) });
+      let project; try { project = safeProject({ ...schools.projectFromNeed(lead, need), ...(body.targetAmount !== undefined ? { targetAmount: body.targetAmount } : {}), ...(body.name ? { name: body.name } : {}) }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      project.id = id('proj'); project.createdAt = project.updatedAt = new Date().toISOString(); project.schoolLeadId = lead.id; project.natemis = lead.natemis || '';
+      db.projects.push(project);
+      need.projectId = project.id; need.status = 'project';
+      lead.updatedAt = new Date().toISOString();
+      configStore.recordAudit({ actor: actorName(), action: 'project.created', entityType: 'project', entityId: project.id, summary: `Verified project from a school need: ${project.name}` });
+      addActivity(`Verified project created from ${lead.company}'s need: ${project.name}`, 'project', actorName());
+      saveDb();
+      return sendJson(res, 201, { ok: true, project: clientProject(project), lead: workbenchLead(lead) });
+    }
     // ---------------- R2 Marketing desk: media kit + outcomes ----------------
     if (pathname === '/api/media-kit' || pathname === '/api/media-kit/approve') {
       if (method === 'GET') return sendJson(res, 200, { kit: mediaKit(), blockReason: media.kitBlockReason(mediaKit()) });

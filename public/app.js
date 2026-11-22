@@ -14,6 +14,8 @@ const API = async (url, options = {}) => {
 const DESK_KEY = 'chelo-desk';
 function myDesks() { const list = Array.isArray(state?.auth?.desks) && state.auth.desks.length ? state.auth.desks : ['csi']; return list; }
 function currentDesk() { try { const saved = (typeof localStorage !== 'undefined' && localStorage.getItem(DESK_KEY)) || ''; const mine = myDesks(); return mine.includes(saved) ? saved : mine[0]; } catch { return 'csi'; } }
+function isSchoolLead(lead) { return (lead?.kind || 'funder') === 'school'; }
+function onSchools() { return currentDesk() === 'schools'; }
 function isMediaLead(lead) { return (lead?.kind || 'funder') === 'media'; }
 function onMarketing() { return currentDesk() === 'marketing'; }
 function deskMeta(id = currentDesk()) { return (state?.auth?.deskCatalogue || []).find(d => d.id === id) || { id, label: id === 'csi' ? 'CSI' : id, title: `${id} desk`, targetLabel: 'Funders', targetSingular: 'funder', todoBlurb: '' }; }
@@ -23,6 +25,7 @@ function deskSwitch() {
   return `<div class="desk-switch" role="tablist" aria-label="Desk">${mine.map(id => { const m = deskMeta(id); return `<button type="button" role="tab" class="desk-tab ${id === cur ? 'is-active' : ''}" data-action="desk-switch" data-desk="${esc(id)}" aria-selected="${id === cur}" title="${esc(m.title)}">${esc(m.label)}</button>`; }).join('')}</div>`;
 }
 const state = {
+  sch: { status: null, province: '', district: '', circuit: '', contact: '', q: '', tree: null, treeKey: '', list: null, busy: false },
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
   dq: { data: null, loading: false, error: '', busy: false },
@@ -1395,6 +1398,12 @@ async function dispatchAction(button) {
       finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
+    if (action === 'dbe-load') { state.sch.busy = true; renderApp(); try { const r = await API('/api/schools/load', { method: 'POST', body: '{}' }); state.sch.status = r.status; toast(`DBE list loaded: ${r.imported.toLocaleString('en-ZA')} schools.`); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; state.sch.treeKey = ''; renderApp(); } return; }
+    if (action === 'dbe-upload') { $('#dbe-csv')?.click(); return; }
+    if (action === 'sch-nav') { Object.assign(state.sch, { province: button.dataset.province || '', district: button.dataset.district || '', circuit: '', q: '' }); schLoadTree(); return; }
+    if (action === 'sch-add') { state.sch.busy = true; renderApp(); try { const r = await API(`/api/schools/${encodeURIComponent(id)}/add`, { method: 'POST', body: '{}' }); toast(r.alreadyAdded ? `${r.lead.company} is already in To do.` : `${r.lead.company} added — ${r.lead.email ? 'Chelo checks the email and writes the first note.' : 'no published email, so a call task opens with the script.'}`); if (r.lead.id) { state.wb.selectedId = r.lead.id; wbPollFlow(r.lead.id); } await refresh(); state.sch.list = null; await schLoadList(); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; renderApp(); } return; }
+    if (action === 'call-log') { const notes = $('#call-notes')?.value || ''; const when = $('#call-when')?.value || ''; const outcome = button.dataset.outcome; const r = await API(`/api/leads/${encodeURIComponent(id)}/call`, { method: 'POST', body: JSON.stringify({ outcome, notes, callBackAt: outcome === 'call-back' ? when : '', bookedAt: outcome === 'booked' ? when : '' }) }); toast(outcome === 'booked' ? `Call booked with ${r.lead.company}. Capture the needs when you speak.` : `Logged: ${outcome}.`); await refresh(); return; }
+    if (action === 'need-project') { const r = await API(`/api/leads/${encodeURIComponent(id)}/needs/${encodeURIComponent(button.dataset.need)}/project`, { method: 'POST', body: '{}' }); toast(`Verified Project created: ${r.project.name}. Add the budget and photos under Projects.`); await refresh(); return; }
     if (action === 'media-kit-approve') { state.mediaKit = await API('/api/media-kit/approve', { method: 'POST', body: '{}' }); renderApp(); toast('Media kit approved — pitches can go out.'); return; }
     if (action === 'pitch-track') { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ pitchTrack: button.dataset.track }) }); toast(button.dataset.track === 'partnership' ? 'Partnership pitch — Chelo redrafts.' : 'PR pitch — Chelo redrafts.'); await wbRunFlow(id, { redraft: true }); return; }
     if (action === 'media-outcome') { const on = button.dataset.on !== 'false'; const r = await API(`/api/leads/${encodeURIComponent(id)}/outcome`, { method: 'PUT', body: JSON.stringify({ outcome: button.dataset.outcome, on }) }); toast(on ? `${button.dataset.outcome.charAt(0).toUpperCase()}${button.dataset.outcome.slice(1)} recorded for ${r.lead.company}.` : 'Cleared.'); await refresh(); return; }
@@ -1707,6 +1716,10 @@ async function handleSubmit(event) {
         ? await API(`/api/projects/${encodeURIComponent(form.dataset.id)}`, { method: 'PUT', body: JSON.stringify(data) })
         : await API('/api/projects', { method: 'POST', body: JSON.stringify(data) });
       state.modal = null; await refresh(); toast(form.dataset.id ? `Project updated: ${result.name}` : `Verified project added: ${result.name}`); return;
+    }
+    if (type === 'need') {
+      const data = formDataObject(form);
+      await API(`/api/leads/${encodeURIComponent(form.dataset.id)}/needs`, { method: 'POST', body: JSON.stringify(data) }); toast('Need captured.'); await refresh(); return;
     }
     if (type === 'media-kit') {
       const data = formDataObject(form); data.facts = String(data.facts || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -2357,10 +2370,10 @@ function researchModal(lead) {
 // =====================================================================
 // What a person sees: three states (plus Stopped). The engine's precise status stays on hover and in Health.
 const WB_FILTERS = [['all', 'All'], ['your-turn', 'Your turn'], ['working', 'Working'], ['waiting', 'Waiting on them'], ['stopped', 'Stopped']];
-const SIMPLE_OF = { replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
+const SIMPLE_OF = { call: 'your-turn', 'call-booked': 'waiting', replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
 const SIMPLE_META = { 'your-turn': ['Your turn', 'pill-interested'], working: ['Working', 'pill-researched'], waiting: ['Waiting on them', 'pill-new'], stopped: ['Stopped', 'pill-not-proceeding'] };
 // One line that says what "your turn" means for this funder.
-const NEXT_STEP = { replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
+const NEXT_STEP = { call: 'No published email — phone the school; the script is on the card', 'call-booked': 'Call booked — capture the needs when you speak to the principal', replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
 function simpleStatusOf(lead) { return SIMPLE_OF[wbStatusOf(lead)] || 'your-turn'; }
 function nextStepOf(lead) { return NEXT_STEP[wbStatusOf(lead)] || ''; }
 function approvalItems() {
@@ -2392,7 +2405,7 @@ function wbStatusOf(lead) {
   if (lead.emailDraft) return 'ready';
   return f.status || 'new';
 }
-const WB_STATUS_META = { replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+const WB_STATUS_META = { call: ['Call the school', 'pill-interested'], 'call-booked': ['Principal call booked', 'pill-won'], replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
 function wbPill(status) { const simple = SIMPLE_OF[status] || 'your-turn'; const [label, cls] = SIMPLE_META[simple]; const [detail] = WB_STATUS_META[status] || [status]; return `<span class="stage-pill ${cls}" title="${esc(detail)}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
@@ -2416,6 +2429,7 @@ function workbenchView() {
   </div>`;
 }
 function wbIntakeBar() {
+  if (onSchools()) return schoolsIntakeBar();
   const d = state.wb.discovery;
   const intake = state.wb.intake === 'pool' ? 'pool' : 'add';
   const poolCount = state.data.candidates.filter(c => c.status === 'New candidate').length;
@@ -2552,6 +2566,8 @@ function wbActionCard(lead, s, busy) {
   if (lead.doNotContact) { primary = `<span class="stage-pill pill-not-proceeding">${svgIcon('ban')}Do not contact</span>`; note = 'They asked us not to write to them.'; }
   else if (lead.triage && !lead.triage.handled) { primary = `<button type="button" class="button button-primary" data-action="ix-open-lead" data-lead="${id}">${svgIcon('reply')}Read their reply in the Inbox</button>`; }
   else if (s === 'running') { primary = `<span class="stage-pill pill-pending"><span class="wb-spinner"></span>Chelo is working</span>`; }
+  else if (s === 'call') { primary = `<a class="button button-primary" href="tel:${esc(lead.phone || '')}">${svgIcon('phone')}Call ${esc(lead.phone || '')}</a>`; }
+  else if (s === 'call-booked') { primary = `<span class="stage-pill pill-won">${svgIcon('calendar')}Call booked${lead.callTask?.bookedAt ? ` · ${esc(lead.callTask.bookedAt)}` : ''}</span>`; }
   else if (['new', 'blocked', 'error', 'dead'].includes(s) || !d) {
     if (lead.research && lead.research.status === 'pending-review') { primary = `<button type="button" class="button button-primary" data-action="research-approve" data-id="${id}">${svgIcon('checkCircle')}Looks right — write the email</button>`; }
     else primary = `<button type="button" class="button button-primary" data-action="wb-run" data-id="${id}" ${busy ? 'disabled' : ''}>${svgIcon('spark')}${s === 'new' ? 'Start' : 'Try again'}</button>`;
@@ -2616,6 +2632,55 @@ async function projectTeamSubmit(form) {
   try { await API(`/api/projects/${encodeURIComponent(id)}/team`, { method: 'PUT', body: JSON.stringify({ userIds }) }); toast('Team saved.'); closeModal(); await refresh(); }
   catch (err) { toast(err.message, true); }
 }
+/** R3: Schools desk — DBE facts, the call task with its script, and needs that become Verified Projects. */
+const NEED_LABELS = { classrooms: 'Classrooms', sanitation: 'Toilets / sanitation', water: 'Water', electricity: 'Electricity', ict: 'Computers / ICT', library: 'Library', sports: 'Sports', furniture: 'Furniture', fencing: 'Fencing / security', kitchen: 'Kitchen / feeding', other: 'Other' };
+function wbSchoolCard(lead) {
+  const sc = lead.school || {}; const task = lead.callTask; const id = esc(lead.id);
+  const facts = [['District', sc.district], ['Circuit', sc.circuit], ['Phase', sc.phase], ['Quintile', sc.quintile ? `${sc.quintile}${sc.noFee ? ' · no-fee' : ''}` : ''], ['Learners', sc.learners ? sc.learners.toLocaleString('en-ZA') : ''], ['Town', sc.town], ['Phone', lead.phone], ['Email', lead.email || 'none published']].filter(([, v]) => v);
+  const callBlock = task ? `<div class="wb-call"><h4>${svgIcon('phone')}Call task · ${esc(task.status)}${task.attempts ? ` · ${task.attempts} attempt${task.attempts === 1 ? '' : 's'}` : ''}</h4>
+      <ol class="wb-script">${(task.script || []).map(line => `<li>${esc(line)}</li>`).join('')}</ol>
+      ${['open', 'call-back', 'booked'].includes(task.status) ? `<div class="wb-call-log"><input class="form-control" id="call-notes" placeholder="Notes (no personal details) — e.g. 'Principal in on Tuesdays'" /><input class="form-control" id="call-when" placeholder="${task.status === 'booked' ? 'Booked for…' : 'Call back / booked for… e.g. Tue 10:00'}" />
+        <div class="wb-step-actions"><button type="button" class="button button-primary button-small" data-action="call-log" data-id="${id}" data-outcome="booked">${svgIcon('calendar')}Call booked</button><button type="button" class="button button-secondary button-small" data-action="call-log" data-id="${id}" data-outcome="call-back">${svgIcon('clock')}Call back</button><button type="button" class="button button-ghost button-small" data-action="call-log" data-id="${id}" data-outcome="no-answer">No answer</button><button type="button" class="button button-ghost button-small" data-action="call-log" data-id="${id}" data-outcome="wrong-number">Wrong number</button><button type="button" class="button button-ghost button-small" data-action="call-log" data-id="${id}" data-outcome="declined">${svgIcon('ban')}Declined</button></div></div>` : ''}
+      ${(task.history || []).length ? `<ul class="wb-call-history subtle">${task.history.slice(-5).reverse().map(h => `<li>${esc(isoDate(h.at))} · ${esc(h.outcome)}${h.notes ? ` — ${esc(h.notes)}` : ''} <small>(${esc(h.by)})</small></li>`).join('')}</ul>` : ''}</div>` : (lead.email ? '' : `<p class="subtle">Press Run to open the call task.</p>`);
+  const needs = lead.needs || [];
+  const needsBlock = `<div class="wb-needs"><h4>${svgIcon('grid')}Needs from the principal call</h4>
+      ${needs.length ? `<ul class="wb-need-list">${needs.map(n => `<li><span class="stage-pill pill-new">${esc(NEED_LABELS[n.category] || n.category)}</span> ${esc(n.text)}${n.estimate ? ` <small class="subtle">≈ R ${Number(n.estimate).toLocaleString('en-ZA')}</small>` : ''} ${n.projectId ? `<button type="button" class="button button-ghost button-small" data-action="open-project" data-id="${esc(n.projectId)}">${svgIcon('check')}Verified Project</button>` : `<button type="button" class="button button-secondary button-small" data-action="need-project" data-id="${id}" data-need="${esc(n.id)}">${svgIcon('plus')}Make Verified Project</button>`}</li>`).join('')}</ul>` : `<p class="subtle">Nothing captured yet. Write each need as one sentence the moment you hear it.</p>`}
+      <form class="wb-need-form" data-form="need" data-id="${id}"><select class="form-control" name="category">${Object.entries(NEED_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select><input class="form-control" name="text" placeholder="e.g. Two of five toilet blocks are unusable; 480 learners share the rest." required /><input class="form-control" name="estimate" type="number" min="0" step="1000" placeholder="Estimate R (optional)" /><button type="submit" class="button button-secondary button-small">${svgIcon('plus')}Add need</button></form></div>`;
+  return wbCard('building', 'School', `<dl class="wb-facts-kv">${facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>${callBlock}${needsBlock}`);
+}
+/** R3: the DBE browser — district first, then circuit, then schools. Replaces "Add or discover" on the Schools desk. */
+function schStatus() { if (state.sch.status || state.sch.statusLoading) return; state.sch.statusLoading = true; API('/api/schools/status').then(r => { state.sch.status = r; state.sch.statusLoading = false; renderApp(); }).catch(err => { state.sch.statusLoading = false; toast(err.message, true); }); }
+async function schLoadTree() {
+  const { province, district } = state.sch; const key = `${province}|${district}`;
+  if (state.sch.treeKey === key) return; state.sch.treeKey = key; state.sch.tree = null; state.sch.list = null; renderApp();
+  try { state.sch.tree = await API(`/api/schools/tree?province=${encodeURIComponent(province)}&district=${encodeURIComponent(district)}`); if (district) await schLoadList(); } catch (err) { toast(err.message, true); }
+  renderApp();
+}
+async function schLoadList() {
+  const { province, district, circuit, contact, q } = state.sch;
+  state.sch.list = await API(`/api/schools?province=${encodeURIComponent(province)}&district=${encodeURIComponent(district)}&circuit=${encodeURIComponent(circuit)}&contact=${encodeURIComponent(contact)}&q=${encodeURIComponent(q)}&limit=120`);
+}
+function schoolsIntakeBar() {
+  schStatus();
+  const st = state.sch.status; const sch = state.sch; const isAdmin = state.auth.role === 'admin' || state.auth.isRoot || state.auth.demoAccess;
+  if (!st) return `<section class="panel wb-intake"><p class="subtle">Checking the DBE list…</p></section>`;
+  const guide = `<details class="sch-guide"><summary>${svgIcon('upload')} Upload a newer DBE list (3 steps)</summary><ol class="settings-steps"><li>Open the DBE EMIS downloads page (education.gov.za → Programmes → EMIS → <strong>EMIS Downloads</strong>) and download the latest <strong>National</strong> master list of schools (Excel).</li><li>Open it in Excel or Google Sheets and <strong>Save as / Download → CSV</strong>. Keep the original column names (NatEmis, Official_Institution_Name, Province, EIDistrict, EICircuit, Email, Telephone…).</li><li>Choose that CSV here. Existing schools are updated, new ones added; a blank email or phone never overwrites a known one.</li></ol>${isAdmin ? `<input type="file" id="dbe-csv" accept=".csv,text/csv" hidden /><button type="button" class="button button-secondary button-small" data-action="dbe-upload" ${sch.busy ? 'disabled' : ''}>${svgIcon('upload')}${sch.busy ? 'Importing…' : 'Choose the CSV'}</button>` : '<p class="subtle">An administrator uploads the file.</p>'}</details>`;
+  if (!st.loaded) return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>DBE list of schools</strong><p class="subtle">Not loaded yet. ${st.bundledAvailable ? `Chelo ships with the ${esc(st.bundledLabel)}.` : 'Upload the DBE CSV below.'}</p></div>${st.bundledAvailable && isAdmin ? `<button type="button" class="button button-primary" data-action="dbe-load" ${sch.busy ? 'disabled' : ''}>${svgIcon('database')}${sch.busy ? 'Loading…' : 'Load the DBE list'}</button>` : ''}</div>${guide}</section>`;
+  if (!sch.treeKey) schLoadTree();
+  const provinces = sch.tree?.level === 'provinces' ? sch.tree.items : null;
+  const crumbs = `<div class="sch-crumbs"><button type="button" class="link-button" data-action="sch-nav" data-province="" data-district="">All provinces</button>${sch.province ? ` › <button type="button" class="link-button" data-action="sch-nav" data-province="${esc(sch.province)}" data-district="">${esc(sch.province)}</button>` : ''}${sch.district ? ` › <strong>${esc(sch.district)}</strong>` : ''}</div>`;
+  let body = '';
+  if (!sch.province) body = `<p class="subtle">Pick a province, then a district. Work one district at a time: its schools, its circuit offices, its principals.</p><div class="sch-grid">${(provinces || []).map(p => `<button type="button" class="sch-tile" data-action="sch-nav" data-province="${esc(p.name)}" data-district=""><strong>${esc(p.name)}</strong><span>${p.schools.toLocaleString('en-ZA')} schools · ${p.withEmail.toLocaleString('en-ZA')} with email · ${p.withPhone.toLocaleString('en-ZA')} with phone</span></button>`).join('') || '<span class="subtle">Loading…</span>'}</div>`;
+  else if (!sch.district) body = `<p class="subtle">Districts in ${esc(sch.province)}, biggest first. Email where published, otherwise a call task with a script.</p><div class="sch-grid">${(sch.tree?.items || []).map(d => `<button type="button" class="sch-tile" data-action="sch-nav" data-province="${esc(sch.province)}" data-district="${esc(d.name || '(no district)')}"><strong>${esc(d.name || '(no district)')}</strong><span>${d.schools} schools · ${d.withEmail} email · ${d.withPhone} phone · ${d.noFee} no-fee</span></button>`).join('') || '<span class="subtle">Loading…</span>'}</div>`;
+  else {
+    const circuits = sch.tree?.items || []; const list = sch.list;
+    body = `<div class="sch-filters">${circuits.length > 1 ? `<select class="form-control" data-sch-filter="circuit"><option value="">All circuits (${circuits.length})</option>${circuits.map(c => `<option value="${esc(c.name)}" ${sch.circuit === c.name ? 'selected' : ''}>${esc(c.name || '(no circuit)')} · ${c.schools}</option>`).join('')}</select>` : ''}
+      <select class="form-control" data-sch-filter="contact"><option value="" ${!sch.contact ? 'selected' : ''}>Any contact</option><option value="email" ${sch.contact === 'email' ? 'selected' : ''}>Email published</option><option value="phone" ${sch.contact === 'phone' ? 'selected' : ''}>Phone only</option></select>
+      <input class="form-control" data-sch-filter="q" placeholder="School or town" value="${esc(sch.q)}" /></div>
+      ${list ? `<p class="subtle">${list.total.toLocaleString('en-ZA')} school${list.total === 1 ? '' : 's'}${list.total > list.items.length ? ` · showing the first ${list.items.length} (email first)` : ''}</p><div class="sch-list">${list.items.map(x => `<div class="sch-row ${x.tracked ? 'is-tracked' : ''}"><div><strong>${esc(x.name)}</strong><span class="subtle"> · ${esc(x.phase || '')}${x.quintile ? ` · ${esc(x.quintile)}` : ''}${x.noFee ? ' · no-fee' : ''}${x.learners ? ` · ${x.learners.toLocaleString('en-ZA')} learners` : ''}${x.town ? ` · ${esc(x.town)}` : ''}</span><br><span class="subtle">${x.email ? `${svgIcon('mail')}${esc(x.email)}` : ''}${x.phone ? ` ${svgIcon('phone')}${esc(x.phone)}` : ''}${!x.email && !x.phone ? 'no contact in the DBE list' : ''}</span></div>${x.tracked ? (x.tracked.visible ? `<button type="button" class="button button-ghost button-small" data-action="wb-select" data-id="${esc(x.tracked.id)}">${svgIcon('eye')}In To do · ${esc(x.tracked.stage)}</button>` : '<span class="subtle">Added by a colleague</span>') : `<button type="button" class="button button-secondary button-small" data-action="sch-add" data-id="${esc(x.natemis)}" ${sch.busy ? 'disabled' : ''}>${svgIcon('plus')}Add & run</button>`}</div>`).join('')}</div>` : '<p class="subtle">Loading schools…</p>'}`;
+  }
+  return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>DBE list of schools</strong> <span class="subtle">· ${esc(st.source)} · ${st.total.toLocaleString('en-ZA')} schools</span></div>${guide}</div>${crumbs}${body}</section>`;
+}
 /** R2: Marketing desk — pitch track and outcomes for a media target. */
 function wbMediaCard(lead) {
   const track = lead.pitchTrack === 'partnership' ? 'partnership' : 'pr';
@@ -2640,6 +2705,7 @@ function wbLeadPage(lead) {
     ${lead.flow?.error ? `<p class="form-error wb-flow-error">${esc(lead.flow.error)}</p>` : ''}
     ${wbActionCard(lead, s, busy)}
     ${isMediaLead(lead) ? wbMediaCard(lead) : ''}
+    ${isSchoolLead(lead) ? wbSchoolCard(lead) : ''}
     ${wbWhoCard(lead, s, busy)}
     ${wbSendCard(lead, s, busy)}
   </div>`;
@@ -3215,6 +3281,15 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const schFilter = event.target.closest('[data-sch-filter]');
+  if (schFilter) { state.sch[schFilter.dataset.schFilter] = schFilter.value; try { await schLoadList(); } catch (err) { toast(err.message, true); } renderApp(); return; }
+  const dbeFile = event.target.closest('#dbe-csv');
+  if (dbeFile && dbeFile.files?.[0]) {
+    const file = dbeFile.files[0]; state.sch.busy = true; renderApp();
+    try { const text = await file.text(); const r = await API('/api/schools/import', { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: text }); state.sch.status = r.status; state.sch.treeKey = ''; toast(`Imported ${r.imported.toLocaleString('en-ZA')} schools (${r.skipped} rows skipped).`); }
+    catch (err) { toast(err.message, true); } finally { state.sch.busy = false; dbeFile.value = ''; renderApp(); }
+    return;
+  }
   const deskSel = event.target.closest('[data-change="dlv-desk"]');
   if (deskSel) { try { await API(`/api/deliverability/mailboxes/${encodeURIComponent(deskSel.dataset.id)}/desk`, { method: 'PUT', body: JSON.stringify({ desk: deskSel.value }) }); toast(deskSel.value ? `Mailbox now sends for the ${deskSel.options[deskSel.selectedIndex].text} desk only.` : 'Mailbox can send for any desk.'); await loadDeliverability(true); } catch (err) { toast(err.message, true); } return; }
   const pick = event.target.closest('[data-pool-pick]');

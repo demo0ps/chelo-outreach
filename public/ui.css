@@ -2259,3 +2259,19 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .wb-track, .wb-outcomes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; }
 .wb-track .desk-tab, .wb-outcomes .desk-tab { border-color: var(--line, #d9dee7); color: inherit; }
 .wb-track .desk-tab.is-active { background: #10203a; color: #fff; border-color: #10203a; }
+/* R3 schools desk */
+.sch-bar .sch-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sch-guide { font-size: 13px; max-width: 520px; } .sch-guide summary { cursor: pointer; color: var(--muted, #5b6472); }
+.sch-crumbs { margin: 10px 0 6px; font-size: 13px; }
+.sch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
+.sch-tile { text-align: left; border: 1px solid var(--line, #d9dee7); background: #fff; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: grid; gap: 3px; }
+.sch-tile:hover { border-color: #10203a; } .sch-tile span { font-size: 12px; color: var(--muted, #5b6472); }
+.sch-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; } .sch-filters .form-control { width: auto; min-width: 180px; }
+.sch-list { display: grid; gap: 6px; } .sch-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line, #e3e7ee); border-radius: 10px; font-size: 13px; }
+.sch-row.is-tracked { background: #f6f8fb; } .sch-row .icon-svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; }
+.wb-call, .wb-needs { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line, #e3e7ee); } .wb-call h4, .wb-needs h4 { margin: 0 0 6px; font-size: 13.5px; display: flex; gap: 6px; align-items: center; }
+.wb-script { padding-left: 18px; font-size: 13px; line-height: 1.45; } .wb-script li { margin: 3px 0; }
+.wb-call-log { display: grid; gap: 6px; margin-top: 8px; } .wb-call-history { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; }
+.wb-need-list { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; font-size: 13px; }
+.wb-need-form { display: grid; grid-template-columns: 170px 1fr 150px auto; gap: 6px; align-items: center; }
+@media (max-width: 760px) { .wb-need-form { grid-template-columns: 1fr; } }
