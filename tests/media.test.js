@@ -95,7 +95,7 @@ test('marketing desk end-to-end: kit gate, media target flow, track switch, outc
 
   // Kit starts empty → pitches blocked.
   const k0 = (await mk('GET', '/api/media-kit')).payload;
-  assert.equal(k0.kit.status, 'draft'); assert.match(k0.blockReason, /Write the media kit/);
+  assert.equal(k0.kit.status, 'draft'); assert.equal(k0.kit.starter, true, 'v67: a starter kit is pre-written'); assert.match(k0.kit.boilerplate, /Verified recipient, traceable transactions, impact report|verified school projects/i); assert.equal(k0.kit.spokesperson, 'Founder'); assert.match(k0.blockReason, /waiting for approval/);
 
   // A media target on the Marketing desk; the flow stops at the draft until the kit is approved.
   const outlet = (await mk('POST', '/api/leads', { company: 'Daily Maverick', contactName: 'News desk', email: 'newsdesk@github.com', sourceName: 'Masthead', sourceUrl: 'https://github.com/about', projectId: 'proj-chelo-solar-gp' })).payload;

@@ -294,3 +294,6 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 ## v66 — Schools list in its own scroll box; media-kit block made unmissable
 - Schools intake: `.sch-scroll` (max-height ≈46vh, sticky filters), "Hide list / Show list" toggle (`state.sch.collapsed`, localStorage `chelo-sch-collapsed`).
 - Marketing: `mediaKitBanner()` on the To do (admin: "Approve the media kit now"; all: "Open media kit" → Settings → Media kit); `open-media-kit`, `media-kit-save-approve` actions; `PUT /api/media-kit {approve:true}` saves + approves; approve (either route) re-runs every media lead whose draft step is blocked on the kit (`rerun` count in the response). Test in `tests/media.test.js`.
+
+## v67 — Starter media kit
+- `media.starterKit({spokesperson, spokespersonTitle, pressEmail})`: boilerplate + six facts drawn from the product and cheloapp.com positioning (three guarantees; no money through school or Chelo; DBE list ≈25 500 schools Q2 2025; supplier vetting/quotes; Motse School × Bolt proof point; project page for CSI/B-BBEE reporting). `mediaKit()` returns it (status draft, `starter: true`) until a kit is saved; spokesperson defaults to the root account's name, press mailbox to its email. Settings → Media kit explains it is a starter.

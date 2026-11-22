@@ -89,7 +89,12 @@ const db = store.db;
 // R3: the DBE master list (25k rows) lives in its own SQLite file so the main database — pushed to durable storage on every
 // change — stays small; schools.sqlite only re-uploads when a list is loaded or imported.
 const schoolsStore = schools.createSchoolsStore(new (require('node:sqlite').DatabaseSync)(path.join(DATA_DIR, 'schools.sqlite')));
-function mediaKit() { return { ...media.EMPTY_KIT, ...(store.getDoc('mediaKit') || {}) }; }
+function mediaKit() {
+  const saved = store.getDoc('mediaKit');
+  if (saved && (saved.boilerplate || saved.updatedAt)) return { ...media.EMPTY_KIT, ...saved };
+  const root = configStore.getRootUser(); // v67: starter kit until someone saves their own — spokesperson defaults to the founding account
+  return media.starterKit({ spokesperson: root?.displayName || '', spokespersonTitle: 'Founder', pressEmail: root?.username || '' });
+}
 function saveMediaKit(kit) { store.setDoc('mediaKit', kit); return kit; }
 if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
 for (const key of ['people', 'touches', 'pledges', 'stewardshipTasks', 'conversations', 'conversationMessages', 'inboxMembers']) if (!Array.isArray(db[key])) db[key] = [];
