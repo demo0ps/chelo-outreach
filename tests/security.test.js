@@ -152,7 +152,7 @@ test('desk mailbox fallback is recorded on the job and in the audit trail (#3)',
   const mb = (await c('POST', '/api/deliverability/mailboxes', { label: 'CSI box', fromEmail: 'csi@github.com', fromName: 'Chelo', host: '127.0.0.1', port: 2525, username: 'u', password: 'secret' })).payload.mailbox;
   assert.equal((await c('PUT', `/api/deliverability/mailboxes/${mb.id}/desk`, { desk: 'csi' })).status, 200);
   // A supplier broadcast from the Suppliers desk has no box of its own → falls back to the CSI box and says so.
-  const lead = await fetch(`${base}/api/public/suppliers/signup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: 'Thabo Plumbing', contactName: 'Thabo', email: 'thabo@github.com', phone: '0825551234', trades: ['sanitation'], provinces: ['Gauteng'], consent: true }) });
+  const lead = await fetch(`${base}/api/public/suppliers/signup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: 'Thabo Plumbing', contactName: 'Thabo', email: 'thabo@github.com', phone: '0825551234', trades: ['sanitation'], provinces: ['Gauteng'], town: 'Soweto', consent: true }) });
   assert.equal(lead.status, 201);
   const sup = (await c('GET', '/api/init', undefined, { 'X-Chelo-Desk': 'suppliers' })).payload.leads.find(l => l.company === 'Thabo Plumbing');
   assert.equal((await c('PUT', `/api/leads/${sup.id}/vetting`, { status: 'approved' }, { 'X-Chelo-Desk': 'suppliers' })).status, 200);

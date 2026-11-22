@@ -15,7 +15,7 @@
   label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; } input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; font: inherit; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; } @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
   .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 13.5px; } .checks label { font-weight: 500; margin: 0; display: flex; gap: 6px; align-items: center; } .checks input { width: auto; }
-  button { margin-top: 16px; background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; } button:disabled { opacity: .6; }
+  button { margin-top: 16px; background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; } button:disabled { opacity: .6; } button.secondary { margin-top: 0; background: #fff; color: var(--accent); border: 1px solid var(--line); width: 100%; } small.muted { display: block; margin-top: 4px; font-size: 12px; }
   .msg { margin-top: 12px; padding: 10px 12px; border-radius: 9px; font-size: 14px; } .ok { background: #e8f5ec; color: #1d5a2e; } .err { background: #fdecec; color: #8a1c1c; }
   .brief { background: #f6f8fb; border-radius: 10px; padding: 12px 14px; margin: 10px 0; white-space: pre-wrap; }
   footer { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 18px; }
@@ -25,7 +25,7 @@
 <main>
   <section class="card" id="join" hidden>
     <h1>Supply verified school projects</h1>
-    <p class="muted">Chelo verifies school needs, broadcasts them to vetted suppliers by trade and province, and the funder pays the supplier directly against milestones the school confirms. Registering is free. Chelo checks every supplier before sending work.</p>
+    <p class="muted">Chelo verifies school needs, sends them to vetted suppliers by trade — nearest first, and the funder pays the supplier directly against milestones the school confirms. Registering is free. Chelo checks every supplier before sending work.</p>
     <form id="join-form">
       <div class="grid">
         <div><label for="company">Company name *</label><input id="company" name="company" required maxlength="120" /></div>
@@ -37,6 +37,22 @@
         <div><label for="website">Website</label><input id="website" name="website" placeholder="https://" /></div>
         <div><label for="yearsTrading">Years trading</label><input id="yearsTrading" name="yearsTrading" type="number" min="0" max="99" /></div>
         <div><label for="csd">CSD supplier number (if any)</label><input id="csd" name="csd" maxlength="40" /></div>
+      </div>
+      <h2>Where you are based *</h2>
+      <p class="muted">Schools near you hear from Chelo first. Give the town or suburb your team works from; your phone's location makes the match more exact.</p>
+      <div class="grid">
+        <div><label for="town">Town or suburb *</label><input id="town" name="town" required maxlength="80" placeholder="e.g. Tzaneen, Soweto, Mthatha" /></div>
+        <div><label for="postcode">Postal code</label><input id="postcode" name="postcode" inputmode="numeric" maxlength="4" /></div>
+        <div><label for="radiusKm">How far will you travel for a job?</label><select id="radiusKm" name="radiusKm"></select></div>
+        <div><label>Exact location (optional)</label><button type="button" id="geo-btn" class="secondary">Use my phone's location</button><input type="hidden" name="lat" id="lat" /><input type="hidden" name="lng" id="lng" /><small id="geo-msg" class="muted"></small></div>
+      </div>
+      <h2>Compliance (what you have now)</h2>
+      <p class="muted">Give the numbers you have. Chelo will ask you to email the actual documents before your first job; funders ask for them.</p>
+      <div class="grid">
+        <div><label for="taxPin">SARS tax clearance PIN</label><input id="taxPin" name="taxPin" maxlength="40" /></div>
+        <div><label for="insurer">Public liability insurer</label><input id="insurer" name="insurer" maxlength="60" placeholder="Insurer name" /></div>
+        <div><label for="insuranceExpires">Insurance valid until</label><input id="insuranceExpires" name="insuranceExpires" type="date" /></div>
+        <div><label for="bbbeeLevel">B-BBEE level</label><select id="bbbeeLevel" name="bbbeeLevel"><option value="">Not sure / none</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
       </div>
       <h2>Trades *</h2><div class="checks" id="trades"></div>
       <h2>Provinces you work in *</h2><div class="checks" id="provinces"></div>

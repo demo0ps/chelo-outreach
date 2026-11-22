@@ -8,7 +8,15 @@
 
   if (location.pathname === '/suppliers/join') {
     $('#join').hidden = false;
-    fetch('/api/public/suppliers/signup').then(r => r.json()).then(d => { checks($('#trades'), d.trades, 'trades'); checks($('#provinces'), d.provinces, 'provinces'); });
+    fetch('/api/public/suppliers/signup').then(r => r.json()).then(d => {
+      checks($('#trades'), d.trades, 'trades'); checks($('#provinces'), d.provinces, 'provinces');
+      const sel = $('#radiusKm'); sel.innerHTML = ''; for (const r of (d.radii || [25, 50, 100, 200, 0])) { const o = document.createElement('option'); o.value = r; o.textContent = r ? `Up to ${r} km` : 'Anywhere in my provinces'; if (r === 50) o.selected = true; sel.append(o); }
+    });
+    $('#geo-btn').addEventListener('click', () => {
+      const m = $('#geo-msg'); if (!navigator.geolocation) { m.textContent = 'Location is not available on this device; the town is enough.'; return; }
+      m.textContent = 'Asking your phone…';
+      navigator.geolocation.getCurrentPosition(pos => { $('#lat').value = pos.coords.latitude.toFixed(4); $('#lng').value = pos.coords.longitude.toFixed(4); m.textContent = 'Location captured. Thank you.'; }, () => { m.textContent = 'No location shared; the town is enough.'; }, { timeout: 10000, maximumAge: 600000 });
+    });
     $('#join-form').addEventListener('submit', async e => {
       e.preventDefault(); const f = e.target; const data = Object.fromEntries(new FormData(f).entries()); data.trades = picked('trades'); data.provinces = picked('provinces'); data.consent = f.consent.checked;
       const btn = f.querySelector('button'); btn.disabled = true;

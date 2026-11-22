@@ -29,6 +29,7 @@ const schools = require('./lib/schools');
 const suppliers = require('./lib/suppliers');
 const security = require('./lib/security');
 const deskPdf = require('./lib/desk-pdf');
+const geo = require('./lib/geo');
 const pictures = require('./lib/pictures').createLibrary(path.join(__dirname, 'public', 'brand', 'photos')); // v68 photo library
 // R5: API-wide rate limiting (G3). Per IP for anonymous traffic (public forms, auth), per session once signed in.
 // Limits are per minute; RATE_LIMIT_SCALE lets a load test raise them without code changes.
@@ -1277,9 +1278,53 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
   flowRuns.set(lead.id, task);
   return task;
 }
+/** v69: where the school is — DBE GPS by NatEMIS, else the town, else nothing (province-wide wave only). */
+function projectPoint(project, schoolFacts = null) {
+  const row = project?.natemis ? (schoolsStore.get(project.natemis) || null) : null; const sc = row || schoolFacts || {};
+  const lat = Number(row?.lat), lng = Number(row?.lng);
+  if (geo.inSouthAfrica(lat, lng)) return { lat, lng, town: sc.town || '', district: sc.district || '', source: 'dbe' };
+  const g = geo.geocodeTown(sc.town || '', project?.province || sc.province || '');
+  return g.precision === 'town' ? { lat: g.lat, lng: g.lng, town: g.town, district: sc.district || '', source: 'town' } : { lat: null, lng: null, town: sc.town || '', district: sc.district || '', source: 'none' };
+}
+function tenderRanked(project, tender) {
+  if (!project.location && project.natemis) project.location = projectPoint(project);
+  return suppliers.rankSuppliers(db.leads, { trade: tender.trade, province: tender.province, point: project.location && Number.isFinite(project.location.lat) ? project.location : null });
+}
+/** Send one distance ring of the open quote request. Returns how many were queued. */
+function sendTenderWave(project, tender, ring, { origin, actor = 'system' }) {
+  const ranked = tenderRanked(project, tender);
+  const members = suppliers.waveMembers(ranked, ring, tender);
+  let queued = 0; const failed = [];
+  for (const m of members) {
+    const sup = m.lead;
+    const mail = suppliers.broadcastEmail({ project, tender, supplier: sup, link: suppliers.quoteLink(origin, tender, sup.id), staff: staffSignature(sup), distanceKm: m.distanceKm });
+    try {
+      const job = sendEngine.enqueue({ leadId: sup.id, kind: 'initial', to: sup.email, subject: mail.subject, text: mail.body, html: emailHtml(mail.body, ''), headers: { 'X-Chelo-Lead': sup.id, 'X-Chelo-Tender': tender.id }, requestedBy: actor, immediate: true, meta: { desk: 'suppliers', tenderId: tender.id, projectId: project.id, actor, company: sup.company, wave: ring } });
+      m.jobId = job.id; queued += 1;
+    } catch (err) { failed.push({ id: sup.id, company: sup.company, error: err.message }); }
+  }
+  suppliers.recordWave(tender, ring, members.filter(m => m.jobId));
+  for (const m of members) { const row = tender.sentTo.find(x => x.id === m.lead.id); if (row && m.jobId) row.jobId = m.jobId; }
+  project.updatedAt = new Date().toISOString();
+  configStore.recordAudit({ actor, action: 'tender.wave', entityType: 'project', entityId: project.id, summary: `${project.name}: ${suppliers.tradeLabel(tender.trade)} sent to ${queued} supplier(s) ${suppliers.RINGS[ring].label}` });
+  return { queued, failed, ring, label: suppliers.RINGS[ring].label, matched: ranked.rings[ring].count };
+}
+/** Cron: widen any open quote request that is short of quotes 48 h after its last ring. */
+function sweepTenderWaves(origin) {
+  const out = []; const now = new Date();
+  for (const p of db.projects) {
+    const ring = suppliers.dueWave(p.tender, now); if (ring === null || ring === 0) continue;
+    const r = sendTenderWave(p, p.tender, ring, { origin, actor: 'cron' });
+    addActivity(`${p.name}: quote request widened to ${r.label} (${r.queued} more supplier${r.queued === 1 ? '' : 's'})`, 'project', 'cron');
+    out.push({ projectId: p.id, ...r });
+  }
+  if (out.length) saveDb();
+  return out;
+}
 function workbenchLead(lead) {
   const c = clientLead(lead);
-  return { ...c, flowStatus: deriveFlowStatus(lead) };
+  const extra = lead.kind === 'supplier' ? { account: suppliers.supplierSummary(lead, db.projects) } : {};
+  return { ...c, ...extra, flowStatus: deriveFlowStatus(lead) };
 }
 /** The next email waiting in the queue for this lead, with whether it can be pushed out now. */
 function leadSendSlot(lead) {
@@ -2206,8 +2251,9 @@ async function handleApi(req, res, url) {
       const result = await sendEngine.tick({ limit: 25 });
       await refreshMailboxHealth().catch(() => {});
       const inboxes = await syncAllInboxes('cron').catch(err => ({ ok: false, error: err.message, checked: 0, matched: 0 })); // replies stop follow-ups before the next send
+      const waves = sweepTenderWaves(publicOrigin(req));
       configStore.recordAudit({ actor: 'cron', action: 'cron.send-tick', entityType: 'workspace', summary: `Send tick ran ${result.ran} job(s); inboxes read ${inboxes.checked || 0} message(s), ${inboxes.matched || 0} matched` });
-      return sendJson(res, 200, { ok: true, ran: result.ran, inboxes: { checked: inboxes.checked || 0, matched: inboxes.matched || 0 } });
+      return sendJson(res, 200, { ok: true, ran: result.ran, waves, inboxes: { checked: inboxes.checked || 0, matched: inboxes.matched || 0 } });
     }
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/data-tick') {
       const secret = process.env.CRON_SECRET || '';
@@ -2556,10 +2602,24 @@ async function handleApi(req, res, url) {
     // ---- Workbench: discovery + lead flow ----
     // ---------------- R4 Suppliers desk: vetting, need broadcast, quotes, done ----------------
     if (method === 'GET' && pathname === '/api/suppliers/match') {
-      const list = suppliers.matchSuppliers(db.leads, { trade: url.searchParams.get('trade') || '', province: url.searchParams.get('province') || '' });
-      return sendJson(res, 200, { count: list.length, suppliers: list.map(l => ({ id: l.id, company: l.company, provinces: l.supplier.provinces, email: Boolean(l.email) })) });
+      const project = db.projects.find(p => p.id === (url.searchParams.get('projectId') || ''));
+      if (project && !project.location && project.natemis) project.location = projectPoint(project);
+      const point = project?.location && Number.isFinite(project.location.lat) ? project.location : null;
+      const ranked = suppliers.rankSuppliers(db.leads, { trade: url.searchParams.get('trade') || '', province: url.searchParams.get('province') || '', point });
+      return sendJson(res, 200, { count: ranked.list.length, located: Boolean(point), where: project?.location?.town || '', rings: ranked.rings, suppliers: ranked.list.map(x => ({ id: x.lead.id, company: x.lead.company, provinces: x.lead.supplier.provinces, email: Boolean(x.lead.email), distanceKm: x.distanceKm, ring: x.ring, town: x.town, insured: suppliers.documentStatus(x.lead).insured })) });
     }
     if (method === 'GET' && pathname === '/api/suppliers/signup-link') return sendJson(res, 200, { url: `${publicOrigin(req)}/suppliers/join`, pending: db.leads.filter(l => l.kind === 'supplier' && (l.supplier?.vetting?.status || 'pending') === 'pending').length, approved: db.leads.filter(suppliers.isApproved).length });
+    const docRoute = pathname.match(/^\/api\/leads\/([^/]+)\/documents$/);
+    if (docRoute && method === 'PUT') {
+      const lead = findLead(decodeURIComponent(docRoute[1]));
+      if (!lead || lead.kind !== 'supplier') return sendJson(res, 404, { error: 'Supplier not found.' });
+      const body = await readBody(req);
+      let d; try { d = suppliers.setDocument(lead, String(body.key || ''), { status: String(body.status || ''), ref: body.ref, expiresAt: String(body.expiresAt || ''), actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      lead.updatedAt = new Date().toISOString();
+      configStore.recordAudit({ actor: actorName(), action: 'supplier.document', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${suppliers.DOCUMENTS.find(x => x[0] === body.key)[1]} ${d.status}${d.expiresAt ? ` (expires ${d.expiresAt})` : ''}` });
+      saveDb();
+      return sendJson(res, 200, { ok: true, document: d, documents: suppliers.documentStatus(lead), lead: workbenchLead(lead) });
+    }
     const vetRoute = pathname.match(/^\/api\/leads\/([^/]+)\/vetting$/);
     if (vetRoute && method === 'PUT') {
       if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required to vet suppliers.' });
@@ -2589,7 +2649,7 @@ async function handleApi(req, res, url) {
       configStore.recordAudit({ actor: actorName(), action: 'project.photo', entityType: 'project', entityId: project.id, summary: project.photo ? `${project.name}: picture pinned (${project.photo.theme} #${project.photo.n})` : `${project.name}: picture back to automatic rotation` });
       return sendJson(res, 200, clientProject(project));
     }
-    const tenderRoute = pathname.match(/^\/api\/projects\/([^/]+)\/tender(?:\/(close|done|quotes\/([^/]+)))?$/);
+    const tenderRoute = pathname.match(/^\/api\/projects\/([^/]+)\/tender(?:\/(close|done|widen|quotes\/([^/]+)))?$/);
     if (tenderRoute) {
       const project = db.projects.find(p => p.id === decodeURIComponent(tenderRoute[1]));
       if (!project) return sendJson(res, 404, { error: 'Project not found.' });
@@ -2598,22 +2658,24 @@ async function handleApi(req, res, url) {
       if (method === 'GET' && !sub) return sendJson(res, 200, { tender: project.tender || null, quoteLink: project.tender ? suppliers.quoteLink(origin, project.tender) : '' });
       if (method === 'POST' && !sub) { // open + broadcast
         const trade = String(body.trade || ''); const province = body.province === '' ? '' : String(body.province || project.province || '');
-        const matched = suppliers.matchSuppliers(db.leads, { trade, province });
-        let tender; try { tender = suppliers.openTender(project, { trade, province, closesInDays: body.closesInDays, brief: body.brief, actor: actorName(), suppliers: matched }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
-        let queued = 0; const failed = [];
-        for (const sup of matched) {
-          const mail = suppliers.broadcastEmail({ project, tender, supplier: sup, link: suppliers.quoteLink(origin, tender, sup.id), staff: staffSignature(sup) });
-          try {
-            const job = sendEngine.enqueue({ leadId: sup.id, kind: 'initial', to: sup.email, subject: mail.subject, text: mail.body, html: emailHtml(mail.body, ''), headers: { 'X-Chelo-Lead': sup.id, 'X-Chelo-Tender': tender.id }, requestedBy: actorName(), immediate: true, meta: { desk: 'suppliers', tenderId: tender.id, projectId: project.id, actor: actorName(), company: sup.company } });
-            const row = tender.sentTo.find(x => x.id === sup.id); if (row) { row.at = new Date().toISOString(); row.jobId = job.id; }
-            queued += 1;
-          } catch (err) { failed.push({ id: sup.id, company: sup.company, error: err.message }); }
-        }
-        project.updatedAt = new Date().toISOString();
-        configStore.recordAudit({ actor: actorName(), action: 'tender.opened', entityType: 'project', entityId: project.id, summary: `Need sent to ${queued} supplier(s): ${suppliers.tradeLabel(trade)}${province ? `, ${province}` : ''}` });
-        addActivity(`Need broadcast for ${project.name}: ${queued} supplier(s) asked to quote`, 'project', actorName());
+        if (!project.location && project.natemis) project.location = projectPoint(project);
+        const point = project.location && Number.isFinite(project.location.lat) ? project.location : null;
+        let tender; try { tender = suppliers.openTender(project, { trade, province, closesInDays: body.closesInDays, brief: body.brief, actor: actorName(), point }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        // v69: nearest ring first; the cron widens to 75 km and then the province when quotes run short. No GPS → province at once.
+        const startRing = point ? (Number.isInteger(Number(body.ring)) ? Math.max(0, Math.min(suppliers.RINGS.length - 1, Number(body.ring))) : 0) : suppliers.RINGS.length - 1;
+        const r = sendTenderWave(project, tender, startRing, { origin, actor: actorName() });
+        configStore.recordAudit({ actor: actorName(), action: 'tender.opened', entityType: 'project', entityId: project.id, summary: `Need opened: ${suppliers.tradeLabel(trade)}${province ? `, ${province}` : ''} — ${r.queued} supplier(s) ${r.label}` });
+        addActivity(`Need broadcast for ${project.name}: ${r.queued} supplier(s) ${r.label} asked to quote`, 'project', actorName());
         saveDb();
-        return sendJson(res, 201, { ok: true, tender, queued, failed, matched: matched.length, quoteLink: suppliers.quoteLink(origin, tender), project: clientProject(project) });
+        return sendJson(res, 201, { ok: true, tender, queued: r.queued, failed: r.failed, matched: r.matched, wave: r, quoteLink: suppliers.quoteLink(origin, tender), project: clientProject(project) });
+      }
+      if (method === 'POST' && sub === 'widen') { // staff can widen before the 48 h
+        const t = project.tender; if (!suppliers.tenderOpen(t)) return sendJson(res, 400, { error: 'This quote request is not open.' });
+        const ring = Math.max(-1, ...(t.waves || []).map(w => w.ring)) + 1; if (ring >= suppliers.RINGS.length) return sendJson(res, 400, { error: 'Already sent to the whole province.' });
+        const r = sendTenderWave(project, t, ring, { origin, actor: actorName() });
+        addActivity(`${project.name}: quote request widened to ${r.label} (${r.queued} more)`, 'project', actorName());
+        saveDb();
+        return sendJson(res, 200, { ok: true, tender: t, wave: r, project: clientProject(project) });
       }
       if (!project.tender) return sendJson(res, 404, { error: 'No quote request on this project yet.' });
       if (method === 'POST' && sub === 'close') { suppliers.closeTender(project.tender, actorName()); saveDb(); return sendJson(res, 200, { ok: true, tender: project.tender }); }
@@ -2709,6 +2771,7 @@ async function handleApi(req, res, url) {
       if (need.projectId && db.projects.some(p => p.id === need.projectId)) return sendJson(res, 200, { ok: true, alreadyCreated: true, project: clientProject(db.projects.find(p => p.id === need.projectId)), lead: workbenchLead(lead) });
       let project; try { project = safeProject({ ...schools.projectFromNeed(lead, need), ...(body.targetAmount !== undefined ? { targetAmount: body.targetAmount } : {}), ...(body.name ? { name: body.name } : {}) }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
       project.id = id('proj'); project.createdAt = project.updatedAt = new Date().toISOString(); project.schoolLeadId = lead.id; project.natemis = lead.natemis || ''; project.needCategory = need.category || 'other';
+      project.location = projectPoint({ natemis: lead.natemis, province: lead.province }, lead.school);
       db.projects.push(project);
       need.projectId = project.id; need.status = 'project';
       lead.updatedAt = new Date().toISOString();
@@ -3232,7 +3295,7 @@ async function handleApi(req, res, url) {
 
     // ---------------- R4 public: supplier sign-up + hosted quote form ----------------
     if (pathname === '/api/public/suppliers/signup') {
-      if (method === 'GET') return sendJson(res, 200, { trades: suppliers.TRADES, provinces: suppliers.PROVINCES });
+      if (method === 'GET') return sendJson(res, 200, { trades: suppliers.TRADES, provinces: suppliers.PROVINCES, radii: suppliers.RADII, documents: suppliers.DOCUMENTS.map(d => ({ key: d[0], label: d[1] })) });
       if (method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed.' });
       const body = await readBody(req);
       let seed; try { seed = suppliers.fromSignup(body); } catch (err) { return sendJson(res, 400, { error: err.message }); }

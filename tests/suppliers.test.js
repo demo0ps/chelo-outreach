@@ -34,7 +34,7 @@ function client(base, desk = '') {
     return { status: res.status, payload };
   };
 }
-const SIGNUP = { company: 'Thabo Plumbing', contactName: 'Thabo Nkosi', email: 'thabo@github.com', phone: '082 555 1234', trades: ['sanitation', 'water'], provinces: ['Gauteng', 'Limpopo'], regNo: '2015/123456/07', yearsTrading: 8, references: 'Sizanani Primary — Mr M, 011 555 1234', consent: true };
+const SIGNUP = { company: 'Thabo Plumbing', contactName: 'Thabo Nkosi', email: 'thabo@github.com', phone: '082 555 1234', trades: ['sanitation', 'water'], provinces: ['Gauteng', 'Limpopo'], regNo: '2015/123456/07', yearsTrading: 8, town: 'Soweto', radiusKm: 50, references: 'Sizanani Primary — Mr M, 011 555 1234', consent: true };
 
 test('suppliers module: sign-up validation, vetting, matching, tender, quotes, sign with fee, done', () => {
   assert.throws(() => suppliers.fromSignup({ ...SIGNUP, trades: [] }), /Pick at least one trade/);
@@ -111,6 +111,9 @@ test('suppliers desk end-to-end: public sign-up → vet → broadcast → hosted
   assert.equal((await sup('GET', '/api/suppliers/signup-link')).payload.pending, 1);
   assert.equal((await sup('GET', '/api/suppliers/match?trade=sanitation&province=Gauteng')).payload.count, 0);
   const vet = (await sup('PUT', `/api/leads/${lead.id}/vetting`, { status: 'approved', notes: 'References checked out.' })).payload;
+  const doc = (await sup('PUT', `/api/leads/${lead.id}/documents`, { key: 'insurance', status: 'received', ref: 'Santam', expiresAt: '2027-06-30' })).payload;
+  assert.equal(doc.documents.insured, true); assert.equal(doc.lead.account.documents.received, 1); assert.equal(doc.lead.supplier.location.town, 'Soweto');
+  assert.equal((await sup('PUT', `/api/leads/${lead.id}/documents`, { key: 'tax', status: 'received', expiresAt: 'never' })).status, 400);
   assert.equal(vet.vetting.status, 'approved'); assert.equal(vet.lead.flowStatus, 'vetted');
   assert.equal((await sup('GET', '/api/suppliers/match?trade=sanitation&province=Gauteng')).payload.count, 1);
 
@@ -120,6 +123,9 @@ test('suppliers desk end-to-end: public sign-up → vet → broadcast → hosted
   const bc = (await sup('POST', `/api/projects/${project.id}/tender`, { trade: 'sanitation', province: 'Gauteng', closesInDays: 7 })).payload;
   assert.equal(bc.matched, 1, JSON.stringify(bc)); assert.equal(bc.queued, 1, JSON.stringify(bc.failed)); assert.ok(bc.quoteLink.includes('/quote/'));
   assert.equal((await sup('POST', `/api/projects/${project.id}/tender`, { trade: 'water' })).status, 400, 'one open request at a time');
+  assert.equal(bc.wave.label, 'whole province', 'no GPS for this project → province at once'); assert.equal(bc.tender.waves.length, 1);
+  assert.equal((await sup('POST', `/api/projects/${project.id}/tender/widen`, {})).status, 400, 'nothing left to widen');
+  const match = (await sup('GET', '/api/suppliers/match?trade=sanitation&province=Gauteng')).payload; assert.equal(match.count, 1); assert.equal(match.rings.length, 3); assert.equal(match.suppliers[0].town, 'Soweto');
 
   // The supplier quotes on the hosted form, anonymously, with the personal link.
   const token = bc.tender.token;
