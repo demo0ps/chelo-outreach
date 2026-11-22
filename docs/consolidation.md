@@ -253,3 +253,10 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Leads, To do, Workbench and Inbox are desk-scoped; Verified Projects stay shared.
 - Mailboxes can be tagged to one desk (`PUT /api/deliverability/mailboxes/:id/desk`); untagged boxes serve any desk.
 - Issue log started: `docs/known-issues.md`.
+
+## v61 — Four Desks, Release 2: Marketing desk
+- `lib/media.js` is the single home for the desk: pitch tracks (PR / Partnership), media kit rules, "what you covered" brief, outlet discovery, outcomes.
+- Media kit lives in the SQLite meta table (`doc:mediaKit`, via `store.getDoc/setDoc`). Admin edits (`PUT /api/media-kit`) reset approval; `POST /api/media-kit/approve` gates every pitch.
+- Same engine, one record: media targets are leads with `kind = 'media'`, `pitchTrack`, `outcomes`. The flow dispatches at two points only: `gatherBrief()` (coverage brief vs funder brief) and `generateOutreachEmail()` (kit pitch vs funder email). Sequences use `media.FOLLOW_UP_OFFSETS` (two follow-ups). No proposal PDF on pitches.
+- Discovery on the Marketing desk (`X-Chelo-Desk: marketing`) returns outlets instead of funders; CSV rows and promoted candidates inherit the desk's kind; candidates are desk-scoped.
+- Outcomes: `PUT /api/leads/:id/outcome {outcome: booked|published|signed, on}` — booked → Interested, the track's goal outcome → Won.

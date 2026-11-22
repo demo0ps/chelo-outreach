@@ -24,6 +24,7 @@ const relationships = require('./lib/relationships');
 const access = require('./lib/access');
 const voice = require('./lib/voice');
 const desks = require('./lib/desks');
+const media = require('./lib/media');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -69,12 +70,14 @@ const INTRO_MEETING_MINUTES = 20;
 const HOST = '0.0.0.0';
 const STAGES = ['New', 'Researched', 'Contacted', 'Interested', 'Proposal sent', 'Briefing requested', 'Briefing booked', 'Won', 'Not proceeding'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape', 'National'];
-const ALLOWED_LEAD_FIELDS = new Set(['website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
+const ALLOWED_LEAD_FIELDS = new Set(['pitchTrack', 'website', 'company', 'contactName', 'title', 'email', 'phone', 'sector', 'sourceUrl', 'sourceName', 'sourceLastVerifiedAt', 'contactLastVerifiedAt', 'relationshipContext', 'partnerPriorities', 'grantWindowOpenMonth', 'grantWindowCloseMonth', 'nextGrantDeadline', 'province', 'footprint', 'financialYearEnd', 'fyeSource', 'introducer', 'introducedVia', 'foundationName', 'parentCompany', 'projectId', 'project', 'amount', 'stage', 'fitScore', 'notes', 'owner', 'nextAction', 'doNotContact', 'emailStatus', 'emailDraft', 'followUpDraft', 'followUpEmailStatus', 'proposalData']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PROPOSAL_DIR, { recursive: true });
 
 const db = store.db;
+function mediaKit() { return { ...media.EMPTY_KIT, ...(store.getDoc('mediaKit') || {}) }; }
+function saveMediaKit(kit) { store.setDoc('mediaKit', kit); return kit; }
 if (!Array.isArray(db.mergeReviews)) db.mergeReviews = [];
 for (const key of ['people', 'touches', 'pledges', 'stewardshipTasks', 'conversations', 'conversationMessages', 'inboxMembers']) if (!Array.isArray(db[key])) db[key] = [];
 const waterfall = dataEngine.createWaterfall({
@@ -498,6 +501,7 @@ function updateLead(lead, body, actor = 'staff') {
     else if (key === 'province' || key === 'footprint') lead[key] = clampText(value, 120);
     else if (['introducer', 'introducedVia', 'foundationName', 'parentCompany'].includes(key)) lead[key] = clampText(value, 160);
     else if (key === 'stage') lead.stage = STAGES.includes(value) ? value : lead.stage;
+    else if (key === 'pitchTrack') lead.pitchTrack = media.TRACKS[value] ? value : 'pr'; // R2: Marketing desk track
     else if (key === 'doNotContact') lead.doNotContact = Boolean(value);
     else if (key === 'relationshipContext') lead[key] = clampText(value, 800);
     else if (key === 'partnerPriorities') lead[key] = clampText(value, 1200);
@@ -640,6 +644,7 @@ function shouldAttachProposal(lead, followUp, draft) {
 }
 /** Make sure the PDF exists before the first email is approved; never throws — a missing PDF just means no attachment. */
 function ensureProposalPdf(lead, actor = 'staff') {
+  if (desks.kindOfLead(lead) === 'media') return false; // R2: pitches never carry the funder proposal PDF
   if (proposalPdfPath(lead)) return true;
   try { createProposal(lead, {}, actor); return Boolean(proposalPdfPath(lead)); }
   catch (err) { console.warn(`[proposal] could not auto-generate the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return false; }
@@ -834,7 +839,26 @@ function recentSentBodies(limit = 20, excludeLeadId = null) {
   return db.messages.filter(m => m.body && m.kind !== 'reply' && m.leadId !== excludeLeadId).slice(0, limit).map(m => m.body);
 }
 /** v57: one voice, five ways in. Rotates the opening per funder, checks the result against the last 20 sent, retries once. */
+function makeMediaPitch(lead, origin, step = 1) {
+  const project = db.projects.find(p => p.id === lead.projectId) || null;
+  return media.pitchStep({ step, lead, project, kit: mediaKit(), coverage: media.approvedCoverage(lead.research), links: outreachLinks(lead, origin), staff: staffSignature(lead) });
+}
+/** R2: a media target gets a pitch from the approved kit — never the funder email, never the AI funder prompt. */
+function mediaDraftResult(lead, origin) {
+  const block = media.kitBlockReason(mediaKit());
+  if (block) throw new Error(block);
+  const track = media.TRACKS[media.trackOf(lead)];
+  return { draft: makeMediaPitch(lead, origin, 1), mode: 'media-kit', message: `${track.label} drafted from the approved media kit${media.approvedCoverage(lead.research).length ? ' with their recent coverage' : ''}.` };
+}
+/** One research door for every desk: funders get the funder brief, media targets get "what you covered". */
+async function gatherBrief(lead, website) {
+  const searchConfig = configStore.getSearchConfig(); const aiConfig = configStore.getAIConfig();
+  const projects = db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province }));
+  if (desks.kindOfLead(lead) === 'media') return media.coverageBrief({ outlet: lead.company, website, knownArticles: lead.discovery?.articles || [] }, { runSearch: research.runSearch, fetchPublicText: research.fetchPublicText, searchConfig, aiConfig, projects });
+  return research.researchFunder({ company: lead.company, website, sector: lead.sector, knownArticles: lead.discovery?.articles || [] }, { searchConfig, aiConfig, projects });
+}
 async function generateOutreachEmail(lead, input, origin) {
+  if (desks.kindOfLead(lead) === 'media') return mediaDraftResult(lead, origin);
   const rewrite = Boolean(input.rewriteNotes) || input.differently === true;
   const exclude = rewrite && lead.voice?.last ? [lead.voice.last] : [];
   let strategy = input.opening || voice.pickOpening(lead, 1, { exclude });
@@ -1148,10 +1172,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
       // 2 · Research
       flowStep(lead, 'research', { status: 'running' });
       if (force || !lead.research || research.isStale(lead.research) || lead.research.status === 'rejected') {
-        const brief = await research.researchFunder(
-          { company: lead.company, website: String(lead.website || lead.sourceUrl || '').trim(), sector: lead.sector, knownArticles: lead.discovery?.articles || [] },
-          { searchConfig: configStore.getSearchConfig(), aiConfig: configStore.getAIConfig(), projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
-        );
+        const brief = await gatherBrief(lead, String(lead.website || lead.sourceUrl || '').trim());
         brief.requestedBy = actor;
         lead.research = brief;
         applyResearchSignals(lead, brief, actor);
@@ -1163,10 +1184,13 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
         updateLead(lead, { projectId: lead.research.suggestedProjectId }, actor);
         flowStep(lead, 'match', { status: 'suggested', detail: `Suggested from research: ${lead.project}`, projectId: lead.projectId });
       } else if (lead.projectId) flowStep(lead, 'match', { status: 'set', detail: lead.project, projectId: lead.projectId });
-      else flowStep(lead, 'match', { status: 'needs-choice', detail: 'Pick the Chelo project that best matches their CSI focus.' });
+      else if (desks.kindOfLead(lead) === 'media' && media.trackOf(lead) === 'partnership') flowStep(lead, 'match', { status: 'set', detail: 'Partnership pitch — no single project needed.' });
+      else flowStep(lead, 'match', { status: 'needs-choice', detail: desks.kindOfLead(lead) === 'media' ? 'Pick the Verified Project that is the story.' : 'Pick the Chelo project that best matches their CSI focus.' });
       if (lead.stage === 'New' && lead.research) updateLead(lead, { stage: 'Researched' }, actor);
       // 4 · Draft
-      const canDraft = contact.status === 'ready' && lead.projectId;
+      const isMedia = desks.kindOfLead(lead) === 'media';
+      const kitBlock = isMedia ? media.kitBlockReason(mediaKit()) : '';
+      const canDraft = contact.status === 'ready' && !kitBlock && (lead.projectId || (isMedia && media.trackOf(lead) === 'partnership'));
       if (canDraft && (redraft || !lead.emailDraft || force) && lead.emailStatus !== 'Sent' && lead.emailStatus !== 'Approved') {
         const emailResult = await generateOutreachEmail(lead, { userNotes: '', rewriteNotes: '', differently: redraft }, origin);
         lead.proposalData = { ...(lead.proposalData || {}), company: lead.company, contactName: lead.contactName, project: lead.project, amount: Number(lead.amount || 0) };
@@ -1175,7 +1199,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
         flowStep(lead, 'draft', { status: 'drafted', detail: emailResult.message || `Draft generated (${emailResult.mode})`, mode: emailResult.mode, usedApprovedResearch: lead.research.status === 'approved' });
         addActivity(`Outreach draft auto-generated for ${lead.company}`, 'email', actor);
       } else if (lead.emailDraft) flowStep(lead, 'draft', { status: lead.emailStatus === 'Sent' ? 'sent' : lead.emailStatus === 'Approved' ? 'approved' : 'drafted', detail: `Draft ${String(lead.emailStatus || 'Draft').toLowerCase()}` });
-      else flowStep(lead, 'draft', { status: 'blocked', detail: !lead.projectId ? 'Choose a project first.' : `Complete contact details: ${(contact.issues || []).join(', ') || 'contact name / source'}.` });
+      else flowStep(lead, 'draft', { status: 'blocked', detail: kitBlock || (!lead.projectId && !(isMedia && media.trackOf(lead) === 'partnership') ? (isMedia ? 'Choose the project that is the story first.' : 'Choose a project first.') : `Complete contact details: ${(contact.issues || []).join(', ') || 'contact name / source'}.`) });
       lead.flow.status = lead.emailDraft ? 'ready' : 'blocked';
       lead.flow.step = 'review';
       return lead.flow;
@@ -1234,6 +1258,7 @@ function buildLeadSequence(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
   const links = outreachLinks(lead, origin);
   const ladder = outreachStyle() === 'ladder' ? step => conversion.ladderStep({ step, lead, project, links, slots: conversion.proposedSlots(new Date()), staff: staffSignature(lead), facts: approvedFactsFor(lead) }) : null;
+  if (desks.kindOfLead(lead) === 'media') return sequences.buildPlan({ lead, links, project, offsets: media.FOLLOW_UP_OFFSETS, ladder: step => makeMediaPitch(lead, origin, step) });
   return sequences.buildPlan({ lead, links, project, facts: approvedFactsFor(lead), ladder });
 }
 function stopLeadSequence(lead, reason, actor = 'system') {
@@ -1560,6 +1585,7 @@ function relationshipsSummary(now = new Date()) {
 // ---- Discovered leads catalogue (curated SA CSI funders) + bulk organisation verification ----
 /** Every funder has an owner; ones that pre-date private workspaces go to the root account (admins see them anyway). */
 function ensureLeadOwners() { const root = configStore.getRootUser(); const n = access.assignMissingOwners(db.leads, root?.id || ''); if (n) saveDbDeferred(); return n; }
+function visibleCandidates(session, desk = session?.desk) { return db.candidates.filter(c => !desk || desks.deskOfLead(c) === desk); } // R2: the local pool follows the desk too
 function visibleLeads(session, desk = session?.desk) { const list = db.leads.filter(l => !l.hidden && (!desk || desks.deskOfLead(l) === desk)); return session ? access.filterLeads(session, list, db.projects) : list; }
 /** Which desk this request is looking through: X-Chelo-Desk header (or ?desk=), limited to desks the person holds. */
 function requestDesk(req, url) { return desks.resolveDesk(req.authSession, req.headers['x-chelo-desk'] || url?.searchParams?.get('desk')); }
@@ -2386,14 +2412,48 @@ async function handleApi(req, res, url) {
       const messages = db.messages.filter(inScope).map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
       const leads = scopedLeads.map(l => ({ ...clientLead(l), access: leadAccessView(l, req.authSession) }));
       const settings = configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) });
-      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners.filter(inScope), bookings: db.bookings.filter(inScope), activities: db.activities.filter(inScope), messages, emailEvents: db.emailEvents.filter(inScope), projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], directory: staffDirectory(), canSeeAll: all, currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
+      return sendJson(res, 200, { leads, candidates: visibleCandidates(req.authSession), mediaKit: req.authSession?.desk === 'marketing' ? mediaKit() : undefined, partners: db.partners.filter(inScope), bookings: db.bookings.filter(inScope), activities: db.activities.filter(inScope), messages, emailEvents: db.emailEvents.filter(inScope), projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], directory: staffDirectory(), canSeeAll: all, currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
+    // ---------------- R2 Marketing desk: media kit + outcomes ----------------
+    if (pathname === '/api/media-kit' || pathname === '/api/media-kit/approve') {
+      if (method === 'GET') return sendJson(res, 200, { kit: mediaKit(), blockReason: media.kitBlockReason(mediaKit()) });
+      if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required to change the media kit.' });
+      if (method === 'PUT' && pathname === '/api/media-kit') {
+        const body = await readBody(req);
+        const kit = { ...media.cleanKit(body, mediaKit()), status: 'draft', approvedAt: '', approvedBy: '', updatedAt: new Date().toISOString(), updatedBy: actorName() };
+        saveMediaKit(kit);
+        configStore.recordAudit({ actor: actorName(), action: 'media-kit.updated', entityType: 'system', summary: `Media kit edited (${kit.facts.length} fact(s)); approval reset` });
+        return sendJson(res, 200, { kit, blockReason: media.kitBlockReason(kit) });
+      }
+      if (method === 'POST' && pathname === '/api/media-kit/approve') {
+        const kit = mediaKit();
+        if (!kit.boilerplate) return sendJson(res, 400, { error: 'Write the boilerplate paragraph before approving.' });
+        Object.assign(kit, { status: 'approved', approvedAt: new Date().toISOString(), approvedBy: actorName() });
+        saveMediaKit(kit);
+        configStore.recordAudit({ actor: actorName(), action: 'media-kit.approved', entityType: 'system', summary: 'Media kit approved for pitches' });
+        return sendJson(res, 200, { kit, blockReason: '' });
+      }
+      return sendJson(res, 405, { error: 'Method not allowed.' });
+    }
+    const outcomeRoute = pathname.match(/^\/api\/leads\/([^/]+)\/outcome$/);
+    if (outcomeRoute && method === 'PUT') {
+      const lead = findLead(decodeURIComponent(outcomeRoute[1]));
+      if (!lead || !leadVisible(req.authSession, lead)) return sendJson(res, 404, { error: 'Target not found.' });
+      const body = await readBody(req);
+      try { media.applyOutcome(lead, String(body.outcome || ''), { on: body.on !== false, actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      lead.updatedAt = new Date().toISOString();
+      configStore.recordAudit({ actor: actorName(), action: 'lead.outcome', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${body.outcome} ${body.on === false ? 'cleared' : 'recorded'}` });
+      addActivity(`${lead.company}: ${body.outcome} ${body.on === false ? 'cleared' : 'recorded'}`, 'lead', actorName());
+      saveDb();
+      return sendJson(res, 200, { ok: true, lead: clientLead(lead) });
+    }
     if (method === 'GET' && pathname === '/api/discovery/search') {
       const q = String(url.searchParams.get('q') || '').trim();
       const searchConfig = configStore.getSearchConfig();
       if (!searchConfig.apiKey) return sendJson(res, 409, { error: 'Add a web search provider key in Settings → Integrations to discover organisations on the web.', organisations: [] });
-      const result = await research.discoverOrganisations(searchConfig, q, { aiConfig: configStore.getAIConfig() });
+      const onMarketing = req.authSession?.desk === 'marketing';
+      const result = onMarketing ? await media.discoverOutlets(searchConfig, q, { runSearch: research.runSearch, aiConfig: configStore.getAIConfig() }) : await research.discoverOrganisations(searchConfig, q, { aiConfig: configStore.getAIConfig() });
       // v58: show the published mailbox for the top results (own-site organisations only; generic mailboxes, never people).
       const budget = AbortSignal.timeout(20000);
       await Promise.all(result.organisations.filter(o => o.website).slice(0, 6).map(async o => {
@@ -2425,7 +2485,7 @@ async function handleApi(req, res, url) {
       const lead = safeLead({ company: name, contactName: clampText(body.contactName, 120), title: clampText(body.title, 120), email, sourceUrl: website, sourceName: 'Web discovery', sector: clampText(body.sector, 80), notes: clampText(body.summary, 400), stage: 'New' }, contactCheck);
       lead.website = website;
       if (email && body.mailbox?.email && normalizeEmail(body.mailbox.email) === email) { // published generic mailbox found during discovery
-        if (!lead.contactName) lead.contactName = 'CSI / Social Investment team';
+        if (!lead.contactName) lead.contactName = req.authSession?.desk === 'marketing' ? 'News desk' : 'CSI / Social Investment team';
         if (!lead.title) lead.title = 'Generic organisation mailbox';
         lead.contactKind = 'generic-mailbox'; lead.contactSource = { kind: 'published-mailbox', sourceUrl: body.mailbox.source || website, at: new Date().toISOString() }; lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10);
       }
@@ -2728,7 +2788,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true, ran: pending.map(l => l.id), remaining: db.leads.filter(l => !l.flow && !l.doNotContact && l.emailStatus !== 'Sent').length });
     }
     if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, (url.searchParams.get('include') === 'hidden' && access.seesEverything(req.authSession) ? db.leads : visibleLeads(req.authSession)).map(clientLead));
-    if (method === 'GET' && pathname === '/api/candidates') return sendJson(res, 200, db.candidates);
+    if (method === 'GET' && pathname === '/api/candidates') return sendJson(res, 200, visibleCandidates(req.authSession));
     if (method === 'GET' && pathname === '/api/partners') { const ids = access.seesEverything(req.authSession) ? null : new Set(visibleLeads(req.authSession).map(l => l.id)); return sendJson(res, 200, ids ? db.partners.filter(p => ids.has(p.leadId)) : db.partners); }
     if (method === 'GET' && pathname === '/api/bookings') return sendJson(res, 200, db.bookings);
 
@@ -3006,6 +3066,7 @@ async function handleApi(req, res, url) {
         const check = await inspectContactRecord({ ...row, email: rawEmail });
         if (check.status === 'invalid') return { row: rowNumber, status: 'deleted-invalid', reason: check.reason };
         const candidate = safeCandidate({ ...row, ...verificationDates, email: rawEmail }, check);
+        candidate.kind = desks.kindForDesk(req.authSession?.desk || desks.DEFAULT_DESK); // R2: a CSV imported on the Marketing desk is media
         return { row: rowNumber, status: check.status === 'ready' ? 'ready' : check.status, reason: check.issues?.join('; ') || '', candidate };
       });
       for (const result of rowResults) {
@@ -3048,6 +3109,7 @@ async function handleApi(req, res, url) {
         if (check.status === 'invalid') { skipped.push({ id: cid, company: candidate.company, reason: 'email address does not work' }); continue; }
         candidate.contactCheck = check;
         const lead = safeLead(candidate, check);
+        if (candidate.kind) lead.kind = candidate.kind;
         addLead(lead, req.authSession);
         candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
         added.push(lead);
@@ -3220,10 +3282,7 @@ async function handleApi(req, res, url) {
         const website = String(body.website || lead.website || lead.sourceUrl || '').trim();
         const searchConfig = configStore.getSearchConfig();
         const aiConfig = configStore.getAIConfig();
-        const brief = await research.researchFunder(
-          { company: lead.company, website, sector: lead.sector, knownArticles: lead.discovery?.articles || [] },
-          { searchConfig, aiConfig, projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
-        );
+        const brief = await gatherBrief(lead, website);
         brief.requestedBy = actorName();
         lead.research = brief;
         applyResearchSignals(lead, brief, actorName());

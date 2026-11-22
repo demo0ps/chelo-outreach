@@ -2255,3 +2255,7 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .check-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
 .dlv-desk { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; }
 .dlv-desk .form-control { width: auto; min-height: 30px; padding: 2px 8px; font-size: 12.5px; }
+/* R2 marketing desk */
+.wb-track, .wb-outcomes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; }
+.wb-track .desk-tab, .wb-outcomes .desk-tab { border-color: var(--line, #d9dee7); color: inherit; }
+.wb-track .desk-tab.is-active { background: #10203a; color: #fff; border-color: #10203a; }

@@ -14,6 +14,8 @@ const API = async (url, options = {}) => {
 const DESK_KEY = 'chelo-desk';
 function myDesks() { const list = Array.isArray(state?.auth?.desks) && state.auth.desks.length ? state.auth.desks : ['csi']; return list; }
 function currentDesk() { try { const saved = (typeof localStorage !== 'undefined' && localStorage.getItem(DESK_KEY)) || ''; const mine = myDesks(); return mine.includes(saved) ? saved : mine[0]; } catch { return 'csi'; } }
+function isMediaLead(lead) { return (lead?.kind || 'funder') === 'media'; }
+function onMarketing() { return currentDesk() === 'marketing'; }
 function deskMeta(id = currentDesk()) { return (state?.auth?.deskCatalogue || []).find(d => d.id === id) || { id, label: id === 'csi' ? 'CSI' : id, title: `${id} desk`, targetLabel: 'Funders', targetSingular: 'funder', todoBlurb: '' }; }
 function deskSwitch() {
   const mine = myDesks(); if (mine.length < 2) return '';
@@ -704,8 +706,8 @@ function settingsView() {
       ${googleSettingsCard(settings)}
       <section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon gold">${svgIcon('eye')}</span><div><h2>Analytics & tracking</h2><p>First-party CTA hits are counted by Chelo. Open measurement uses a 1×1 tracking pixel and is approximate; image proxies, privacy features and blockers may distort it.</p></div></div><div class="settings-fields"><label class="check-row"><input type="checkbox" name="openTrackingEnabled" ${settings.openTrackingEnabled ? 'checked' : ''} /> Add open-tracking pixel to SMTP and .eml emails</label><div class="form-group full"><label for="setting-public-url">Public HTTPS app URL</label><input class="form-control" id="setting-public-url" name="publicBaseUrl" type="url" value="${esc(settings.publicBaseUrl || (location.protocol === 'https:' ? location.origin : ''))}" placeholder="https://partnerships.example.org" /><span class="form-hint">The recipient’s mail client must be able to reach this HTTPS address to load the pixel and CTA. Localhost and private preview URLs will not track opens for external recipients.</span></div></div><div class="settings-card-actions"><button class="button button-primary" type="submit">${svgIcon('check')} Save settings</button></div></section></form>`;
   const isAdmin = state.auth.role === 'admin' || state.auth.demoAccess;
-  const sectionContent = state.settingsSection === 'mailbox' ? myMailboxView(settings, isAdmin) : state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : content;
-  const tabs = `<div class="settings-tabs" role="tablist"><button type="button" class="settings-tab ${state.settingsSection === 'mailbox' ? 'active' : ''}" data-settings-tab="mailbox">${svgIcon('mail')} My mailbox</button>${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button><button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
+  const sectionContent = state.settingsSection === 'mailbox' ? myMailboxView(settings, isAdmin) : state.settingsSection === 'governance' ? governanceView(isAdmin) : state.settingsSection === 'briefings' ? briefingsSettingsView(settings) : state.settingsSection === 'media-kit' ? mediaKitView(isAdmin) : content;
+  const tabs = `<div class="settings-tabs" role="tablist"><button type="button" class="settings-tab ${state.settingsSection === 'mailbox' ? 'active' : ''}" data-settings-tab="mailbox">${svgIcon('mail')} My mailbox</button>${isRoot() ? `<button type="button" class="settings-tab ${state.settingsSection === 'integrations' ? 'active' : ''}" data-settings-tab="integrations">${svgIcon('settings')} Integrations</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'governance' ? 'active' : ''}" data-settings-tab="governance">${svgIcon('shield')} Team & governance</button><button type="button" class="settings-tab ${state.settingsSection === 'briefings' ? 'active' : ''}" data-settings-tab="briefings">${svgIcon('calendar')} Briefings & inbound</button>${myDesks().includes('marketing') ? `<button type="button" class="settings-tab ${state.settingsSection === 'media-kit' ? 'active' : ''}" data-settings-tab="media-kit">${svgIcon('globe')} Media kit</button>` : ''}<button type="button" class="settings-tab ${state.settingsSection === 'audit' ? 'active' : ''}" data-settings-tab="audit">${svgIcon('activity')} Audit trail</button></div>`;
   return `${pageHead('Settings', 'Settings', '', state.auth.openAccessDemo ? '' : `<button class="button button-secondary" data-action="logout">${svgIcon('logout')} Sign out</button>`)}${tabs}${sectionContent}`;
 }
 
@@ -1393,6 +1395,9 @@ async function dispatchAction(button) {
       finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
+    if (action === 'media-kit-approve') { state.mediaKit = await API('/api/media-kit/approve', { method: 'POST', body: '{}' }); renderApp(); toast('Media kit approved — pitches can go out.'); return; }
+    if (action === 'pitch-track') { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ pitchTrack: button.dataset.track }) }); toast(button.dataset.track === 'partnership' ? 'Partnership pitch — Chelo redrafts.' : 'PR pitch — Chelo redrafts.'); await wbRunFlow(id, { redraft: true }); return; }
+    if (action === 'media-outcome') { const on = button.dataset.on !== 'false'; const r = await API(`/api/leads/${encodeURIComponent(id)}/outcome`, { method: 'PUT', body: JSON.stringify({ outcome: button.dataset.outcome, on }) }); toast(on ? `${button.dataset.outcome.charAt(0).toUpperCase()}${button.dataset.outcome.slice(1)} recorded for ${r.lead.company}.` : 'Cleared.'); await refresh(); return; }
     if (action === 'desk-switch') { try { localStorage.setItem(DESK_KEY, button.dataset.desk); } catch {} state.wb.selectedId = null; state.wb.discovery = { query: '', results: [], busy: false, error: '' }; if (state.ix) state.ix.data = null; refresh(); return; }
     if (action === 'edit-lead') return openModal('lead-form', id);
     if (action === 'lead-share-open') return openModal('lead-share', id);
@@ -1703,6 +1708,10 @@ async function handleSubmit(event) {
         : await API('/api/projects', { method: 'POST', body: JSON.stringify(data) });
       state.modal = null; await refresh(); toast(form.dataset.id ? `Project updated: ${result.name}` : `Verified project added: ${result.name}`); return;
     }
+    if (type === 'media-kit') {
+      const data = formDataObject(form); data.facts = String(data.facts || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      state.mediaKit = await API('/api/media-kit', { method: 'PUT', body: JSON.stringify(data) }); renderApp(); toast('Media kit saved. Approve it before pitching.'); return;
+    }
     if (type === 'staff') {
       const data = formDataObject(form);
       data.desks = [...form.querySelectorAll('input[name="desks"]:checked')].map(i => i.value);
@@ -1949,7 +1958,7 @@ async function initPublicOptOut() {
 // Delegated UI events keep the workspace lightweight and dependency-free.
 document.addEventListener('click', async event => {
   const settingsTab = event.target.closest('[data-settings-tab]');
-  if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; if (state.settingsSection === 'mailbox') loadMyMailboxes(true); renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
+  if (settingsTab) { event.preventDefault(); state.settingsSection = settingsTab.dataset.settingsTab; if (state.settingsSection === 'mailbox') loadMyMailboxes(true); if (state.settingsSection === 'media-kit') loadMediaKit(true); renderApp(); if (state.settingsSection === 'audit') loadAudit(); return; }
   const viewButton = event.target.closest('[data-view]');
   if (viewButton) { event.preventDefault(); if (typeof window.isPhone === 'function' && window.isPhone() && state.auth?.authenticated) { state.m.tab = ({ briefings: 'inbox', partners: 'more', prospects: 'leads', pipeline: 'leads', workbench: 'approvals' })[viewButton.dataset.view] || 'inbox'; state.m.leadId = null; if (state.m.tab === 'more') state.m.section = 'relationships'; renderApp(); return; } setView(viewButton.dataset.view); return; }
   const ppBook = event.target.closest('[data-action="pp-book"]');
@@ -2200,6 +2209,29 @@ function radarView() {
 async function loadRadar() {
   try { state.data.radar = await API('/api/radar'); if (state.view === 'overview') renderApp(); } catch {}
 }
+/** Settings → Media kit (R2): the only words a pitch may use about Chelo. Admin edits; admin approves; editing resets approval. */
+function loadMediaKit(force) {
+  if ((state.mediaKit && !force) || state.mediaKitLoading) return;
+  state.mediaKitLoading = true;
+  API('/api/media-kit').then(r => { state.mediaKit = r; state.mediaKitLoading = false; renderApp(); }).catch(err => { state.mediaKitLoading = false; toast(err.message, true); });
+}
+function mediaKitView(isAdmin) {
+  loadMediaKit();
+  const k = state.mediaKit?.kit; if (!k) return `<section class="panel settings-card"><p class="subtle">Loading the media kit…</p></section>`;
+  const approved = k.status === 'approved';
+  const ro = isAdmin ? '' : 'readonly';
+  return `<section class="panel settings-card"><div class="settings-section-head"><span class="settings-section-icon purple">${svgIcon('globe')}</span><div><h2>Media kit</h2><p>Every PR and partnership pitch is written from this kit and nothing else. ${approved ? `<span class="stage-pill pill-won">${svgIcon('check')}Approved ${isoDate(k.approvedAt)} by ${esc(k.approvedBy || '')}</span>` : `<span class="stage-pill pill-pending">Draft — pitches are blocked until an administrator approves</span>`}</p></div></div>
+    <form id="media-kit-form" data-form="media-kit" class="settings-fields">
+      <div class="form-group full"><label for="mk-boiler">About Chelo (one paragraph journalists can quote) *</label><textarea id="mk-boiler" class="form-control" name="boilerplate" rows="4" maxlength="600" ${ro}>${esc(k.boilerplate)}</textarea></div>
+      <div class="form-group full"><label for="mk-facts">Facts they may quote (one per line, max 8)</label><textarea id="mk-facts" class="form-control" name="facts" rows="5" ${ro} placeholder="e.g. Chelo verifies every quote and pays suppliers directly.">${esc((k.facts || []).join('\n'))}</textarea></div>
+      <div class="form-group"><label for="mk-spokes">Spokesperson</label><input id="mk-spokes" class="form-control" name="spokesperson" value="${esc(k.spokesperson)}" ${ro} /></div>
+      <div class="form-group"><label for="mk-spokes-title">Spokesperson title</label><input id="mk-spokes-title" class="form-control" name="spokespersonTitle" value="${esc(k.spokespersonTitle)}" ${ro} /></div>
+      <div class="form-group"><label for="mk-press">Press mailbox</label><input id="mk-press" class="form-control" name="pressEmail" type="email" value="${esc(k.pressEmail)}" ${ro} /></div>
+      <div class="form-group"><label for="mk-assets">Photos, logos, backgrounder (link)</label><input id="mk-assets" class="form-control" name="assetsUrl" value="${esc(k.assetsUrl)}" ${ro} placeholder="https://…" /></div>
+    </form>
+    ${isAdmin ? `<div class="settings-card-actions"><button type="submit" form="media-kit-form" class="button button-primary">${svgIcon('save')} Save kit</button>${approved ? '' : `<button type="button" class="button button-secondary" data-action="media-kit-approve" ${k.boilerplate ? '' : 'disabled'}>${svgIcon('checkCircle')} Approve for pitches</button>`}<span class="subtle">Saving resets approval, so a second look always follows a change.</span></div>` : `<p class="subtle">Only administrators edit and approve the kit.</p>`}
+  </section>`;
+}
 function governanceView(isAdmin) {
   const policy = state.auth.approvalPolicy || state.data.settings?.approvalPolicy || 'single';
   const staff = state.data.staff || [];
@@ -2400,12 +2432,12 @@ function wbIntakeBar() {
       <button type="submit" class="button button-primary" ${state.wb.busy.add ? 'disabled' : ''}>${svgIcon('spark')}${state.wb.busy.add ? 'Adding & running…' : 'Add & run'}</button>
     </form>
     <div class="wb-discover">
-      <label class="wb-discover-input">${svgIcon('globe')}<input id="wb-discover-q" class="form-control" placeholder="Discover on the web — e.g. “JSE mining companies with education CSI”" value="${esc(d.query)}" /></label>
+      <label class="wb-discover-input">${svgIcon('globe')}<input id="wb-discover-q" class="form-control" placeholder="${onMarketing() ? 'Find outlets — e.g. “education news South Africa” or “Limpopo community newspapers”' : 'Discover on the web — e.g. “JSE mining companies with education CSI”'}" value="${esc(d.query)}" /></label>
       <button type="button" class="button button-secondary" data-action="wb-discover" ${d.busy ? 'disabled' : ''}>${svgIcon('search')}${d.busy ? 'Searching…' : 'Discover'}</button>
     </div>
     ${d.error ? `<p class="form-error">${esc(d.error)}</p>` : ''}
     ${d.read && !d.busy ? `<p class="subtle wb-discover-read">${d.read.aiOn ? `Read ${d.read.articles} article${d.read.articles === 1 ? '' : 's'}${d.read.named?.length ? ` → funders named inside: <strong>${d.read.named.map(esc).join(', ')}</strong> (shown above)` : d.read.articles ? ' → none named a funder that gives' : ''}.` : 'AI key not set — article reading is off, so funders named inside news stories are not pulled out.'}${d.read.articleTitles?.length ? ` Articles: ${d.read.articleTitles.map(a => `<a class="source-link" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.outlet || a.title)}</a>`).join(', ')}.` : ''}${(d.warnings || []).filter(w => !/AI key not set/.test(w)).length && d.results.length ? ` ${esc((d.warnings || []).filter(w => !/AI key not set/.test(w)).join(' '))}` : ''}</p>` : ''}
-    ${d.results.length ? `<div class="wb-discover-results">${d.results.map(o => `<article class="wb-org ${o.alreadyTracked ? 'is-tracked' : ''}"><div class="wb-org-copy"><strong>${esc(o.name)}</strong>${o.website ? `<a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(o.domain)}</a>` : '<span class="subtle">website not found yet — add it after you add the funder</span>'}<p>${esc(o.summary || 'No public summary captured.')}</p><small class="wb-org-meta">${o.mailbox?.email ? `${svgIcon('mail')} ${esc(o.mailbox.email)}` : o.website ? `${svgIcon('mail')} ${o.mailbox?.status === 'none' ? 'no published mailbox' : 'mailbox: checked when you press Run'}` : ''}${(o.articles || []).length ? ` · ${svgIcon('globe')} <a class="source-link" href="${esc(o.articles[0].url)}" target="_blank" rel="noopener noreferrer">${esc(o.articles[0].outlet || 'article')}${o.articles[0].publishedAt ? ` · ${esc(o.articles[0].publishedAt.slice(0, 7))}` : ''}</a>` : ''}</small></div>${o.alreadyTracked ? (o.tracked?.visible ? `<button type="button" class="button button-small button-ghost" data-action="wb-discover-open" data-id="${esc(o.tracked.id)}" data-hidden="${o.tracked.hidden ? '1' : ''}" title="${esc(o.tracked.hidden ? 'In Chelo but parked (no mailbox yet). Open moves it into To do.' : `Already in To do as ${o.tracked.company}`)}">${svgIcon('eye')}${o.tracked.hidden ? 'Parked · Open' : 'In To do · Open'}</button>` : `<span class="subtle" title="Another person owns this funder.">Already in Chelo — ask an admin to share it</span>`) : `<button type="button" class="button button-small button-secondary" data-action="wb-discover-add" data-domain="${esc(o.domain || o.name)}">${svgIcon('plus')}Add</button>`}</article>`).join('')}<p class="subtle">Real funders only: news sites, directories, job boards, government and universities are left out. Articles that named a funder are kept as homework for the email. Generic published mailboxes only — never a person's email (POPIA).</p></div>` : ''}
+    ${d.results.length ? `<div class="wb-discover-results">${d.results.map(o => `<article class="wb-org ${o.alreadyTracked ? 'is-tracked' : ''}"><div class="wb-org-copy"><strong>${esc(o.name)}</strong>${o.website ? `<a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(o.domain)}</a>` : `<span class="subtle">website not found yet — add it after you add the ${esc(deskMeta().targetSingular || 'funder')}</span>`}<p>${esc(o.summary || 'No public summary captured.')}</p><small class="wb-org-meta">${o.mailbox?.email ? `${svgIcon('mail')} ${esc(o.mailbox.email)}` : o.website ? `${svgIcon('mail')} ${o.mailbox?.status === 'none' ? 'no published mailbox' : 'mailbox: checked when you press Run'}` : ''}${(o.articles || []).length ? ` · ${svgIcon('globe')} <a class="source-link" href="${esc(o.articles[0].url)}" target="_blank" rel="noopener noreferrer">${esc(o.articles[0].outlet || 'article')}${o.articles[0].publishedAt ? ` · ${esc(o.articles[0].publishedAt.slice(0, 7))}` : ''}</a>` : ''}</small></div>${o.alreadyTracked ? (o.tracked?.visible ? `<button type="button" class="button button-small button-ghost" data-action="wb-discover-open" data-id="${esc(o.tracked.id)}" data-hidden="${o.tracked.hidden ? '1' : ''}" title="${esc(o.tracked.hidden ? 'In Chelo but parked (no mailbox yet). Open moves it into To do.' : `Already in To do as ${o.tracked.company}`)}">${svgIcon('eye')}${o.tracked.hidden ? 'Parked · Open' : 'In To do · Open'}</button>` : `<span class="subtle" title="Another person owns this funder.">Already in Chelo — ask an admin to share it</span>`) : `<button type="button" class="button button-small button-secondary" data-action="wb-discover-add" data-domain="${esc(o.domain || o.name)}">${svgIcon('plus')}Add</button>`}</article>`).join('')}<p class="subtle">Real funders only: news sites, directories, job boards, government and universities are left out. Articles that named a funder are kept as homework for the email. Generic published mailboxes only — never a person's email (POPIA).</p></div>` : ''}
   </section>`;
 }
 function wbRow(l, active) {
@@ -2488,9 +2520,9 @@ function wbSendCard(lead, s, busy) {
   const d = lead.emailDraft; const emailStatus = lead.emailStatus || 'None'; const seq = lead.sequence;
   if (!d) return wbCard('mail', "What we'll send", `<p class="subtle">${esc(s === 'running' ? 'Chelo is writing the first email.' : lead.research && lead.research.status === 'pending-review' ? 'Tick the facts above and Chelo writes the email.' : 'Chelo writes the first email once the facts are checked and a project is chosen.')}</p>`);
   const locked = emailStatus === 'Sent' || (seq && ['running', 'completed', 'approved', 'pending-approval'].includes(seq.status)) || emailStatus === 'Queued';
-  const followUps = seq ? seq.steps.filter(st => st.n > 1 && !['skipped', 'cancelled'].includes(st.status)).length : 3;
+  const followUps = seq ? seq.steps.filter(st => st.n > 1 && !['skipped', 'cancelled'].includes(st.status)).length : isMediaLead(lead) ? 2 : 3;
   const body = `<div class="wb-send-meta"><div class="sp-row"><span>To</span><strong>${esc(lead.contactName || '')} &lt;${esc(lead.email || 'no email yet')}&gt;</strong></div>
-      <div class="sp-row"><span>Attached</span><strong>${svgIcon('paperclip')}Chelo proposal PDF${lead.proposalFile ? '' : ' <small class="subtle">(made when you press Send)</small>'}</strong></div></div>
+      ${isMediaLead(lead) ? '' : `<div class="sp-row"><span>Attached</span><strong>${svgIcon('paperclip')}Chelo proposal PDF${lead.proposalFile ? '' : ' <small class="subtle">(made when you press Send)</small>'}</strong></div>`}</div>
     <label class="form-group"><span>Subject</span><input id="email-subject" class="form-control" value="${esc(d.subject || '')}" ${locked ? 'readonly' : ''} /></label>
     <label class="form-group"><span>Email</span><textarea id="email-body" class="form-control wb-email-body" rows="10" ${locked ? 'readonly' : ''}>${esc(d.body || '')}</textarea></label>
     <p class="subtle wb-followup-note">${svgIcon('clock')}If they don't reply, Chelo sends ${followUps} short follow-up${followUps === 1 ? '' : 's'} in the same thread over about two weeks and stops the moment they answer. You can stop it any time.</p>
@@ -2534,7 +2566,7 @@ function wbActionCard(lead, s, busy) {
   else { primary = `<button type="button" class="button button-primary" data-action="wb-send-all" data-id="${id}" ${busy ? 'disabled' : ''}>${svgIcon('eye')}Read & send</button>`; note = 'You see exactly what they get before anything is sent.'; }
   const secondary = [];
   if (emailStatus === 'Sent' && !(seq && seq.status === 'running')) secondary.push(`<button type="button" class="button button-ghost button-small" data-action="mark-replied" data-id="${id}">${svgIcon('reply')}They replied by phone/elsewhere</button>`);
-  if (lead.stage !== 'Won') secondary.push(`<button type="button" class="button button-ghost button-small" data-action="mark-won" data-id="${id}">${svgIcon('trophy')}They said yes → Partners</button>`); else secondary.push(`<span class="stage-pill pill-won">${svgIcon('trophy')}Partner</span>`);
+  if (lead.stage !== 'Won') { if (!isMediaLead(lead)) secondary.push(`<button type="button" class="button button-ghost button-small" data-action="mark-won" data-id="${id}">${svgIcon('trophy')}They said yes → Partners</button>`); } else secondary.push(`<span class="stage-pill pill-won">${svgIcon('trophy')}${isMediaLead(lead) ? 'Done' : 'Partner'}</span>`);
   if (!lead.doNotContact) secondary.push(`<button type="button" class="button button-ghost button-small" data-action="opt-out" data-id="${id}">${svgIcon('ban')}Do not contact</button>`);
   const facts = [emailStatus === 'Sent' || seq ? `Sent ${lead.sentAt ? isoDate(lead.sentAt) : ''}`.trim() : '', lead.openCount ? `Opened ${lead.openCount}×` : '', lead.repliedAt ? `Replied ${isoDate(lead.repliedAt)}` : '', booking ? `Briefing ${booking.status.toLowerCase()}` : ''].filter(Boolean);
   const wait = wbReplyPointer(lead);
@@ -2584,6 +2616,18 @@ async function projectTeamSubmit(form) {
   try { await API(`/api/projects/${encodeURIComponent(id)}/team`, { method: 'PUT', body: JSON.stringify({ userIds }) }); toast('Team saved.'); closeModal(); await refresh(); }
   catch (err) { toast(err.message, true); }
 }
+/** R2: Marketing desk — pitch track and outcomes for a media target. */
+function wbMediaCard(lead) {
+  const track = lead.pitchTrack === 'partnership' ? 'partnership' : 'pr';
+  const kit = state.data.mediaKit; const kitOk = kit && kit.status === 'approved' && kit.boilerplate;
+  const outcomes = lead.outcomes || {};
+  const oc = (key, label, icon) => outcomes[key] ? `<span class="stage-pill pill-won" title="${esc(outcomes[key].at || '')}">${svgIcon(icon)}${label} ${isoDate(outcomes[key].at)}</span><button type="button" class="button button-ghost button-small" data-action="media-outcome" data-id="${esc(lead.id)}" data-outcome="${key}" data-on="false" title="Clear">${svgIcon('close')}</button>` : `<button type="button" class="button button-ghost button-small" data-action="media-outcome" data-id="${esc(lead.id)}" data-outcome="${key}">${svgIcon(icon)}${label}</button>`;
+  return wbCard('globe', 'Pitch', `<div class="wb-track"><span class="subtle">Track</span>
+      <button type="button" class="desk-tab ${track === 'pr' ? 'is-active' : ''}" data-action="pitch-track" data-id="${esc(lead.id)}" data-track="pr" title="Get a verified-project story covered">PR pitch</button>
+      <button type="button" class="desk-tab ${track === 'partnership' ? 'is-active' : ''}" data-action="pitch-track" data-id="${esc(lead.id)}" data-track="partnership" title="Propose an ongoing media partnership">Partnership pitch</button></div>
+    <p class="subtle">${track === 'pr' ? 'Story first: pick the Verified Project below; the pitch names it and offers the spokesperson and photos.' : 'Partnership: an ongoing series on verified projects. No single project needed.'}${kitOk ? '' : ' <strong>The media kit is not approved yet</strong> — Settings → Media kit.'}</p>
+    <div class="wb-outcomes"><span class="subtle">Outcome</span>${oc('booked', 'Call booked', 'calendar')}${oc('published', 'Published', 'check')}${oc('signed', 'Partnership signed', 'trophy')}</div>`);
+}
 function wbLeadPage(lead) {
   const s = wbStatusOf(lead); const busy = state.wb.busy[lead.id];
   state.wb.openStep = null;
@@ -2595,6 +2639,7 @@ function wbLeadPage(lead) {
     ${wbAccessLine(lead)}
     ${lead.flow?.error ? `<p class="form-error wb-flow-error">${esc(lead.flow.error)}</p>` : ''}
     ${wbActionCard(lead, s, busy)}
+    ${isMediaLead(lead) ? wbMediaCard(lead) : ''}
     ${wbWhoCard(lead, s, busy)}
     ${wbSendCard(lead, s, busy)}
   </div>`;
