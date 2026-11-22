@@ -1753,7 +1753,7 @@ function authStatus(req) {
   const approvalPolicy = configStore.getGovernanceConfig().approvalPolicy;
   if (DEMO_OPEN_ACCESS) return { authenticated: true, setupRequired: false, username: 'demo@cheloapp.com', displayName: 'Demo Admin', role: 'admin', userId: 'demo', isRoot: true, isPrimaryRoot: true, csrfToken: DEMO_OPEN_CSRF_TOKEN, demoAccess: true, openAccessDemo: true, demoAccessAvailable: false, approvalPolicy };
   const session = sessionForRequest(req);
-  if (!session) return { authenticated: false, setupRequired: !configStore.hasAdmin(), demoAccessAvailable: DEMO_ADMIN_ACCESS };
+  if (!session) return { authenticated: false, setupRequired: !configStore.hasAdmin(), demoAccessAvailable: DEMO_ADMIN_ACCESS, googleLogin: configStore.getGoogleConfig().configured && configStore.hasAdmin(), googleDomain: configStore.getGoogleConfig().hostedDomain };
   if (session.expiresAt - Date.now() < SESSION_TTL_MS - 5 * 60 * 1000) {
     store.putSession(session.token, { ...session, expiresAt: Date.now() + SESSION_TTL_MS });
   }
@@ -2087,6 +2087,33 @@ async function handleApi(req, res, url) {
       store.clearLoginFailure(limitKey);
       configStore.recordAudit({ actor: user.username, action: 'auth.login', entityType: 'security', summary: `${user.displayName} signed in (${user.role})` });
       return sendJson(res, 200, createSession(req, user, res));
+    }
+    // ---- Sign in with Google (company Workspace accounts). Password sign-in stays as the fallback. ----
+    if (method === 'GET' && pathname === '/api/auth/google/start') {
+      if (!configStore.hasAdmin()) return sendJson(res, 409, { error: 'Create the first admin account with a password before using Google sign-in.' });
+      try { res.writeHead(302, { Location: googleMail.loginUrl({ baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req), loginHint: url.searchParams.get('email') || '' }), 'Cache-Control': 'no-store' }); return res.end(); }
+      catch (err) { return sendJson(res, 409, { error: err.message }); }
+    }
+    if (method === 'GET' && pathname === '/api/auth/google/callback') {
+      const back = params => { res.writeHead(302, { Location: `/?${new URLSearchParams(params)}`, 'Cache-Control': 'no-store' }); return res.end(); };
+      const st = googleMail.verifyState(url.searchParams.get('state'));
+      if (!st || st.purpose !== 'login') return back({ login: 'error', message: 'The sign-in link expired. Press Sign in with Google again.' });
+      if (url.searchParams.get('error')) return back({ login: 'error', message: url.searchParams.get('error') === 'access_denied' ? 'Sign-in was cancelled.' : `Google said: ${url.searchParams.get('error')}.` });
+      const limitKey = `google@@${clientIp(req)}`;
+      const failure = store.getLoginFailure(limitKey);
+      if (failure && failure.resetAt > Date.now() && failure.count >= 10) return back({ login: 'error', message: 'Too many sign-in attempts. Wait 15 minutes and try again.' });
+      try {
+        const who = await googleMail.exchangeLoginCode({ code: url.searchParams.get('code'), baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req) });
+        const { user, created } = configStore.provisionGoogleUser({ email: who.email, displayName: who.name });
+        store.clearLoginFailure(limitKey);
+        configStore.recordAudit({ actor: user.username, action: created ? 'auth.google.joined' : 'auth.login', entityType: 'security', summary: created ? `${user.displayName} joined with Google (${user.role})` : `${user.displayName} signed in with Google (${user.role})` });
+        createSession(req, user, res);
+        return back(created ? { login: 'welcome' } : {});
+      } catch (err) {
+        store.recordLoginFailure(limitKey);
+        configStore.recordAudit({ actor: 'unknown', action: 'auth.login.failed', entityType: 'security', summary: `Google sign-in refused: ${String(err.message).slice(0, 120)}` });
+        return back({ login: 'error', message: err.message });
+      }
     }
     if (method === 'POST' && pathname === '/api/auth/logout') {
       const session = sessionForRequest(req);

@@ -218,7 +218,7 @@ test('end-to-end: setup, staff roles, 4-eyes approval, projects, bookings + .ics
   assert.equal(imp.payload.errors.length, 1);
 
   // Lead linked to project with grant cycle; approve under single policy
-  const lead = await api('owner', 'POST', '/api/leads', { company: 'E2E Funder', contactName: 'Test Person', email: 'funder@github.com', sourceName: 'Public page', sourceUrl: 'https://example.com', projectId: proj.payload.id, amount: 150000, nextGrantDeadline: '2026-11-20', grantWindowOpenMonth: 9, grantWindowCloseMonth: 11 });
+  const lead = await api('owner', 'POST', '/api/leads', { company: 'E2E Funder', contactName: 'Test Person', email: 'funder@github.com', sourceName: 'Public page', sourceUrl: 'https://example.com', projectId: proj.payload.id, amount: 150000, nextGrantDeadline: new Date(Date.now() + 10 * 864e5).toISOString().slice(0, 10), grantWindowOpenMonth: 9, grantWindowCloseMonth: 11 });
   assert.equal(lead.status, 201, JSON.stringify(lead.payload));
   assert.equal(lead.payload.project, 'Test Library Build');
   const projects = (await api('owner', 'GET', '/api/projects')).payload;

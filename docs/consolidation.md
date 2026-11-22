@@ -203,3 +203,10 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Sending: `pickMailbox(preferred, { owner })` — approver's own mailbox first, then shared (unowned), then any active. Sequence steps pin `seq.mailboxId` so follow-ups stay in the same thread/mailbox; the first approver's login is carried in `meta.actor`.
 - Company lock: hosted domain defaults to `cheloapp.com` (`GOOGLE_HOSTED_DOMAIN` or Settings override); `hd=` on the Google chooser and re-checked on callback.
 - Next: v50 Sign in with Google (`openid email profile`, same client, @cheloapp.com auto-provision as member, password login kept).
+
+## v50 — Sign in with Google (2026-11-20)
+- Login page: **Sign in with Google** (`/api/auth/google/start` → `/api/auth/google/callback`, scopes `openid email profile`, `hd=cheloapp.com`, `prompt=select_account`). Shown once a first admin exists and the Google client is set.
+- `googleMail.loginUrl` / `exchangeLoginCode`: id_token from the token endpoint (aud, email_verified, hd) → `{email, name}`; wrong domain / unverified / other-app refused with plain errors.
+- `configStore.provisionGoogleUser`: existing staff account reused (deactivated refused); new @cheloapp.com account created as **owner** (staff) with a random unusable password, flagged `googleOnly`. Audit `auth.google.joined` / `auth.login`. Rate-limited per IP like password login. Password sign-in unchanged.
+- First visit lands on Settings → My mailbox with a welcome toast; `?login=error` shows on the login card.
+- Test-only `GOOGLE_TOKEN_URL_OVERRIDE` (ignored in production) lets the e2e test run a fake Google token endpoint.
