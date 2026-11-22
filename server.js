@@ -753,7 +753,7 @@ function makeOutreachEmail(lead, origin) {
   const amount = Number(lead.amount || 0) ? `, with a staff-proposed contribution of R ${Number(lead.amount).toLocaleString('en-ZA')}` : '';
   return {
     subject: makeOutreachSubject(company, project),
-    body: `${greeting}\n\nI’m reaching out because ${company}’s work in ${lead.sector || 'community investment'} may align with Chelo’s focus on verified schools, NGOs and community projects, with traceable funding and progress reporting.${researchAlignmentSentence(lead)}\n\nOne possible focus is ${project}${amount}. Scope and feasibility would be validated with the project partner before any commitment. A short video conversation would let us hear your priorities, share how Chelo works, and explore whether a next step makes sense.\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.\n\nIf you prefer not to receive further outreach, opt out here: ${links.optOut}\n\nKind regards,\nChelo Partnerships Team`
+    body: `${greeting}\n\nI’m reaching out because ${company}’s work in ${lead.sector || 'community investment'} may align with Chelo’s focus on verified schools, NGOs and community projects, with traceable funding and progress reporting.${researchAlignmentSentence(lead)}\n\nOne possible focus is ${project}${amount}. Scope and feasibility would be validated with the project partner before any commitment. A short video conversation would let us hear your priorities, share how Chelo works, and explore whether a next step makes sense.\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.\n\nKind regards,\nChelo Partnerships Team\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`
   };
 }
 function makeFollowUpEmail(lead, origin, attachProposal = false) {
@@ -770,7 +770,7 @@ function makeFollowUpEmail(lead, origin, attachProposal = false) {
   const proposalAttachment = attachProposal && lead.proposalFile ? '\n\nThe personalised Chelo proposal PDF is attached for context.' : '';
   return {
     subject,
-    body: `${greeting}\n\n${opening}\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.${proposalAttachment}\n\nIf the timing is not right, no problem. To stop further outreach, use this link: ${links.optOut}\n\nKind regards,\nChelo Partnerships Team`
+    body: `${greeting}\n\n${opening}\n\nWhich education or community-impact priorities are most important to your team this year?\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally. No preparation or commitment is required.${proposalAttachment}\n\nIf the timing is not right, no problem.\n\nKind regards,\nChelo Partnerships Team\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`
   };
 }
 async function generateFollowUpEmail(lead, input = {}, origin) {
@@ -823,7 +823,7 @@ async function generateFollowUpEmail(lead, input = {}, origin) {
   if (!/no preparation/i.test(body) || !/no commitment/i.test(body)) insertBeforeBooking('No preparation is needed, and there is no commitment to proceed.');
   if (!/video/i.test(body)) insertBeforeBooking(`This is a ${INTRO_MEETING_MINUTES}-minute introductory video briefing.`);
   if (context.proposalPdfWillBeAttached && !/proposal.{0,40}attached|attached.{0,40}proposal/i.test(body)) insertBeforeBooking('The personalised Chelo proposal PDF is attached for context.');
-  if (!body.includes(links.optOut)) body += `\n\nIf you prefer not to receive further outreach, opt out here: ${links.optOut}`;
+  if (!body.includes(links.optOut)) body += `\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`;
   body = ensurePrimaryBookingCta(body, links);
   body = cleanApprovedEmailBody({ subject, body }, context.proposalPdfWillBeAttached);
   return { draft: { subject, body }, mode: 'openai', message: `Follow-up drafted with ${aiConfig.model} using aggregate outcome signals where available. Review and approve before sharing.` };
@@ -906,7 +906,7 @@ async function generateOutreachEmailOnce(lead, input, origin) {
   if (!/no preparation/i.test(body) || !/no commitment/i.test(body)) insertBeforeBooking('No preparation is needed, and there is no commitment to proceed.');
   if (!/yes\s*[—-]\s*choose/i.test(body) || !body.includes(links.booking)) body += `\n\nYes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}\nChelo will review your preferred time and confirm it personally.`;
   if (!/chelo.{0,80}confirm/i.test(body)) insertBeforeBooking('Chelo will review your preferred time and confirm it personally.');
-  if (!body.includes(links.optOut)) body += `\n\nIf you prefer not to receive further outreach, opt out here: ${links.optOut}`;
+  if (!body.includes(links.optOut)) body += `\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`;
   body = ensurePrimaryBookingCta(body, links);
   body = cleanApprovedEmailBody({ subject, body }, false);
   return { draft: { subject, body }, mode: 'openai', message: `Email draft generated with ${model}. Performance signals were aggregate and directional; review every claim and approve before sharing.` };
@@ -1148,7 +1148,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
       flowStep(lead, 'research', { status: 'running' });
       if (force || !lead.research || research.isStale(lead.research) || lead.research.status === 'rejected') {
         const brief = await research.researchFunder(
-          { company: lead.company, website: String(lead.website || lead.sourceUrl || '').trim(), sector: lead.sector },
+          { company: lead.company, website: String(lead.website || lead.sourceUrl || '').trim(), sector: lead.sector, knownArticles: lead.discovery?.articles || [] },
           { searchConfig: configStore.getSearchConfig(), aiConfig: configStore.getAIConfig(), projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
         );
         brief.requestedBy = actor;
@@ -1227,7 +1227,7 @@ async function nudgeEngine({ actor = 'app', force = false } = {}) {
 // ---------------- Sequences (approve once, auto-send, halt on reply) ----------------
 function approvedFactsFor(lead) {
   const brief = lead?.research; if (!brief || brief.status !== 'approved') return [];
-  return brief.findings.filter(f => (brief.approvedFindingIds || []).includes(f.id)).map(f => f.text).slice(0, 3);
+  return brief.findings.filter(f => (brief.approvedFindingIds || []).includes(f.id) && !(f.kind === 'news_giving' && !f.fresh)).map(f => (f.kind === 'news_giving' && f.when ? `${f.text.replace(/\.$/, '')} ${f.when}` : f.text)).slice(0, 3);
 }
 function buildLeadSequence(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
@@ -1854,6 +1854,9 @@ function escapeHtml(value) {
 }
 function emailHtml(body, pixelUrl = '') {
   const paragraphs = String(body || '').split(/\n{2,}/).map(paragraph => {
+    // v58: the opt-out line becomes a small grey footer with only "Opt out" linked (plain text keeps the full address).
+    const foot = paragraph.trim().match(/^(?:Don't want more emails from Chelo\? Opt out:|To stop further outreach:|If you prefer not to receive further outreach, opt out here:)\s*(https?:\/\/\S+)\s*$/i);
+    if (foot) { let href = foot[1]; while (/[),.;!?]$/.test(href)) href = href.slice(0, -1); return `<p style="margin:24px 0 0;padding-top:12px;border-top:1px solid #e6e4f2;font-size:12px;line-height:1.5;color:#6b6885">Don't want more emails from Chelo? <a href="${escapeHtml(href)}" style="color:#6b6885;text-decoration:underline">Opt out</a>.</p>`; }
     const lines = paragraph.split('\n').map(line => {
       const cta = line.match(/yes\s*[—-]\s*choose\b[^\r\n]*?(https?:\/\/[^\s<]+)/i);
       if (cta) {
@@ -2385,7 +2388,13 @@ async function handleApi(req, res, url) {
       const q = String(url.searchParams.get('q') || '').trim();
       const searchConfig = configStore.getSearchConfig();
       if (!searchConfig.apiKey) return sendJson(res, 409, { error: 'Add a web search provider key in Settings → Integrations to discover organisations on the web.', organisations: [] });
-      const result = await research.discoverOrganisations(searchConfig, q);
+      const result = await research.discoverOrganisations(searchConfig, q, { aiConfig: configStore.getAIConfig() });
+      // v58: show the published mailbox for the top results (own-site organisations only; generic mailboxes, never people).
+      const budget = AbortSignal.timeout(20000);
+      await Promise.all(result.organisations.filter(o => o.website).slice(0, 6).map(async o => {
+        try { const r = await mailboxFinder.find({ company: o.name, website: o.website }, { tryPatterns: false, signal: budget }); o.mailbox = r.chosen ? { email: r.chosen.email, source: r.chosen.sources?.[0] || '' } : { status: r.status }; }
+        catch { o.mailbox = { status: 'unreachable' }; }
+      }));
       const known = new Set(db.leads.map(l => String(l.website || l.sourceUrl || '').replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase()).filter(Boolean));
       result.organisations = result.organisations.map(o => ({ ...o, alreadyTracked: known.has(o.domain) || db.leads.some(l => l.company.toLowerCase() === o.name.toLowerCase()) }));
       configStore.recordAudit({ actor: actorName(), action: 'discovery.search', entityType: 'system', summary: `Web discovery: "${q}" → ${result.organisations.length} organisation(s)` });
@@ -2395,14 +2404,19 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const name = clampText(body.name, 120); const website = String(body.website || '').trim();
       if (!name) return sendJson(res, 400, { error: 'Organisation name is required.' });
-      const email = normalizeEmail(body.email);
+      const email = normalizeEmail(body.email || body.mailbox?.email);
       const dup = checkDuplicates({ company: name, email, website });
       if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, duplicateRefusal(dup, req.authSession));
       const contactCheck = await inspectContactRecord({ company: name, contactName: body.contactName || '', email, sourceUrl: website });
       if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason });
       const lead = safeLead({ company: name, contactName: clampText(body.contactName, 120), title: clampText(body.title, 120), email, sourceUrl: website, sourceName: 'Web discovery', sector: clampText(body.sector, 80), notes: clampText(body.summary, 400), stage: 'New' }, contactCheck);
       lead.website = website;
-      lead.discovery = { query: clampText(body.query, 200), summary: clampText(body.summary, 400), sources: Array.isArray(body.sources) ? body.sources.slice(0, 3).map(String) : [], addedAt: new Date().toISOString() };
+      if (email && body.mailbox?.email && normalizeEmail(body.mailbox.email) === email) { // published generic mailbox found during discovery
+        if (!lead.contactName) lead.contactName = 'CSI / Social Investment team';
+        if (!lead.title) lead.title = 'Generic organisation mailbox';
+        lead.contactKind = 'generic-mailbox'; lead.contactSource = { kind: 'published-mailbox', sourceUrl: body.mailbox.source || website, at: new Date().toISOString() }; lead.contactLastVerifiedAt = new Date().toISOString().slice(0, 10);
+      }
+      lead.discovery = { query: clampText(body.query, 200), summary: clampText(body.summary, 400), sources: Array.isArray(body.sources) ? body.sources.slice(0, 3).map(String) : [], articles: Array.isArray(body.articles) ? body.articles.slice(0, 4).map(a => ({ url: String(a.url || ''), title: clampText(a.title, 160), outlet: clampText(a.outlet, 60), publishedAt: String(a.publishedAt || '') })).filter(a => /^https?:\/\//.test(a.url)) : [], addedAt: new Date().toISOString() };
       addLead(lead, req.authSession);
       queueLikelyDuplicates(lead, 'leads', dup.likely, actorName());
       configStore.recordAudit({ actor: actorName(), action: 'discovery.added', entityType: 'lead', entityId: lead.id, summary: `${name} added from web discovery (${website || 'no website'})` });
@@ -3183,7 +3197,7 @@ async function handleApi(req, res, url) {
         const searchConfig = configStore.getSearchConfig();
         const aiConfig = configStore.getAIConfig();
         const brief = await research.researchFunder(
-          { company: lead.company, website, sector: lead.sector },
+          { company: lead.company, website, sector: lead.sector, knownArticles: lead.discovery?.articles || [] },
           { searchConfig, aiConfig, projects: db.projects.map(p => ({ id: p.id, name: p.name, sector: p.sector, province: p.province })) }
         );
         brief.requestedBy = actorName();
@@ -3200,7 +3214,7 @@ async function handleApi(req, res, url) {
         if (!brief) return sendJson(res, 404, { error: 'Run funder research first.' });
         const body = await readBody(req);
         const pick = (ids, items) => (Array.isArray(ids) ? ids : []).map(String).filter(id => items.some(item => item.id === id));
-        brief.approvedFindingIds = pick(body.approvedFindingIds, brief.findings);
+        brief.approvedFindingIds = pick(body.approvedFindingIds, brief.findings.filter(f => !(f.kind === 'news_giving' && !f.fresh)));
         brief.approvedAlignmentIds = pick(body.approvedAlignmentIds, brief.alignmentPoints);
         brief.approvedContactIds = pick(body.approvedContactIds, brief.contacts);
         if (body.missionSummary !== undefined) brief.missionSummary = clampText(popia.scrubPiiForAi(String(body.missionSummary || '')).scrubbedText, 240);
@@ -3374,7 +3388,7 @@ async function handleApi(req, res, url) {
           { id: 'from', ok: Boolean(mailbox), label: 'Sending mailbox', detail: mailbox ? `${mailbox.fromName || ''} <${mailbox.fromEmail}>${mailbox.status === 'paused' ? ' · paused' : ''}` : 'No active mailbox — add one under Ops → Deliverability' },
           { id: 'subject', ok: subject.length > 0 && subject.length <= 90, label: 'Subject', detail: subject ? `${subject.length} characters` : 'Empty' },
           { id: 'placeholders', ok: placeholders.length === 0, label: 'No unfilled placeholders', detail: placeholders.length ? placeholders.join(', ') : 'Every merge field is filled' },
-          { id: 'ask', ok: links.some(l => l.kind === 'cta') || /\?\s*$/m.test(text.replace(/\n\s*To stop further outreach:.*$/s, '').trim()), label: 'Clear ask', detail: links.some(l => l.kind === 'cta') ? 'One-click "Yes" button leads to the booking page' : /\?\s*$/m.test(text) ? 'Ends with a question the funder can answer by replying (meeting link comes at step 2)' : 'No question or booking link — the funder has nothing to say yes to' },
+          { id: 'ask', ok: links.some(l => l.kind === 'cta') || /\?\s*$/m.test(text.replace(conversion.OPT_OUT_LINE, '').trim()), label: 'Clear ask', detail: links.some(l => l.kind === 'cta') ? 'One-click "Yes" button leads to the booking page' : /\?\s*$/m.test(text) ? 'Ends with a question the funder can answer by replying (meeting link comes at step 2)' : 'No question or booking link — the funder has nothing to say yes to' },
           { id: 'suppression', ok: !lead.doNotContact, label: 'Not suppressed', detail: lead.doNotContact ? 'Contact is on the do-not-contact list' : 'Not opted out, no hard bounce' },
           ...(!seqStep || seqStep.n === 1 ? [{ id: 'pdf', ok: pdfOk || Boolean(lead.projectId), label: pdfOk ? 'Proposal PDF attached' : lead.projectId ? 'Proposal PDF will be attached' : 'No proposal PDF yet', detail: pdfOk ? `${Math.round(fs.statSync(pdfPath).size / 1024)} KB · ${lead.proposalFile}` : lead.projectId ? 'Chelo makes it from the chosen project when you press Send' : 'Choose a project first — the PDF needs its numbers' }] : [])
         ];

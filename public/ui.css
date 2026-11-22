@@ -2241,3 +2241,7 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .share-row:hover { background: var(--surface-2, #f6f6fa); }
 .share-row input[type="checkbox"] { width: 16px; height: 16px; margin: 0; }
 .share-row input:disabled + span { opacity: 0.6; }
+
+/* v58 — discovery result meta (mailbox, source article) */
+.wb-org-meta { display: block; margin-top: 6px; color: var(--text-muted, #6b6885); font-size: 12px; }
+.wb-org-meta svg { width: 12px; height: 12px; vertical-align: -2px; }

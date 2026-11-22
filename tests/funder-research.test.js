@@ -85,7 +85,11 @@ test('funder research: search + official site, PII scrubbing, cited findings, AI
   assert.equal(brief.redactions.emails, 1);
   assert.equal(brief.redactions.phones, 1);
   assert.equal(brief.redactions.saIds, 1);
-  assert.equal(brief.findings.length, 2, 'finding with unknown source ref is dropped');
+  assert.equal(brief.findings.filter(f => f.kind !== 'news_giving').length, 2, 'finding with unknown source ref is dropped');
+  // v58: the news page is read separately as homework — dated giving facts, never used in emails when older than 12 months.
+  const newsFacts = brief.findings.filter(f => f.kind === 'news_giving');
+  assert.ok(newsFacts.every(f => f.sourceUrl.includes('news.example.org') && typeof f.fresh === 'boolean'), JSON.stringify(newsFacts));
+  assert.ok(Array.isArray(brief.articles) && brief.articles.some(a => a.url.includes('news.example.org')), 'articles kept on the brief');
   assert.ok(brief.findings.every(f => f.sourceUrl && f.id));
   assert.equal(brief.contacts[0].name, 'Thandi Mokoena');
   assert.ok(!('email' in brief.contacts[0]) && !('phone' in brief.contacts[0]));
@@ -94,7 +98,7 @@ test('funder research: search + official site, PII scrubbing, cited findings, AI
   assert.equal(researcher.approvedContext(brief), null, 'nothing is usable before review');
 
   brief.status = 'approved';
-  brief.approvedFindingIds = [brief.findings[0].id];
+  brief.approvedFindingIds = [brief.findings.find(f => f.kind !== "news_giving").id];
   brief.approvedAlignmentIds = [brief.alignmentPoints[0].id];
   const ctx = researcher.approvedContext(brief);
   assert.equal(ctx.citedFunderFacts.length, 1);

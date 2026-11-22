@@ -19,7 +19,7 @@ const lead = {
 };
 const meetingMinutes = 20;
 const priorityQuestion = 'Which education or community-impact priorities are most important to your team this year?';
-const countQuestions = body => (String(body).match(/\?/g) || []).length;
+const countQuestions = body => (String(body).replace(/\n\s*Don't want more emails from Chelo\? Opt out:.*$/i, '').match(/\?/g) || []).length;
 
 const appEmailFunction = sliceFunction(appSource, 'function makeEmailDraft(lead, followUp) {', '\nfunction makeClientOutreachSubject');
 const appHelperFunction = sliceFunction(appSource, 'function emailBodyForAttachmentMode(body, attachProposal = false) {', '\nfunction followUpPdfSelected');
@@ -67,6 +67,7 @@ const serverFollowUpFunction = sliceFunction(serverSource, 'function makeFollowU
 const serverEmailHelpers = sliceFunction(serverSource, 'function cleanApprovedEmailBody(draft, attachProposal = false) {', '\nfunction openTrackingUrl');
 const serverEmlBuilder = sliceFunction(serverSource, 'function buildEmailEml(lead, draft, followUp, pixelUrl = \'\', pdfBuffer = null) {', '\nfunction sendPdf');
 const serverContext = {
+  conversion: require('../lib/conversion'),
   INTRO_MEETING_MINUTES: meetingMinutes,
   researchAlignmentSentence: () => '',
   Buffer,
@@ -98,6 +99,10 @@ assert.match(html, /role="button"/);
 assert.match(html, /Yes — choose a time/);
 assert.match(html, /href="https:\/\/chelo\.test\/track\/cta\/synthetic-booking-token"/);
 assert.match(html, /20-minute introductory video chat/);
+// v58: opt-out is a small grey footer with only "Opt out" linked; plain text keeps the address.
+assert.match(serverIntro.body, /Don't want more emails from Chelo\? Opt out: https:\/\/chelo\.test\/opt-out\/synthetic-booking-token\s*$/);
+assert.match(html, /font-size:12px[^>]*>Don't want more emails from Chelo\? <a href="https:\/\/chelo\.test\/opt-out\/synthetic-booking-token"[^>]*>Opt out<\/a>\./);
+assert.doesNotMatch(html, />https:\/\/chelo\.test\/opt-out/, 'the raw opt-out address is not shown in the HTML');
 
 const textOnlyEml = serverContext.test.buildEmailEml(lead, serverIntro, false, '', null);
 assert.match(textOnlyEml.eml, /Content-Type: multipart\/alternative/);

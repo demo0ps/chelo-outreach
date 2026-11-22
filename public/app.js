@@ -988,10 +988,12 @@ Which education or community-impact priorities are most important to your team t
 Yes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${book}
 Chelo will review your preferred time and confirm it personally. No preparation or commitment is required.
 
-If the timing is not right, no problem. To stop further outreach, use this link: ${optOut}
+If the timing is not right, no problem.
 
 Kind regards,
-Chelo Partnerships Team`;
+Chelo Partnerships Team
+
+Don't want more emails from Chelo? Opt out: ${optOut}`;
   } else {
     subject = makeClientOutreachSubject(company, project);
     body = `${greeting}
@@ -1005,10 +1007,10 @@ Which education or community-impact priorities are most important to your team t
 Yes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${book}
 Chelo will review your preferred time and confirm it personally. No preparation or commitment is required.
 
-If you prefer not to receive further outreach, opt out here: ${optOut}
-
 Kind regards,
-Chelo Partnerships Team`;
+Chelo Partnerships Team
+
+Don't want more emails from Chelo? Opt out: ${optOut}`;
   }
   return { subject, body };
 }
@@ -1043,7 +1045,7 @@ function emailReadinessScore(lead, subject, rawBody, followUp = false, attachPro
   const amount = Number(lead?.proposalData?.amount ?? lead?.amount ?? 0);
   const amountText = amount ? money(amount).toLowerCase() : '';
   const priorityQuestion = 'Which education or community-impact priorities are most important to your team this year?';
-  const questionMarks = (body.match(/\?/g) || []).length;
+  const questionMarks = (body.replace(/\n\s*Don't want more emails from Chelo\? Opt out:.*$/i, '').match(/\?/g) || []).length;
   const metrics = Array.isArray(lead?.proposalData?.verifiedMetrics) ? lead.proposalData.verifiedMetrics : [];
   const sections = lead?.proposalData || {};
   const currencyValues = plain.match(/\bR\s*[\d,]+(?:\.\d{1,2})?\b/gi) || [];
@@ -2287,13 +2289,13 @@ function researchModal(lead) {
   const conf = c => `<span class="research-confidence conf-${esc(c)}">${esc(c)}</span>`;
   const src = (url, title) => url ? `<a class="source-link" href="${esc(safeUrl(url))}" target="_blank" rel="noopener noreferrer">${esc(title || url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))} ${svgIcon('external')}</a>` : '';
   const suggested = brief.suggestedProjectId ? state.data.projects.find(p => p.id === brief.suggestedProjectId) : null;
-  const kindLabel = { mission: 'Mission', programme: 'Programme', public_figure: 'Public figure', grant_window: 'Grant window' };
+  const kindLabel = { mission: 'Mission', programme: 'Programme', public_figure: 'Public figure', grant_window: 'Grant window', news_giving: 'In the news' };
   const body = `<div id="research-review">
     <div class="note-callout"><span class="note-callout-icon">${svgIcon('shield')}</span><span><strong>${brief.mode === 'openai' ? 'AI-synthesised from public pages' : 'Local extraction from public pages'} via ${esc(brief.provider)}.</strong> Gathered ${isoDate(brief.generatedAt)}${brief.requestedBy ? ` by ${esc(brief.requestedBy)}` : ''}; valid for 30 days. Scrubbed before processing: ${brief.redactions.emails} email(s), ${brief.redactions.phones} phone(s), ${brief.redactions.saIds} ID number(s). Tick only facts you have checked against the source — approved items inform the email and the PDF’s “Alignment with your mission” section.</span></div>
     ${brief.warnings?.length ? `<div class="note-callout warn"><span class="note-callout-icon">${svgIcon('info')}</span><span>${brief.warnings.map(esc).join(' ')}</span></div>` : ''}
     <div class="form-group" style="margin-top:12px"><label for="research-mission">Mission summary <span class="optional">(editable; printed in the PDF when approved)</span></label><textarea class="form-control" id="research-mission" maxlength="240" rows="2">${esc(brief.missionSummary || '')}</textarea>${brief.focusAreas?.length ? `<div class="chip-row">${brief.focusAreas.map(f => `<span class="stage-pill pill-researched">${esc(f)}</span>`).join('')}</div>` : ''}</div>
     <div class="research-group"><h4>Alignment with Chelo <span class="subtle">(${brief.alignmentPoints.length})</span></h4>${brief.alignmentPoints.length ? brief.alignmentPoints.map(a => `<label class="research-item"><input type="checkbox" name="alignment" value="${esc(a.id)}" ${checked(brief.approvedAlignmentIds, a.id)} /><span><strong>${esc(a.text)}</strong>${a.evidence ? `<em>Evidence: ${esc(a.evidence)}</em>` : ''}<small>${src(a.sourceUrl, a.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">No alignment points could be grounded in the sources.</p>'}</div>
-    <div class="research-group"><h4>Cited findings <span class="subtle">(${brief.findings.length})</span></h4>${brief.findings.length ? brief.findings.map(f => `<label class="research-item"><input type="checkbox" name="finding" value="${esc(f.id)}" ${checked(brief.approvedFindingIds, f.id)} /><span><strong>${esc(f.text)}</strong><small><span class="research-kind">${esc(kindLabel[f.kind] || f.kind)}</span> ${conf(f.confidence)} ${src(f.sourceUrl, f.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">No findings. Try adding the official website or use Paste-to-Extract on a PDF report.</p>'}</div>
+    <div class="research-group"><h4>Cited findings <span class="subtle">(${brief.findings.length})</span></h4>${brief.findings.length ? brief.findings.map(f => `<label class="research-item"><input type="checkbox" name="finding" value="${esc(f.id)}" ${f.kind === 'news_giving' && !f.fresh ? 'disabled' : checked(brief.approvedFindingIds, f.id)} /><span><strong>${esc(f.text)}</strong><small><span class="research-kind">${esc(kindLabel[f.kind] || f.kind)}</span>${f.kind === 'news_giving' ? ` ${esc(f.publishedAt ? f.publishedAt.slice(0, 7) : 'undated')}${f.fresh ? '' : ' · older than 12 months — not used in emails'}` : ''} ${conf(f.confidence)} ${src(f.sourceUrl, f.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">No findings. Try adding the official website or use Paste-to-Extract on a PDF report.</p>'}</div>
     <div class="research-group"><h4>Publicly listed CSI / foundation leads <span class="subtle">(${brief.contacts.length})</span></h4><p class="form-hint">Names and titles from public pages only — no emails or phone numbers are collected. Verify before adding to the prospect.</p>${brief.contacts.length ? brief.contacts.map(c => `<label class="research-item"><input type="checkbox" name="contact" value="${esc(c.id)}" ${checked(brief.approvedContactIds, c.id)} /><span><strong>${esc(c.name)}</strong> · ${esc(c.title)}<small>${conf(c.confidence)} ${src(c.sourceUrl, c.sourceTitle)}</small></span></label>`).join('') : '<p class="subtle">None found.</p>'}</div>
     ${suggested && !lead.projectId ? `<label class="check-row"><input type="checkbox" id="research-apply-project" checked /> Link suggested verified project: <strong>${esc(suggested.name)}</strong> <small>${esc(suggested.sector)} · ${esc(suggested.province)}</small></label>` : ''}
     <div class="research-group"><h4>Sources read <span class="subtle">(${brief.sources.length})</span></h4><ul class="research-list compact">${brief.sources.map(s => `<li>${src(s.url, s.title)} ${s.official ? '<span class="research-kind">official site</span>' : ''}</li>`).join('')}${(brief.attempted || []).filter(a => a.status === 'skipped').slice(0, 6).map(a => `<li class="subtle">Skipped ${esc(a.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 70))} — ${esc(a.reason || '')}</li>`).join('')}</ul></div>
@@ -2388,7 +2390,7 @@ function wbIntakeBar() {
       <button type="button" class="button button-secondary" data-action="wb-discover" ${d.busy ? 'disabled' : ''}>${svgIcon('search')}${d.busy ? 'Searching…' : 'Discover'}</button>
     </div>
     ${d.error ? `<p class="form-error">${esc(d.error)}</p>` : ''}
-    ${d.results.length ? `<div class="wb-discover-results">${d.results.map(o => `<article class="wb-org ${o.alreadyTracked ? 'is-tracked' : ''}"><div class="wb-org-copy"><strong>${esc(o.name)}</strong><a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(o.domain)}</a><p>${esc(o.summary || 'No public summary captured.')}</p></div><button type="button" class="button button-small ${o.alreadyTracked ? 'button-ghost' : 'button-secondary'}" data-action="wb-discover-add" data-domain="${esc(o.domain)}" ${o.alreadyTracked ? 'disabled' : ''}>${svgIcon(o.alreadyTracked ? 'check' : 'plus')}${o.alreadyTracked ? 'Tracked' : 'Add'}</button></article>`).join('')}<p class="subtle">Organisation facts only — emails and phone numbers are never scraped (POPIA). Add the public contact yourself in the lead's details.</p></div>` : ''}
+    ${d.results.length ? `<div class="wb-discover-results">${d.results.map(o => `<article class="wb-org ${o.alreadyTracked ? 'is-tracked' : ''}"><div class="wb-org-copy"><strong>${esc(o.name)}</strong>${o.website ? `<a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}${esc(o.domain)}</a>` : '<span class="subtle">website not found yet — add it after you add the funder</span>'}<p>${esc(o.summary || 'No public summary captured.')}</p><small class="wb-org-meta">${o.mailbox?.email ? `${svgIcon('mail')} ${esc(o.mailbox.email)}` : o.website ? `${svgIcon('mail')} ${o.mailbox?.status === 'none' ? 'no published mailbox' : 'mailbox: checked when you press Run'}` : ''}${(o.articles || []).length ? ` · ${svgIcon('globe')} <a class="source-link" href="${esc(o.articles[0].url)}" target="_blank" rel="noopener noreferrer">${esc(o.articles[0].outlet || 'article')}${o.articles[0].publishedAt ? ` · ${esc(o.articles[0].publishedAt.slice(0, 7))}` : ''}</a>` : ''}</small></div><button type="button" class="button button-small ${o.alreadyTracked ? 'button-ghost' : 'button-secondary'}" data-action="wb-discover-add" data-domain="${esc(o.domain || o.name)}" ${o.alreadyTracked ? 'disabled' : ''}>${svgIcon(o.alreadyTracked ? 'check' : 'plus')}${o.alreadyTracked ? 'Tracked' : 'Add'}</button></article>`).join('')}<p class="subtle">Real funders only: news sites, directories, job boards, government and universities are left out. Articles that named a funder are kept as homework for the email. Generic published mailboxes only — never a person's email (POPIA).</p></div>` : ''}
   </section>`;
 }
 function wbRow(l, active) {
@@ -2446,8 +2448,9 @@ function wbWhoCard(lead, s, busy) {
       ${projectPick}`, { aside: s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : '' });
   }
   const approved = brief.status === 'approved';
-  const tick = (name, item, on) => `<label class="check-row wb-fact"><input type="checkbox" name="${name}" value="${esc(item.id)}" ${on ? 'checked' : ''} /> <span>${esc(item.text)}</span></label>`;
-  const findings = (brief.findings || []).slice(0, 3).map(f => tick('finding', f, approved ? (brief.approvedFindingIds || []).includes(f.id) : true));
+  const tick = (name, item, on, extra = '') => `<label class="check-row wb-fact"><input type="checkbox" name="${name}" value="${esc(item.id)}" ${on ? 'checked' : ''} ${item.kind === 'news_giving' && !item.fresh ? 'disabled' : ''} /> <span>${esc(item.text)}${extra}</span></label>`;
+  const newsTag = f => f.kind === 'news_giving' ? ` <small class="subtle">— in the news${f.publishedAt ? ` ${esc(f.publishedAt.slice(0, 7))}` : ''}${f.fresh ? '' : ' · older than 12 months, kept for context, not used in emails'}</small>` : '';
+  const findings = (brief.findings || []).slice(0, 4).map(f => tick('finding', f, f.kind === 'news_giving' && !f.fresh ? false : approved ? (brief.approvedFindingIds || []).includes(f.id) : true, newsTag(f)));
   const align = (brief.alignmentPoints || []).slice(0, 2).map(a => tick('alignment', a, approved ? (brief.approvedAlignmentIds || []).includes(a.id) : true));
   const contacts = (brief.contacts || []).slice(0, 2).map(c => tick('contact', { id: c.id, text: `${c.name} — ${c.title || 'public CSI contact'}` }, (brief.approvedContactIds || []).includes(c.id)));
   const sources = (brief.sources || []).slice(0, 3);
@@ -3114,9 +3117,9 @@ async function wbAction(action, button) {
     renderApp(); return true;
   }
   if (action === 'wb-discover-add') {
-    const org = state.wb.discovery.results.find(o => o.domain === button.dataset.domain); if (!org) return true;
+    const org = state.wb.discovery.results.find(o => (o.domain || o.name) === button.dataset.domain); if (!org) return true;
     button.disabled = true;
-    try { const r = await API('/api/discovery/add', { method: 'POST', body: JSON.stringify({ ...org, query: state.wb.discovery.query }) }); org.alreadyTracked = true; state.wb.selectedId = r.lead.id; state.wb.filter = 'all'; await refresh(); toast(`${org.name} added. Add a public work email in Edit details to start verification.`); }
+    try { const r = await API('/api/discovery/add', { method: 'POST', body: JSON.stringify({ ...org, query: state.wb.discovery.query }) }); org.alreadyTracked = true; state.wb.selectedId = r.lead.id; state.wb.filter = 'all'; await refresh(); toast(org.mailbox?.email ? `${org.name} added with its published mailbox. Press Run.` : `${org.name} added. Press Run — Chelo will look for their published mailbox.`); }
     catch (err) { toast(err.message, true); button.disabled = false; }
     return true;
   }

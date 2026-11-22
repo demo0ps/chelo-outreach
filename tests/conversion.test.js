@@ -36,16 +36,16 @@ test('conversion: 4-step ladder — no link + one question at step 1, page link 
   assert.ok(slots.every(s => new Date(`${s.date}T00:00:00Z`) >= new Date('2026-10-28T00:00:00Z')), 'at least two business days out');
   const s1 = conversion.ladderStep({ step: 1, lead, project, links, slots, now: NOW, staff: { name: 'Nandi' } });
   assert.ok(!/https?:\/\//.test(s1.body.replace(links.optOut, '')), 'step 1 carries no link beyond opt-out');
-  assert.equal((s1.body.match(/\?/g) || []).length, 1);
-  assert.ok(conversion.words(s1.body) <= 125, `step 1 is ${conversion.words(s1.body)} words`);
+  assert.equal((s1.body.replace(conversion.OPT_OUT_LINE, '').match(/\?/g) || []).length, 1);
+  assert.ok(conversion.words(s1.body.replace(conversion.OPT_OUT_LINE, "")) <= 125, `step 1 is ${conversion.words(s1.body)} words`);
   assert.match(s1.body, /one page/i);
   // v57: five openings, each still one question, ≤125 words, no link beyond opt-out, different first sentences.
   const firsts = new Set();
   for (const opening of ['figure', 'question', 'priority', 'story', 'ask']) {
     const e = conversion.ladderStep({ step: 1, lead, project, links, slots, now: NOW, opening, facts: ['Invests 1% of NPAT in education across Gauteng'] });
     assert.equal(e.opening, opening);
-    assert.equal((e.body.match(/\?/g) || []).length, 1, `${opening} keeps one question`);
-    assert.ok(conversion.words(e.body) <= 125, `${opening} is ${conversion.words(e.body)} words`);
+    assert.equal((e.body.replace(conversion.OPT_OUT_LINE, '').match(/\?/g) || []).length, 1, `${opening} keeps one question`);
+    assert.ok(conversion.words(e.body.replace(conversion.OPT_OUT_LINE, "")) <= 125, `${opening} is ${conversion.words(e.body)} words`);
     assert.ok(!/https?:\/\//.test(e.body.replace(links.optOut, '')));
     firsts.add(e.body.split('\n\n')[1]);
   }
@@ -172,4 +172,15 @@ test('conversion API: ladder draft, guardrail blocks approval (422) and admin ov
   assert.equal(upd.status, 200, JSON.stringify(upd.payload));
   const pub2 = await (await fetch(`${base}/api/public/page/${lead2.bookingToken}?preview=1`)).json();
   assert.equal(pub2.picture, 'Picture January: 300 learners on screens lit by Thembi Mining.');
+});
+
+test('v58: opt-out footer — plain text keeps the address, every template ends with the one footer line', () => {
+  const conversion = require('../lib/conversion');
+  const links = { optOut: 'https://chelo.test/opt/abc', page: 'https://chelo.test/p/abc', booking: 'https://chelo.test/b/abc' };
+  const lead = { id: 'l1', company: 'Test Co', contactName: 'Nomsa Dube', sector: 'Mining' };
+  for (const step of [1, 2, 3, 4]) {
+    const e = conversion.ladderStep({ step, lead, project: null, links, slots: [{ label: 'Tue 10:00' }, { label: 'Thu 14:00' }] });
+    assert.match(e.body, /\n\nDon't want more emails from Chelo\? Opt out: https:\/\/chelo\.test\/opt\/abc$/, `step ${step} ends with the footer`);
+    assert.ok(conversion.OPT_OUT_LINE.test(e.body));
+  }
 });
