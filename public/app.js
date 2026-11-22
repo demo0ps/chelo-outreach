@@ -14,6 +14,8 @@ const API = async (url, options = {}) => {
 const DESK_KEY = 'chelo-desk';
 function myDesks() { const list = Array.isArray(state?.auth?.desks) && state.auth.desks.length ? state.auth.desks : ['csi']; return list; }
 function currentDesk() { try { const saved = (typeof localStorage !== 'undefined' && localStorage.getItem(DESK_KEY)) || ''; const mine = myDesks(); return mine.includes(saved) ? saved : mine[0]; } catch { return 'csi'; } }
+function isSupplierLead(lead) { return (lead?.kind || 'funder') === 'supplier'; }
+function onSuppliers() { return currentDesk() === 'suppliers'; }
 function isSchoolLead(lead) { return (lead?.kind || 'funder') === 'school'; }
 function onSchools() { return currentDesk() === 'schools'; }
 function isMediaLead(lead) { return (lead?.kind || 'funder') === 'media'; }
@@ -25,6 +27,7 @@ function deskSwitch() {
   return `<div class="desk-switch" role="tablist" aria-label="Desk">${mine.map(id => { const m = deskMeta(id); return `<button type="button" role="tab" class="desk-tab ${id === cur ? 'is-active' : ''}" data-action="desk-switch" data-desk="${esc(id)}" aria-selected="${id === cur}" title="${esc(m.title)}">${esc(m.label)}</button>`; }).join('')}</div>`;
 }
 const state = {
+  sup: { link: null, loading: false, match: null },
   sch: { status: null, province: '', district: '', circuit: '', contact: '', q: '', tree: null, treeKey: '', list: null, busy: false },
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
@@ -1398,6 +1401,14 @@ async function dispatchAction(button) {
       finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
+    if (action === 'vet') { const notes = $('#vet-notes')?.value || ''; const r = await API(`/api/leads/${encodeURIComponent(id)}/vetting`, { method: 'PUT', body: JSON.stringify({ status: button.dataset.status, notes }) }); toast(`${r.lead.company}: ${r.vetting.status}.`); await refresh(); return; }
+    if (action === 'copy-text') { try { await navigator.clipboard.writeText(button.dataset.text); toast('Copied.'); } catch { toast(button.dataset.text); } return; }
+    if (action === 'tender-match') { const modal = button.closest('.modal, .modal-frame, body'); const trade = $('#tender-trade')?.value; const province = $('#tender-province')?.value ?? ''; const r = await API(`/api/suppliers/match?trade=${encodeURIComponent(trade)}&province=${encodeURIComponent(province)}`); state.sup.match = { trade, province, ...r }; renderApp(); return; }
+    if (action === 'tender-open') { const body = { trade: $('#tender-trade')?.value, province: $('#tender-province')?.value ?? '', closesInDays: $('#tender-days')?.value || 7, brief: $('#tender-brief')?.value || '' }; const r = await API(`/api/projects/${encodeURIComponent(id)}/tender`, { method: 'POST', body: JSON.stringify(body) }); state.sup.match = null; toast(`Need sent to ${r.queued} supplier${r.queued === 1 ? '' : 's'}${r.failed.length ? ` (${r.failed.length} could not be queued)` : ''}. Quote link copied below.`); await refresh(); return; }
+    if (action === 'tender-reopen') { state.sup.reopen = id; state.sup.match = null; renderApp(); return; }
+    if (action === 'tender-close') { await API(`/api/projects/${encodeURIComponent(id)}/tender/close`, { method: 'POST', body: '{}' }); toast('Quote request closed.'); await refresh(); return; }
+    if (action === 'quote-status') { const feePct = button.dataset.status === 'signed' ? ($('#tender-fee')?.value ?? '') : null; const r = await API(`/api/projects/${encodeURIComponent(id)}/tender/quotes/${encodeURIComponent(button.dataset.quote)}`, { method: 'PUT', body: JSON.stringify({ status: button.dataset.status, feePct }) }); toast(`${r.quote.company}: ${r.quote.status}.`); await refresh(); return; }
+    if (action === 'tender-done') { const confirmedBy = $('#tender-confirmed-by')?.value || ''; const notes = $('#tender-done-notes')?.value || ''; const r = await API(`/api/projects/${encodeURIComponent(id)}/tender/done`, { method: 'POST', body: JSON.stringify({ confirmedBy, notes }) }); toast(`${r.project.recipientName} confirmed the work is done.`); await refresh(); return; }
     if (action === 'dbe-load') { state.sch.busy = true; renderApp(); try { const r = await API('/api/schools/load', { method: 'POST', body: '{}' }); state.sch.status = r.status; toast(`DBE list loaded: ${r.imported.toLocaleString('en-ZA')} schools.`); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; state.sch.treeKey = ''; renderApp(); } return; }
     if (action === 'dbe-upload') { $('#dbe-csv')?.click(); return; }
     if (action === 'sch-nav') { Object.assign(state.sch, { province: button.dataset.province || '', district: button.dataset.district || '', circuit: '', q: '' }); schLoadTree(); return; }
@@ -2157,6 +2168,33 @@ function projectFormModal(project) {
   const footer = `<div class="modal-footer-left">${edit ? `<button type="button" class="button button-ghost button-small" data-action="delete-project" data-id="${esc(project.id)}">${svgIcon('trash')}Remove</button>` : '<span class="subtle">Adds a verified project to the catalog</span>'}</div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Cancel</button><button type="submit" form="project-form" class="button button-primary">${svgIcon('save')}${edit ? 'Save project' : 'Add project'}</button></div>`;
   return modalFrame(edit ? 'Edit verified project' : 'Add verified project', 'Catalog entries must name a verified recipient and a cited source.', body, footer);
 }
+/** R4: the supplier side of a Verified Project — ask for quotes, shortlist, sign (optional Chelo fee %), school confirms done. */
+function projectTenderSection(p) {
+  const t = p.tender; const id = esc(p.id); const isAdmin = state.auth.role === 'admin' || state.auth.isRoot || state.auth.demoAccess;
+  const provinces = ['', 'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape'];
+  const head = `<div class="detail-section-title"><span class="section-title-text">${svgIcon('shield')}Suppliers & quotes</span></div>`;
+  if (!t || (['closed', 'done'].includes(t.status) && state.sup.reopen === p.id)) {
+    const m = state.sup.match;
+    return `<div class="detail-section">${head}<p class="subtle">Send this need to approved suppliers by trade and province. Each gets an email with a hosted quote form; quotes land here.</p>
+      <div class="tender-form"><select class="form-control" id="tender-trade">${Object.entries(TRADE_LABELS).map(([k, v]) => `<option value="${k}" ${m?.trade === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <select class="form-control" id="tender-province">${provinces.map(x => `<option value="${esc(x)}" ${(m ? m.province : p.province) === x ? 'selected' : ''}>${x || 'Any province'}</option>`).join('')}</select>
+      <input class="form-control" id="tender-days" type="number" min="1" max="60" value="7" title="Days until quotes close" /></div>
+      <textarea class="form-control" id="tender-brief" rows="3" placeholder="What exactly must be quoted (the need in plain words). Defaults to the project summary.">${esc(p.summary || '')}</textarea>
+      <div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="tender-match" data-id="${id}">${svgIcon('search')}Who would get it?</button>${m ? `<span class="subtle">${m.count} approved supplier${m.count === 1 ? '' : 's'}: ${m.suppliers.slice(0, 6).map(x => esc(x.company)).join(', ')}${m.count > 6 ? '…' : ''}</span>` : ''}<button type="button" class="button button-primary button-small" data-action="tender-open" data-id="${id}" ${m && m.count === 0 ? 'disabled title="No approved supplier matches yet"' : ''}>${svgIcon('send')}Ask suppliers to quote</button></div></div>`;
+  }
+  const open = t.status === 'open' && new Date(t.closesAt) > new Date();
+  const signed = (t.quotes || []).find(q => q.id === t.awardedQuoteId);
+  const link = `${location.origin}/quote/${encodeURIComponent(t.token)}`;
+  const rows = (t.quotes || []).slice().sort((a, b) => a.amount - b.amount).map(q => `<tr class="${q.status === 'declined' ? 'row-invalid' : ''}"><td><strong>${esc(q.company)}</strong><br><small class="subtle">${esc(q.contactName || '')}${q.phone ? ` · ${esc(q.phone)}` : ''} · ${isoDate(q.submittedAt)}</small>${q.notes ? `<br><small>${esc(q.notes)}</small>` : ''}${q.attachmentsUrl ? `<br><a class="source-link" href="${esc(safeUrl(q.attachmentsUrl))}" target="_blank" rel="noopener noreferrer">${svgIcon('external')}itemised quote</a>` : ''}</td><td>R ${Number(q.amount).toLocaleString('en-ZA')}</td><td>${q.leadTimeDays} d</td><td><span class="stage-pill ${q.status === 'signed' ? 'pill-won' : q.status === 'shortlisted' ? 'pill-interested' : q.status === 'declined' ? 'pill-not-proceeding' : 'pill-new'}">${esc(q.status)}</span></td><td>${t.status === 'done' ? '' : `${q.status === 'submitted' ? `<button type="button" class="button button-ghost button-small" data-action="quote-status" data-id="${id}" data-quote="${esc(q.id)}" data-status="shortlisted">Shortlist</button>` : ''}${['submitted', 'shortlisted'].includes(q.status) && !signed && isAdmin ? `<button type="button" class="button button-primary button-small" data-action="quote-status" data-id="${id}" data-quote="${esc(q.id)}" data-status="signed">${svgIcon('check')}Sign</button>` : ''}${q.status !== 'declined' ? `<button type="button" class="button button-ghost button-small" data-action="quote-status" data-id="${id}" data-quote="${esc(q.id)}" data-status="declined">Decline</button>` : ''}`}</td></tr>`).join('');
+  return `<div class="detail-section">${head}
+    <p class="subtle">${esc(TRADE_LABELS[t.trade] || t.trade)}${t.province ? ` · ${esc(t.province)}` : ''} · sent to ${t.sentTo.length} supplier${t.sentTo.length === 1 ? '' : 's'} ${isoDate(t.openedAt)} · ${t.status === 'done' ? `<strong>done</strong>, confirmed by ${esc(t.confirmedBy)} ${isoDate(t.completedAt)}` : t.status === 'awarded' ? `<strong>${esc(signed?.company || '')} signed</strong> ${isoDate(t.signedAt)}${t.feePct !== null && t.feePct !== undefined ? ` · Chelo fee ${t.feePct}%` : ' · no Chelo fee recorded'}` : open ? `open until ${isoDate(t.closesAt)}` : 'closed'}</p>
+    <div class="wb-step-actions"><input class="form-control" readonly value="${esc(link)}" style="min-width:260px" /><button type="button" class="button button-ghost button-small" data-action="copy-text" data-text="${esc(link)}">${svgIcon('copy')}Copy quote link</button>${open ? `<button type="button" class="button button-ghost button-small" data-action="tender-close" data-id="${id}">Close quotes</button>` : ''}</div>
+    ${['closed', 'done'].includes(t.status) ? `<p><button type="button" class="button button-ghost button-small" data-action="tender-reopen" data-id="${id}">${svgIcon('plus')}Ask suppliers again (new request)</button></p>` : ''}
+    ${t.quotes?.length ? `<div class="lead-table-wrap"><table class="table"><thead><tr><th>Supplier</th><th>Amount</th><th>Time</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="subtle">No quotes yet.</p>'}
+    ${!signed && isAdmin && (t.quotes || []).some(q => ['submitted', 'shortlisted'].includes(q.status)) ? `<label class="form-group" style="max-width:260px"><span>Chelo fee % on the signed quote (optional — money is handled on your other platform)</span><input class="form-control" id="tender-fee" type="number" min="0" max="30" step="0.5" placeholder="e.g. 5" /></label>` : ''}
+    ${t.status === 'awarded' ? `<div class="wb-call-log" style="margin-top:10px"><strong>When the school says the work is done</strong><input class="form-control" id="tender-confirmed-by" placeholder="Who confirmed, how — e.g. Principal Mokoena, by phone" /><input class="form-control" id="tender-done-notes" placeholder="Notes (optional)" /><div><button type="button" class="button button-primary button-small" data-action="tender-done" data-id="${id}">${svgIcon('checkCircle')}School confirmed done</button></div></div>` : ''}
+  </div>`;
+}
 function projectDetailModal(p) {
   if (!p) return '';
   const linked = state.data.leads.filter(l => l.projectId === p.id);
@@ -2166,6 +2204,7 @@ function projectDetailModal(p) {
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('trend')}Funding ledger</span></div>${fundingBar(p.funding, p.targetAmount)}<div class="detail-grid" style="margin-top:12px"><div class="detail-item"><small>Target</small><strong>${money(p.targetAmount)}</strong></div><div class="detail-item"><small>Committed (incl. won)</small><strong>${money(p.funding?.committedTotal)}</strong></div><div class="detail-item"><small>Funding gap</small><strong>${money(p.funding?.fundingGap)}</strong></div><div class="detail-item"><small>Active pipeline</small><strong>${money(p.funding?.pipelineAmount)}</strong></div></div></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('checkCircle')}Verification</span></div><div class="detail-item"><small>Source</small>${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(source)} ${svgIcon('external')}</a>` : '<strong>No source URL</strong>'}<small>Verified ${esc(dateOnly(p.verifiedAt) || '—')} · ${esc(p.status)}</small></div>${p.summary ? `<div class="detail-note" style="margin-top:10px">${esc(p.summary)}</div>` : ''}</div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('analytics')}Verified metrics</span></div>${(p.verifiedMetrics || []).map(m => `<div class="project-metric"><strong>${esc(m.label)}</strong><span>${esc(String(m.baselineValue))} → <b>${esc(String(m.currentValue))}</b> ${esc(m.unit)}</span><small>${esc(m.period)} · ${esc(m.source)}</small></div>`).join('') || '<span class="subtle">None recorded.</span>'}</div>
+    ${projectTenderSection(p)}
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('users')}Team on this project</span>${state.data.canSeeAll ? `<button class="table-action" data-action="project-team-open" data-id="${esc(p.id)}">${svgIcon('edit')}Change</button>` : ''}</div><p class="subtle">${(p.team || []).length ? esc((p.team || []).map(id => (state.data.directory || []).find(u => String(u.id) === String(id))?.displayName || 'Former staff').join(', ')) + ' — they see every funder linked to this project.' : 'Nobody extra yet. Owners of each funder, people it is shared with, and admins can see them.'}</p></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('prospects')}Linked prospects (${linked.length}) & partners (${partners.length})</span></div>${linked.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('prospects')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>${esc(l.stage)} · ${money(l.amount)} · ${esc(grantCycleLabel(l))}</span></div><button class="table-action" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></div>`).join('')}${partners.map(x => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('partners')}</div><div class="shortcut-copy"><strong>${esc(x.company)}</strong><span>Partner · ${money(x.amount)}</span></div></div>`).join('') || (!linked.length ? '<span class="subtle">No prospects linked yet.</span>' : '')}</div>`;
   const footer = `<div class="modal-footer-left"><span class="subtle">Updated ${isoDate(p.updatedAt)}</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Close</button>${state.auth.role !== 'reviewer' ? `<button type="button" class="button button-primary" data-action="edit-project" data-id="${esc(p.id)}">${svgIcon('edit')} Edit project</button>` : ''}</div>`;
@@ -2370,10 +2409,10 @@ function researchModal(lead) {
 // =====================================================================
 // What a person sees: three states (plus Stopped). The engine's precise status stays on hover and in Health.
 const WB_FILTERS = [['all', 'All'], ['your-turn', 'Your turn'], ['working', 'Working'], ['waiting', 'Waiting on them'], ['stopped', 'Stopped']];
-const SIMPLE_OF = { call: 'your-turn', 'call-booked': 'waiting', replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
+const SIMPLE_OF = { vet: 'your-turn', vetted: 'waiting', call: 'your-turn', 'call-booked': 'waiting', replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
 const SIMPLE_META = { 'your-turn': ['Your turn', 'pill-interested'], working: ['Working', 'pill-researched'], waiting: ['Waiting on them', 'pill-new'], stopped: ['Stopped', 'pill-not-proceeding'] };
 // One line that says what "your turn" means for this funder.
-const NEXT_STEP = { call: 'No published email — phone the school; the script is on the card', 'call-booked': 'Call booked — capture the needs when you speak to the principal', replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
+const NEXT_STEP = { vet: 'New supplier — check the company and references, then approve or reject', vetted: 'Approved — gets needs in their trades and provinces', call: 'No published email — phone the school; the script is on the card', 'call-booked': 'Call booked — capture the needs when you speak to the principal', replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
 function simpleStatusOf(lead) { return SIMPLE_OF[wbStatusOf(lead)] || 'your-turn'; }
 function nextStepOf(lead) { return NEXT_STEP[wbStatusOf(lead)] || ''; }
 function approvalItems() {
@@ -2405,7 +2444,7 @@ function wbStatusOf(lead) {
   if (lead.emailDraft) return 'ready';
   return f.status || 'new';
 }
-const WB_STATUS_META = { call: ['Call the school', 'pill-interested'], 'call-booked': ['Principal call booked', 'pill-won'], replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+const WB_STATUS_META = { vet: ['Vetting needed', 'pill-interested'], vetted: ['Approved supplier', 'pill-won'], call: ['Call the school', 'pill-interested'], 'call-booked': ['Principal call booked', 'pill-won'], replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
 function wbPill(status) { const simple = SIMPLE_OF[status] || 'your-turn'; const [label, cls] = SIMPLE_META[simple]; const [detail] = WB_STATUS_META[status] || [status]; return `<span class="stage-pill ${cls}" title="${esc(detail)}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
@@ -2430,6 +2469,7 @@ function workbenchView() {
 }
 function wbIntakeBar() {
   if (onSchools()) return schoolsIntakeBar();
+  if (onSuppliers()) return suppliersIntakeBar();
   const d = state.wb.discovery;
   const intake = state.wb.intake === 'pool' ? 'pool' : 'add';
   const poolCount = state.data.candidates.filter(c => c.status === 'New candidate').length;
@@ -2566,6 +2606,8 @@ function wbActionCard(lead, s, busy) {
   if (lead.doNotContact) { primary = `<span class="stage-pill pill-not-proceeding">${svgIcon('ban')}Do not contact</span>`; note = 'They asked us not to write to them.'; }
   else if (lead.triage && !lead.triage.handled) { primary = `<button type="button" class="button button-primary" data-action="ix-open-lead" data-lead="${id}">${svgIcon('reply')}Read their reply in the Inbox</button>`; }
   else if (s === 'running') { primary = `<span class="stage-pill pill-pending"><span class="wb-spinner"></span>Chelo is working</span>`; }
+  else if (s === 'vet') { primary = `<span class="stage-pill pill-interested">${svgIcon('shield')}Vet below</span>`; }
+  else if (s === 'vetted') { primary = `<span class="stage-pill pill-won">${svgIcon('check')}Approved supplier</span>`; }
   else if (s === 'call') { primary = `<a class="button button-primary" href="tel:${esc(lead.phone || '')}">${svgIcon('phone')}Call ${esc(lead.phone || '')}</a>`; }
   else if (s === 'call-booked') { primary = `<span class="stage-pill pill-won">${svgIcon('calendar')}Call booked${lead.callTask?.bookedAt ? ` · ${esc(lead.callTask.bookedAt)}` : ''}</span>`; }
   else if (['new', 'blocked', 'error', 'dead'].includes(s) || !d) {
@@ -2631,6 +2673,27 @@ async function projectTeamSubmit(form) {
   const id = form.dataset.id; const userIds = [...form.querySelectorAll('input[name="team"]:checked')].map(i => i.value);
   try { await API(`/api/projects/${encodeURIComponent(id)}/team`, { method: 'PUT', body: JSON.stringify({ userIds }) }); toast('Team saved.'); closeModal(); await refresh(); }
   catch (err) { toast(err.message, true); }
+}
+/** R4: Suppliers desk — what they do, where, vetting, and their quotes. */
+const TRADE_LABELS = { building: 'Building & classrooms', sanitation: 'Toilets & plumbing', water: 'Water tanks & boreholes', electrical: 'Electrical & solar', ict: 'Computers & ICT', furniture: 'Furniture & fittings', fencing: 'Fencing & security', roofing: 'Roofing & paint', kitchen: 'Kitchens & feeding', landscaping: 'Grounds & sports', other: 'Other' };
+function wbSupplierCard(lead) {
+  const sp = lead.supplier || {}; const v = sp.vetting || { status: 'pending' }; const id = esc(lead.id); const isAdmin = state.auth.role === 'admin' || state.auth.isRoot || state.auth.demoAccess;
+  const facts = [['Trades', (sp.trades || []).map(t => TRADE_LABELS[t] || t).join(', ')], ['Provinces', (sp.provinces || []).join(', ')], ['Registration', sp.regNo], ['CSD', sp.csd], ['Years trading', sp.yearsTrading], ['Website', lead.website], ['Phone', lead.phone], ['Email', lead.email], ['Signed up', sp.signedUpAt ? isoDate(sp.signedUpAt) : '']].filter(([, x]) => x);
+  const quotes = (state.data.projects || []).flatMap(p => (p.tender?.quotes || []).filter(q => q.supplierId === lead.id).map(q => ({ ...q, project: p.name, projectId: p.id, done: p.tender.status === 'done' && p.tender.awardedQuoteId === q.id })));
+  const pill = v.status === 'approved' ? `<span class="stage-pill pill-won">${svgIcon('check')}Approved ${isoDate(v.at)} by ${esc(v.by || '')}</span>` : v.status === 'rejected' ? `<span class="stage-pill pill-not-proceeding">${svgIcon('ban')}Rejected ${isoDate(v.at)}</span>` : `<span class="stage-pill pill-interested">Vetting pending</span>`;
+  return wbCard('shield', 'Supplier', `<dl class="wb-facts-kv">${facts.map(([k, x]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(x))}</dd></div>`).join('')}</dl>
+    ${sp.references ? `<p><strong>References:</strong> ${esc(sp.references)}</p>` : '<p class="subtle">No references given — ask for two before approving.</p>'}
+    <div class="wb-vet">${pill}${v.notes ? `<p class="subtle">${esc(v.notes)}</p>` : ''}
+      ${isAdmin ? `<input class="form-control" id="vet-notes" placeholder="Vetting notes — who you called, what checked out" /><div class="wb-step-actions">${v.status !== 'approved' ? `<button type="button" class="button button-primary button-small" data-action="vet" data-id="${id}" data-status="approved">${svgIcon('checkCircle')}Approve</button>` : ''}${v.status !== 'rejected' ? `<button type="button" class="button button-ghost button-small" data-action="vet" data-id="${id}" data-status="rejected">${svgIcon('xCircle')}Reject</button>` : ''}${v.status !== 'pending' ? `<button type="button" class="button button-ghost button-small" data-action="vet" data-id="${id}" data-status="pending">Back to pending</button>` : ''}</div>` : '<p class="subtle">An administrator approves or rejects suppliers.</p>'}</div>
+    <div class="wb-needs"><h4>${svgIcon('grid')}Quotes (${quotes.length})</h4>${quotes.length ? `<ul class="wb-need-list">${quotes.map(q => `<li><span class="stage-pill ${q.status === 'signed' ? 'pill-won' : q.status === 'declined' ? 'pill-not-proceeding' : 'pill-new'}">${esc(q.done ? 'done' : q.status)}</span> R ${Number(q.amount).toLocaleString('en-ZA')} · ${q.leadTimeDays} days · <button type="button" class="link-button" data-action="open-project" data-id="${esc(q.projectId)}">${esc(q.project)}</button></li>`).join('')}</ul>` : '<p class="subtle">No quotes yet. Approved suppliers get an email with a quote link whenever a need in their trade and province goes out.</p>'}</div>`);
+}
+/** R4: intake bar on the Suppliers desk — the sign-up link and the vetting queue. */
+function suppliersIntakeBar() {
+  if (!state.sup.link && !state.sup.loading) { state.sup.loading = true; API('/api/suppliers/signup-link').then(r => { state.sup.link = r; state.sup.loading = false; renderApp(); }).catch(() => { state.sup.loading = false; }); }
+  const l = state.sup.link; const pending = state.data.leads.filter(x => isSupplierLead(x) && (x.supplier?.vetting?.status || 'pending') === 'pending');
+  return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>Suppliers come to Chelo</strong><p class="subtle">Share the sign-up link with contractors, on WhatsApp groups and with district offices. Each sign-up lands here for vetting; approved suppliers get needs in their trades and provinces.</p></div>
+    ${l ? `<div class="wb-step-actions"><input class="form-control" readonly value="${esc(l.url)}" style="min-width:280px" /><button type="button" class="button button-secondary button-small" data-action="copy-text" data-text="${esc(l.url)}">${svgIcon('copy')}Copy link</button><a class="button button-ghost button-small" href="${esc(l.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open</a></div>` : ''}</div>
+    <p class="subtle">${pending.length ? `<strong>${pending.length}</strong> waiting for vetting` : 'No one waiting for vetting'}${l ? ` · ${l.approved} approved` : ''}. To send a need out, open a Verified Project (Projects) → <strong>Ask suppliers to quote</strong>.</p></section>`;
 }
 /** R3: Schools desk — DBE facts, the call task with its script, and needs that become Verified Projects. */
 const NEED_LABELS = { classrooms: 'Classrooms', sanitation: 'Toilets / sanitation', water: 'Water', electricity: 'Electricity', ict: 'Computers / ICT', library: 'Library', sports: 'Sports', furniture: 'Furniture', fencing: 'Fencing / security', kitchen: 'Kitchen / feeding', other: 'Other' };
@@ -2706,6 +2769,7 @@ function wbLeadPage(lead) {
     ${wbActionCard(lead, s, busy)}
     ${isMediaLead(lead) ? wbMediaCard(lead) : ''}
     ${isSchoolLead(lead) ? wbSchoolCard(lead) : ''}
+    ${isSupplierLead(lead) ? wbSupplierCard(lead) : ''}
     ${wbWhoCard(lead, s, busy)}
     ${wbSendCard(lead, s, busy)}
   </div>`;

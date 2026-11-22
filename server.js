@@ -26,6 +26,7 @@ const voice = require('./lib/voice');
 const desks = require('./lib/desks');
 const media = require('./lib/media');
 const schools = require('./lib/schools');
+const suppliers = require('./lib/suppliers');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -1150,6 +1151,7 @@ function unblockForEmail(lead) {
   return true;
 }
 function deriveFlowStatus(lead) {
+  if (desks.kindOfLead(lead) === 'supplier') { const v = lead.supplier?.vetting?.status || 'pending'; return v === 'pending' ? 'vet' : v === 'approved' ? 'vetted' : 'dead'; }
   const f = lead.flow; if (!f) return 'new';
   if (lead.callTask && !normalizeEmail(lead.email) && f.status !== 'running') { // R3: phone-only schools live in call states
     const st = lead.callTask.status; if (['open', 'call-back'].includes(st)) return 'call'; if (st === 'booked') return 'call-booked'; if (['declined', 'exhausted', 'wrong-number'].includes(st)) return 'dead';
@@ -1167,6 +1169,11 @@ function deriveFlowStatus(lead) {
   return f.status || 'new';
 }
 async function runLeadFlow(lead, { actor = 'system', origin = '', force = false, redraft = false } = {}) {
+  if (desks.kindOfLead(lead) === 'supplier') { // R4: suppliers are vetted, not emailed by the engine
+    const v = lead.supplier?.vetting?.status || 'pending';
+    lead.flow = { status: v === 'pending' ? 'vet' : v === 'approved' ? 'vetted' : 'dead', steps: { verify: { status: v, detail: v === 'pending' ? 'Check the company, references and trades, then approve or reject.' : `Vetting: ${v}` } }, startedAt: new Date().toISOString() };
+    saveDb(); return lead.flow;
+  }
   if (flowRuns.has(lead.id)) return flowRuns.get(lead.id);
   const task = (async () => {
     lead.flow = { ...(lead.flow || {}), steps: { ...((lead.flow || {}).steps || {}) }, status: 'running', error: null, startedAt: new Date().toISOString() };
@@ -2046,6 +2053,7 @@ function sendPdf(res, file, downloadName, disposition = 'attachment') {
 }
 function serveStatic(req, res, pathname) {
   let requested = pathname === '/' || pathname.startsWith('/book/') || pathname.startsWith('/p/') || pathname.startsWith('/opt-out/') ? '/index.html' : pathname;
+  if (pathname === '/suppliers/join' || pathname.startsWith('/quote/')) requested = '/suppliers.html'; // R4: public supplier pages (static, CSP-safe)
   if (pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   requested = decodeURIComponent(requested.split('?')[0]);
   const filePath = path.resolve(PUBLIC_DIR, '.' + requested);
@@ -2440,6 +2448,74 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { leads, candidates: visibleCandidates(req.authSession), mediaKit: req.authSession?.desk === 'marketing' ? mediaKit() : undefined, partners: db.partners.filter(inScope), bookings: db.bookings.filter(inScope), activities: db.activities.filter(inScope), messages, emailEvents: db.emailEvents.filter(inScope), projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], directory: staffDirectory(), canSeeAll: all, currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
+    // ---------------- R4 Suppliers desk: vetting, need broadcast, quotes, done ----------------
+    if (method === 'GET' && pathname === '/api/suppliers/match') {
+      const list = suppliers.matchSuppliers(db.leads, { trade: url.searchParams.get('trade') || '', province: url.searchParams.get('province') || '' });
+      return sendJson(res, 200, { count: list.length, suppliers: list.map(l => ({ id: l.id, company: l.company, provinces: l.supplier.provinces, email: Boolean(l.email) })) });
+    }
+    if (method === 'GET' && pathname === '/api/suppliers/signup-link') return sendJson(res, 200, { url: `${publicOrigin(req)}/suppliers/join`, pending: db.leads.filter(l => l.kind === 'supplier' && (l.supplier?.vetting?.status || 'pending') === 'pending').length, approved: db.leads.filter(suppliers.isApproved).length });
+    const vetRoute = pathname.match(/^\/api\/leads\/([^/]+)\/vetting$/);
+    if (vetRoute && method === 'PUT') {
+      if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required to vet suppliers.' });
+      const lead = findLead(decodeURIComponent(vetRoute[1]));
+      if (!lead || lead.kind !== 'supplier') return sendJson(res, 404, { error: 'Supplier not found.' });
+      const body = await readBody(req);
+      let v; try { v = suppliers.setVetting(lead, { status: String(body.status || ''), notes: body.notes, actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      lead.updatedAt = new Date().toISOString(); lead.flow = null;
+      configStore.recordAudit({ actor: actorName(), action: 'supplier.vetted', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${v.status}${v.notes ? ` — ${clampText(v.notes, 120)}` : ''}` });
+      addActivity(`Supplier ${v.status}: ${lead.company}`, 'lead', actorName());
+      saveDb();
+      return sendJson(res, 200, { ok: true, vetting: v, lead: workbenchLead(lead) });
+    }
+    const tenderRoute = pathname.match(/^\/api\/projects\/([^/]+)\/tender(?:\/(close|done|quotes\/([^/]+)))?$/);
+    if (tenderRoute) {
+      const project = db.projects.find(p => p.id === decodeURIComponent(tenderRoute[1]));
+      if (!project) return sendJson(res, 404, { error: 'Project not found.' });
+      const sub = tenderRoute[2] || ''; const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
+      const origin = publicOrigin(req);
+      if (method === 'GET' && !sub) return sendJson(res, 200, { tender: project.tender || null, quoteLink: project.tender ? suppliers.quoteLink(origin, project.tender) : '' });
+      if (method === 'POST' && !sub) { // open + broadcast
+        const trade = String(body.trade || ''); const province = body.province === '' ? '' : String(body.province || project.province || '');
+        const matched = suppliers.matchSuppliers(db.leads, { trade, province });
+        let tender; try { tender = suppliers.openTender(project, { trade, province, closesInDays: body.closesInDays, brief: body.brief, actor: actorName(), suppliers: matched }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        let queued = 0; const failed = [];
+        for (const sup of matched) {
+          const mail = suppliers.broadcastEmail({ project, tender, supplier: sup, link: suppliers.quoteLink(origin, tender, sup.id), staff: staffSignature(sup) });
+          try {
+            const job = sendEngine.enqueue({ leadId: sup.id, kind: 'initial', to: sup.email, subject: mail.subject, text: mail.body, html: emailHtml(mail.body, ''), headers: { 'X-Chelo-Lead': sup.id, 'X-Chelo-Tender': tender.id }, requestedBy: actorName(), immediate: true, meta: { desk: 'suppliers', tenderId: tender.id, projectId: project.id, actor: actorName(), company: sup.company } });
+            const row = tender.sentTo.find(x => x.id === sup.id); if (row) { row.at = new Date().toISOString(); row.jobId = job.id; }
+            queued += 1;
+          } catch (err) { failed.push({ id: sup.id, company: sup.company, error: err.message }); }
+        }
+        project.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'tender.opened', entityType: 'project', entityId: project.id, summary: `Need sent to ${queued} supplier(s): ${suppliers.tradeLabel(trade)}${province ? `, ${province}` : ''}` });
+        addActivity(`Need broadcast for ${project.name}: ${queued} supplier(s) asked to quote`, 'project', actorName());
+        saveDb();
+        return sendJson(res, 201, { ok: true, tender, queued, failed, matched: matched.length, quoteLink: suppliers.quoteLink(origin, tender), project: clientProject(project) });
+      }
+      if (!project.tender) return sendJson(res, 404, { error: 'No quote request on this project yet.' });
+      if (method === 'POST' && sub === 'close') { suppliers.closeTender(project.tender, actorName()); saveDb(); return sendJson(res, 200, { ok: true, tender: project.tender }); }
+      if (method === 'POST' && sub === 'done') {
+        let t; try { t = suppliers.confirmDone(project, { confirmedBy: body.confirmedBy, notes: body.notes, actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        const q = t.quotes.find(x => x.id === t.awardedQuoteId); const sup = q?.supplierId ? db.leads.find(l => l.id === q.supplierId) : null;
+        if (sup?.supplier) sup.supplier.done = (sup.supplier.done || 0) + 1;
+        project.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: 'tender.done', entityType: 'project', entityId: project.id, summary: `${project.name}: school confirmed done (${t.confirmedBy})` });
+        addActivity(`${project.recipientName} confirmed ${project.name} is done`, 'project', actorName());
+        saveDb();
+        return sendJson(res, 200, { ok: true, tender: t, project: clientProject(project) });
+      }
+      if (method === 'PUT' && sub.startsWith('quotes/')) {
+        let q; try { q = suppliers.setQuoteStatus(project, tenderRoute[3], { status: String(body.status || ''), feePct: body.feePct ?? null, actor: actorName() }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        if (q.status === 'signed' && q.supplierId) { const sup = db.leads.find(l => l.id === q.supplierId); if (sup?.supplier) sup.supplier.awarded = (sup.supplier.awarded || 0) + 1; }
+        project.updatedAt = new Date().toISOString();
+        configStore.recordAudit({ actor: actorName(), action: `quote.${q.status}`, entityType: 'project', entityId: project.id, summary: `${q.company} ${q.status} on ${project.name}${q.status === 'signed' ? ` · R ${q.amount.toLocaleString('en-ZA')}${project.tender.feePct !== null ? ` · Chelo fee ${project.tender.feePct}%` : ''}` : ''}` });
+        addActivity(`${q.company} ${q.status} for ${project.name}`, 'project', actorName());
+        saveDb();
+        return sendJson(res, 200, { ok: true, quote: q, tender: project.tender, project: clientProject(project) });
+      }
+      return sendJson(res, 405, { error: 'Method not allowed.' });
+    }
     // ---------------- R3 Schools desk: DBE list, call tasks, needs ----------------
     if (pathname.startsWith('/api/schools')) {
       if (method === 'GET' && pathname === '/api/schools/status') return sendJson(res, 200, schoolsStore.status());
@@ -3016,6 +3092,42 @@ async function handleApi(req, res, url) {
       return res.end(csv);
     }
 
+    // ---------------- R4 public: supplier sign-up + hosted quote form ----------------
+    if (pathname === '/api/public/suppliers/signup') {
+      if (method === 'GET') return sendJson(res, 200, { trades: suppliers.TRADES, provinces: suppliers.PROVINCES });
+      if (method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed.' });
+      const body = await readBody(req);
+      let seed; try { seed = suppliers.fromSignup(body); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      const existing = db.leads.find(l => l.kind === 'supplier' && normalizeEmail(l.email) === seed.email);
+      if (existing) return sendJson(res, 200, { ok: true, message: 'You are already registered. We will be in touch when a matching need comes up.' });
+      if (isSuppressedEmail(seed.email)) return sendJson(res, 200, { ok: true, message: 'Thank you. Your details were received.' });
+      const recent = db.leads.filter(l => l.kind === 'supplier' && Date.now() - Date.parse(l.createdAt || 0) < 3600000).length;
+      if (recent > 40) return sendJson(res, 429, { error: 'Too many sign-ups right now. Please try again in an hour.' });
+      const lead = safeLead(seed, { status: 'ready', issues: [], method: 'supplier-signup' });
+      Object.assign(lead, { kind: 'supplier', supplier: seed.supplier, phone: seed.phone, website: seed.website, contactKind: 'business' });
+      addLead(lead, { desk: 'suppliers', userId: configStore.getRootUser()?.id || '' });
+      configStore.recordAudit({ actor: 'public', action: 'supplier.signup', entityType: 'lead', entityId: lead.id, summary: `${lead.company} signed up as a supplier (${seed.supplier.trades.join(', ')}; ${seed.supplier.provinces.join(', ')})` });
+      addActivity(`Supplier sign-up: ${lead.company} — vetting needed`, 'lead', 'public');
+      saveDb();
+      return sendJson(res, 201, { ok: true, message: 'Thank you. Chelo checks every supplier before sending needs; you will hear from us by email.' });
+    }
+    const publicQuote = pathname.match(/^\/api\/public\/quote\/([A-Za-z0-9_-]{8,40})$/);
+    if (publicQuote) {
+      const project = db.projects.find(p => p.tender && p.tender.token === publicQuote[1]);
+      if (!project) return sendJson(res, 404, { error: 'This quote link is unavailable.' });
+      const supplierId = url.searchParams.get('s') || '';
+      const supplier = supplierId ? db.leads.find(l => l.id === supplierId && l.kind === 'supplier') : null;
+      if (method === 'GET') return sendJson(res, 200, { ...suppliers.publicTender(project, project.tender), supplier: supplier ? { company: supplier.company, contactName: supplier.contactName, email: supplier.email, phone: supplier.phone } : null });
+      if (method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed.' });
+      const body = await readBody(req);
+      let quote; try { quote = suppliers.submitQuote(project.tender, body, { supplier }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      if (supplier) { supplier.supplier.quotes = (supplier.supplier.quotes || 0) + 1; supplier.updatedAt = new Date().toISOString(); }
+      project.updatedAt = new Date().toISOString();
+      configStore.recordAudit({ actor: 'public', action: 'quote.submitted', entityType: 'project', entityId: project.id, summary: `${quote.company} quoted R ${quote.amount.toLocaleString('en-ZA')} on ${project.name}` });
+      addActivity(`Quote received: ${quote.company} — R ${quote.amount.toLocaleString('en-ZA')} for ${project.name}`, 'project', 'public');
+      saveDb();
+      return sendJson(res, 201, { ok: true, message: `Thank you — your quote of R ${quote.amount.toLocaleString('en-ZA')} was received. Chelo and the school shortlist after ${new Date(project.tender.closesAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' })}.` });
+    }
     const publicOptOut = pathname.match(/^\/api\/public\/opt-out\/([^/]+)$/);
     if (publicOptOut && method === 'GET') {
       const lead = db.leads.find(l => l.bookingToken === publicOptOut[1]);

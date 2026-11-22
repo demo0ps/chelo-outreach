@@ -21,3 +21,8 @@ with its status. Release 5 (final clean-up) closes or consciously parks every op
 | 14 | v62 | Schools | `schools.sqlite` is a second database file (kept out of the main DB so pushes stay small). On Vercel it is synced like the main file; first use on a fresh instance needs "Load the DBE list" once (≈1.3 s). | by design |
 | 15 | v62 | Schools | Call-back dates are free text ("Tue 10:00"), not calendar reminders. The To do list shows the school as "Your turn" until the call is logged; no nudge at the agreed time yet. | open |
 | 16 | v62 | Schools | The need → Verified Project step creates the project with the estimate as target and no picture; finish it under Projects. | by design |
+| 17 | v63 | Suppliers | Supplier sign-up is public (`/suppliers/join`) and rate-limited to 40/hour per IP, with no captcha. Junk sign-ups land in the vetting queue and are rejected by hand. | Open |
+| 18 | v63 | Suppliers | Vetting is a human judgement with notes; there is no CSD/CIPC lookup. The card shows the numbers the supplier typed, nothing more. | Open |
+| 19 | v63 | Suppliers | One live quote request per project at a time; opening a new one moves the old round to `tenderHistory` (last 10), which the UI does not yet display. | Open |
+| 20 | v63 | Suppliers | Quote broadcast emails use the Suppliers desk mailbox (falls back to any active mailbox). Without a configured mailbox the request still opens and the quote link can be copied by hand; the response lists suppliers that could not be queued. | By design |
+| 21 | v63 | Suppliers | The Chelo fee is a single percentage recorded on the signed quote, for the record only. No invoices, ledger or payment status — money stays on the other platform. | By design |

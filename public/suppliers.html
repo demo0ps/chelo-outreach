@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chelo · Suppliers</title>
+<meta name="robots" content="noindex" />
+<link rel="icon" href="/brand/favicon.svg" />
+<style>
+  :root { --ink: #10203a; --muted: #5b6472; --line: #d9dee7; --accent: #10203a; --bg: #f4f6f9; }
+  * { box-sizing: border-box; } body { margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  main { max-width: 640px; margin: 0 auto; padding: 28px 18px 60px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+  h1 { font-size: 22px; margin: 0 0 6px; } h2 { font-size: 16px; margin: 18px 0 8px; } p { margin: 6px 0; } .muted { color: var(--muted); font-size: 13.5px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; } input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; font: inherit; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; } @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 13.5px; } .checks label { font-weight: 500; margin: 0; display: flex; gap: 6px; align-items: center; } .checks input { width: auto; }
+  button { margin-top: 16px; background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; } button:disabled { opacity: .6; }
+  .msg { margin-top: 12px; padding: 10px 12px; border-radius: 9px; font-size: 14px; } .ok { background: #e8f5ec; color: #1d5a2e; } .err { background: #fdecec; color: #8a1c1c; }
+  .brief { background: #f6f8fb; border-radius: 10px; padding: 12px 14px; margin: 10px 0; white-space: pre-wrap; }
+  footer { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card" id="join" hidden>
+    <h1>Supply verified school projects</h1>
+    <p class="muted">Chelo verifies school needs, broadcasts them to vetted suppliers by trade and province, and the funder pays the supplier directly against milestones the school confirms. Registering is free. Chelo checks every supplier before sending work.</p>
+    <form id="join-form">
+      <div class="grid">
+        <div><label for="company">Company name *</label><input id="company" name="company" required maxlength="120" /></div>
+        <div><label for="regNo">Registration / CIPC number</label><input id="regNo" name="regNo" maxlength="40" /></div>
+        <div><label for="contactName">Contact person *</label><input id="contactName" name="contactName" required maxlength="100" /></div>
+        <div><label for="title">Role</label><input id="title" name="title" placeholder="Owner, Director…" maxlength="80" /></div>
+        <div><label for="email">Business email *</label><input id="email" name="email" type="email" required /></div>
+        <div><label for="phone">Phone *</label><input id="phone" name="phone" type="tel" required placeholder="0XX XXX XXXX" /></div>
+        <div><label for="website">Website</label><input id="website" name="website" placeholder="https://" /></div>
+        <div><label for="yearsTrading">Years trading</label><input id="yearsTrading" name="yearsTrading" type="number" min="0" max="99" /></div>
+        <div><label for="csd">CSD supplier number (if any)</label><input id="csd" name="csd" maxlength="40" /></div>
+      </div>
+      <h2>Trades *</h2><div class="checks" id="trades"></div>
+      <h2>Provinces you work in *</h2><div class="checks" id="provinces"></div>
+      <label for="references">Two recent references (school or company, contact person and phone)</label><textarea id="references" name="references" rows="3" maxlength="600"></textarea>
+      <label style="font-weight:500;display:flex;gap:8px;align-items:flex-start;margin-top:14px"><input type="checkbox" name="consent" required style="width:auto;margin-top:4px" /> <span>I agree that Chelo keeps these business details to send me project needs and may contact my references. I can ask for removal at any time by emailing Chelo.</span></label>
+      <button type="submit">Register as a supplier</button>
+      <div id="join-msg"></div>
+    </form>
+  </section>
+
+  <section class="card" id="quote" hidden>
+    <h1 id="q-title">Quote request</h1>
+    <p class="muted" id="q-sub"></p>
+    <div class="brief" id="q-brief"></div>
+    <form id="quote-form">
+      <div class="grid">
+        <div><label for="q-company">Company *</label><input id="q-company" name="company" required maxlength="120" /></div>
+        <div><label for="q-contact">Contact person</label><input id="q-contact" name="contactName" maxlength="100" /></div>
+        <div><label for="q-email">Business email *</label><input id="q-email" name="email" type="email" required /></div>
+        <div><label for="q-phone">Phone</label><input id="q-phone" name="phone" type="tel" /></div>
+        <div><label for="q-amount">Total quote, rand incl. VAT *</label><input id="q-amount" name="amount" type="number" min="1" step="1" required /></div>
+        <div><label for="q-lead">Days to complete *</label><input id="q-lead" name="leadTimeDays" type="number" min="1" max="365" required /></div>
+        <div><label for="q-valid">Quote valid for (days)</label><input id="q-valid" name="validDays" type="number" min="7" max="180" value="30" /></div>
+        <div><label for="q-att">Link to your itemised quote (PDF)</label><input id="q-att" name="attachmentsUrl" placeholder="https://" /></div>
+      </div>
+      <label for="q-notes">What is included, assumptions, exclusions</label><textarea id="q-notes" name="notes" rows="4" maxlength="1500"></textarea>
+      <button type="submit" id="q-submit">Send quote</button>
+      <div id="quote-msg"></div>
+    </form>
+  </section>
+  <footer>Chelo · cheloapp.com · Business details only; no personal information about learners or staff is requested.</footer>
+</main>
+<script src="/suppliers.js"></script>
+</body>
+</html>

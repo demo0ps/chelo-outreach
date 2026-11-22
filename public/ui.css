@@ -2275,3 +2275,8 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .wb-need-list { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; font-size: 13px; }
 .wb-need-form { display: grid; grid-template-columns: 170px 1fr 150px auto; gap: 6px; align-items: center; }
 @media (max-width: 760px) { .wb-need-form { grid-template-columns: 1fr; } }
+/* R4 suppliers desk */
+.wb-vet { margin-top: 10px; display: grid; gap: 6px; }
+.tender-form { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 6px; margin: 8px 0; }
+@media (max-width: 640px) { .tender-form { grid-template-columns: 1fr; } }
+.link-button { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
