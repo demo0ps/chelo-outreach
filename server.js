@@ -1034,6 +1034,14 @@ async function syncAllInboxes(actor = 'system') {
   const checked = perMailbox.reduce((n, r) => n + (r.checked || 0), 0), matched = perMailbox.reduce((n, r) => n + (r.matched || 0), 0);
   return { ok: perMailbox.every(r => r.ok), checked, matched, mailboxes: perMailbox, results: perMailbox.flatMap(r => r.results || []), message: perMailbox.length ? `Read ${checked} new message(s) across ${perMailbox.length} inbox${perMailbox.length === 1 ? '' : 'es'}; ${matched} matched funders.` : 'No mailbox has reply-reading set up yet. Add a mailbox under Deliverability.' };
 }
+/** Plain-English reason Google is not usable yet ('' when it is). */
+function googleMissing(g) {
+  if (g.configured) return '';
+  if (g.state && !g.state.secretReadable) return 'The saved Client secret cannot be read any more (the server encryption key changed). Paste the Client secret again.';
+  if (!g.clientId && !g.clientSecret) return 'Client ID and Client secret are both missing.';
+  if (!g.clientId) return 'Client secret is saved; the Client ID is still missing.';
+  return 'Client ID is saved; the Client secret is still missing.';
+}
 /** Accept what people actually paste: the downloaded client JSON, the two values swapped, quotes/spaces/newlines around them. */
 function normaliseGoogleClientInput(body = {}) {
   const clean = v => String(v ?? '').replace(/^[\s"'`]+|[\s"'`,;]+$/g, '').trim();
@@ -2595,14 +2603,14 @@ async function handleApi(req, res, url) {
     // ---- Google (OAuth client for "Connect with Google") ----
     if (method === 'GET' && pathname === '/api/settings/google') {
       const g = configStore.getGoogleConfig();
-      return sendJson(res, 200, { configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source, hostedDomain: g.hostedDomain, updatedAt: g.updatedAt, redirectUri: googleMail.redirectUri(configStore.getPublicBaseUrl() || publicOrigin(req)), origin: configStore.getPublicBaseUrl() || publicOrigin(req), scopes: googleMail.SCOPE_LABELS });
+      return sendJson(res, 200, { configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source, hostedDomain: g.hostedDomain, updatedAt: g.updatedAt, state: g.state, missing: googleMissing(g), redirectUri: googleMail.redirectUri(configStore.getPublicBaseUrl() || publicOrigin(req)), origin: configStore.getPublicBaseUrl() || publicOrigin(req), scopes: googleMail.SCOPE_LABELS });
     }
     if (method === 'PUT' && pathname === '/api/settings/google') {
       const body = normaliseGoogleClientInput(await readBody(req));
       if (body.error) return sendJson(res, 400, { error: body.error });
       const g = configStore.saveGoogleConfig(body);
-      configStore.recordAudit({ actor: actorName(), action: 'settings.google', entityType: 'settings', summary: body.clear ? 'Google OAuth client removed' : `Google OAuth client saved (${g.clientId.slice(0, 14)}…)` });
-      return sendJson(res, 200, { ok: true, configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source });
+      configStore.recordAudit({ actor: actorName(), action: 'settings.google', entityType: 'settings', summary: body.clear ? 'Google OAuth client removed' : `Google OAuth client saved (${g.clientId.slice(0, 14)}…; ${g.configured ? 'complete' : 'incomplete: ' + googleMissing(g)})` });
+      return sendJson(res, 200, { ok: true, configured: g.configured, clientIdHint: g.clientId ? `${g.clientId.slice(0, 14)}…` : '', source: g.source, state: g.state, missing: googleMissing(g) });
     }
     // ---- My mailbox: every staff member connects and manages their own Google mailbox ----
     const myLogin = String(req.authSession?.username || '').toLowerCase();
