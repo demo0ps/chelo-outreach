@@ -26,7 +26,8 @@ let booted = (async () => {
 // the app so every module re-reads SQLite/settings from disk. Costs ~1 s only when somebody else actually wrote.
 const CHECK_EVERY_MS = Number(process.env.SYNC_CHECK_INTERVAL_MS) || 2000;
 let lastCheckAt = 0, reloading = null;
-function needsFreshness(req) { return /^\/(api|track|proposal|book|opt-out|p)\b/.test(req.url) && !/^\/api\/(health|auth\/status)\b/.test(req.url); }
+// /api/auth/status is included: it is the only call the login page makes, and it decides whether Sign in with Google is offered.
+function needsFreshness(req) { return /^\/(api|track|proposal|book|opt-out|p)\b/.test(req.url) && !/^\/api\/health\b/.test(req.url); }
 async function ensureFresh(req) {
   const app = await booted;
   if (!app.remoteSync || !needsFreshness(req)) return app;
