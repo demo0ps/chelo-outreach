@@ -17,13 +17,13 @@ function boot() {
   const location = { pathname: '/', search: '', origin: 'http://x', href: 'http://x/' };
   const mql = { matches: false, addEventListener() {} };
   const win = { location, addEventListener() {}, matchMedia: () => mql, scrollTo() {}, navigator: { platform: 'Linux' }, setTimeout, clearTimeout, prompt: () => '', confirm: () => true, Intl };
-  const ctx = { document: doc, window: win, location, navigator: win.navigator, matchMedia: win.matchMedia, setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}, console, fetch: () => new Promise(() => {}), URL, URLSearchParams, Intl, prompt: win.prompt, confirm: win.confirm, requestAnimationFrame: fn => fn(), localStorage: { getItem: () => null, setItem() {}, removeItem() {} } };
+  const ctx = { document: doc, window: win, location, navigator: win.navigator, matchMedia: win.matchMedia, setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}, console, fetch: () => new Promise(() => {}), URL, URLSearchParams, Intl, prompt: win.prompt, confirm: win.confirm, requestAnimationFrame: fn => fn(), localStorage: (() => { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem(k, v) { m.set(k, String(v)); }, removeItem(k) { m.delete(k); } }; })() };
   ctx.globalThis = ctx; ctx.self = ctx;
   vm.createContext(ctx);
   vm.runInContext(read('app.js'), ctx);
   vm.runInContext(read('inbox.js'), ctx);
   vm.runInContext(read('mobile.js'), ctx);
-  vm.runInContext('globalThis.__t = { state, renderApp, setView, dispatchAction, approvalItems, VIEW_ALIASES };', ctx);
+  vm.runInContext('globalThis.__t = { state, renderApp, setView, dispatchAction, approvalItems, VIEW_ALIASES, ls: localStorage };', ctx);
   return { t: ctx.__t, html };
 }
 const now = new Date().toISOString();
@@ -134,4 +134,33 @@ test('every data-action button in the UI has a click handler (dead-button guard)
   // Prefix routing in dispatchAction must forward every family that wbAction serves.
   const dispatch = src.slice(src.indexOf('async function dispatchAction'), src.indexOf('async function dispatchAction') + 1500);
   assert.match(dispatch, /seq-/, 'seq-* actions (Send & follow up, Stop follow-ups) must reach wbAction');
+});
+
+test('v70: each desk shows only its own sections, its own add action, and cannot open another desk\'s views', () => {
+  const { t, html } = boot(); fixtures(t);
+  const catalogue = [
+    { id: 'csi', label: 'CSI', targetLabel: 'Funders' }, { id: 'marketing', label: 'Marketing', targetLabel: 'Shows & outlets' },
+    { id: 'schools', label: 'Schools', targetLabel: 'Schools & districts' }, { id: 'suppliers', label: 'Suppliers', targetLabel: 'Suppliers' }
+  ];
+  t.state.auth = { ...t.state.auth, desks: ['csi', 'marketing', 'schools', 'suppliers'], deskCatalogue: catalogue };
+  const nav = () => [...html.app.matchAll(/class="nav-item[^"]*" data-view="([a-z-]+)"/g)].map(m => m[1]);
+  const desk = id => t.ls.setItem('chelo-desk', id);
+  // marketing
+  desk('marketing'); t.setView('prospects'); t.renderApp();
+  assert.ok(nav().includes('prospects') && !nav().includes('partners') && !nav().includes('briefings') && !nav().includes('overview'), `marketing nav: ${nav()}`);
+  assert.match(html.app, /Media kit/); assert.match(html.app, /Add show or outlet/); assert.doesNotMatch(html.app, /Add a funder/);
+  t.setView('partners'); assert.equal(t.state.view, 'workbench', 'marketing cannot open Partners');
+  // schools
+  desk('schools'); t.setView('briefings'); t.renderApp();
+  assert.ok(!nav().includes('partners') && nav().includes('briefings'), `schools nav: ${nav()}`);
+  assert.match(html.app, />Calls</); assert.doesNotMatch(html.app, /Add a funder/);
+  t.setView('prospects'); t.renderApp(); assert.match(html.app, /Find a school/);
+  // suppliers
+  desk('suppliers'); t.setView('prospects'); t.renderApp();
+  assert.ok(!nav().includes('inbox') && !nav().includes('briefings') && !nav().includes('partners') && nav().includes('projects'), `suppliers nav: ${nav()}`);
+  assert.match(html.app, />Jobs</); assert.match(html.app, /Copy sign-up link/); assert.match(html.app, /<th>Vetting<\/th><th>Documents<\/th><th>Jobs<\/th>/);
+  t.setView('overview'); assert.equal(t.state.view, 'workbench');
+  // csi unchanged
+  desk('csi'); t.setView('prospects'); t.renderApp();
+  assert.ok(nav().includes('partners') && nav().includes('overview'), `csi nav: ${nav()}`); assert.match(html.app, /Add a funder/);
 });

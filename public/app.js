@@ -26,6 +26,28 @@ function deskSwitch() {
   const cur = currentDesk();
   return `<div class="desk-switch" role="tablist" aria-label="Desk">${mine.map(id => { const m = deskMeta(id); return `<button type="button" role="tab" class="desk-tab ${id === cur ? 'is-active' : ''}" data-action="desk-switch" data-desk="${esc(id)}" aria-selected="${id === cur}" title="${esc(m.title)}">${esc(m.label)}</button>`; }).join('')}</div>`;
 }
+/** v70: each desk shows only the sections it uses. Labels are the desk's own words (Calls, Jobs, Shows & outlets). */
+const DESK_NAV = {
+  csi: ['inbox', 'workbench', 'overview', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'ops', 'settings'],
+  marketing: ['inbox', 'workbench', 'prospects', 'media-kit', 'projects', 'sent', 'ops', 'settings'],
+  schools: ['inbox', 'workbench', 'prospects', 'briefings', 'projects', 'sent', 'ops', 'settings'],
+  suppliers: ['workbench', 'prospects', 'projects', 'sent', 'ops', 'settings']
+};
+const DESK_WORDS = {
+  csi: { briefings: 'Briefings', projects: 'Projects', addLabel: 'Add a funder', prospectsBlurb: 'Everyone we are talking to.' },
+  marketing: { briefings: 'Interviews', projects: 'Projects', addLabel: 'Add show or outlet', prospectsBlurb: 'Every show, station, podcast and outlet we are pitching.' },
+  schools: { briefings: 'Calls', projects: 'Projects', addLabel: 'Find a school', prospectsBlurb: 'Schools and district offices we are working with.' },
+  suppliers: { briefings: 'Briefings', projects: 'Jobs', addLabel: 'Copy sign-up link', prospectsBlurb: 'Registered suppliers: vetting, documents, jobs and earnings.' }
+};
+function deskNav(id = currentDesk()) { return DESK_NAV[id] || DESK_NAV.csi; }
+function deskWord(key, id = currentDesk()) { return (DESK_WORDS[id] || DESK_WORDS.csi)[key] || (DESK_WORDS.csi[key] || ''); }
+function deskAllowsView(view, id = currentDesk()) { return ['review', 'media-kit'].includes(view) || deskNav(id).includes(view); }
+/** The one top-right action per desk: funders/media add a lead; schools open the DBE browser; suppliers register themselves. */
+function deskAddButton() {
+  const desk = currentDesk(); const label = deskWord('addLabel');
+  const icon = desk === 'schools' ? 'search' : desk === 'suppliers' ? 'copy' : 'plus';
+  return `<button type="button" class="button button-primary" data-action="desk-add">${svgIcon(icon)} ${esc(label)}</button>`;
+}
 const state = {
   photos: { themes: null, loading: false, theme: {} },
   mfa: { status: null, loading: false, setup: null, recoveryCodes: null },
@@ -303,6 +325,7 @@ const TECHNICAL_VIEWS = []; // engine tabs inside Ops are gated per tab (see OPS
 const ROOT_ONLY_OPS_TABS = ['health', 'deliverability', 'data'];
 function isRoot() { return Boolean(state.auth.isRoot || state.auth.demoAccess); }
 function isPrimaryRoot() { return Boolean(state.auth.isPrimaryRoot || state.auth.demoAccess); }
+function deskNavItems(builders) { return deskNav().filter(v => builders[v]).map(v => builders[v]()).join(''); }
 function navItem(view, title, icon, count = null) {
   if (TECHNICAL_VIEWS.includes(view) && !isRoot()) return '';
   return `<button type="button" class="nav-item ${state.view === view ? 'active' : ''}" data-view="${view}" aria-label="${esc(title)}" title="${esc(title)}">
@@ -406,14 +429,14 @@ document.addEventListener('mouseover', event => {
 });
 
 function shellHeader() {
-  const label = ({ workbench: 'To do', review: 'Read & send', inbox: 'Inbox', ops: state.auth.isRoot ? 'Health' : 'Results', deliverability: 'Deliverability', data: 'Data quality', overview: 'Today', discover: 'To do', projects: 'Projects', prospects: 'Funders', pipeline: 'Funders', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Funders', analytics: 'Results', settings: 'Settings' })[state.view] || 'Today';
+  const label = ({ workbench: 'To do', review: 'Read & send', inbox: 'Inbox', ops: state.auth.isRoot ? 'Health' : 'Results', deliverability: 'Deliverability', data: 'Data quality', overview: 'Today', discover: 'To do', projects: 'Projects', prospects: 'Funders', pipeline: 'Funders', briefings: 'Briefings', sent: 'Sent', partners: 'Partners', proposals: 'Funders', analytics: 'Results', settings: 'Settings' , projects: deskWord('projects'), briefings: deskWord('briefings'), prospects: deskMeta().targetLabel || 'Funders' })[state.view] || 'Today';
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<header class="topbar">
     <div class="breadcrumb"><button type="button" class="icon-button mobile-menu" data-action="mobile-menu" aria-label="Toggle navigation">${svgIcon('menu')}</button><button type="button" class="crumb-root" data-view="overview">${svgIcon('overview')}Workspace</button><span class="crumb-sep">/</span><strong>${label}</strong>${state.settingsSection && state.view === 'settings' ? `<span class="crumb-sep">/</span><span>${esc(settingsSectionLabel(state.settingsSection))}</span>` : ''}</div>
     <div class="topbar-right">
       <label class="top-search">${svgIcon('search')}<input id="global-search" type="search" placeholder="Search or jump to…" value="${esc(state.query)}" aria-label="Search" /><kbd class="kbd" title="Command palette">${isMac() ? '⌘' : 'Ctrl'} K</kbd></label>
       <span class="top-separator"></span>
-      <button type="button" class="icon-button" aria-label="Briefing requests" title="Briefing requests" data-view="briefings">${svgIcon('bell')}${pending ? '<span class="notification-dot"></span>' : ''}</button>
+      ${deskAllowsView('briefings') ? `<button type="button" class="icon-button" aria-label="Briefing requests" title="Briefing requests" data-view="briefings">${svgIcon('bell')}${pending ? '<span class="notification-dot"></span>' : ''}</button>` : ''}
       ${state.auth.demoAccess ? '<span class="demo-access-badge">DEMO ADMIN</span>' : ''}<span class="avatar top-avatar top-avatar-wrap" title="${esc(state.auth.displayName || state.auth.username || 'Administrator')} · ${esc(roleLabel(state.auth.role))}">${initials(state.auth.displayName || state.auth.username || 'Administrator')}</span>
       ${state.auth.openAccessDemo ? '' : `<button type="button" class="icon-button sign-out-button" data-action="logout" aria-label="Sign out" title="Sign out">${svgIcon('logout')}</button>`}
     </div>
@@ -426,14 +449,17 @@ function shellSidebar() {
     ${deskSwitch()}
     <div class="nav-caption">${esc(myDesks().length > 1 ? deskMeta().title : 'Workspace')}</div>
     <nav class="nav-list" aria-label="Main navigation">
-      ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
-      ${navItem('workbench', 'To do', 'wand', state.data.leads.filter(l => simpleStatusOf(l) === 'your-turn' && wbStatusOf(l) !== 'new').length + state.data.candidates.filter(c => c.status === 'New candidate').length)}
-      ${navItem('overview', 'Today', 'overview')}
-      ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
-      ${navItem('prospects', deskMeta().targetLabel || 'Funders', 'prospects')}
-      ${navItem('briefings', 'Briefings', 'briefings', pending)}
-      ${navItem('sent', 'Sent', 'mail')}
-      ${navItem('partners', 'Partners', 'partners')}
+      ${deskNavItems({
+        inbox: () => navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0),
+        workbench: () => navItem('workbench', 'To do', 'wand', state.data.leads.filter(l => simpleStatusOf(l) === 'your-turn' && wbStatusOf(l) !== 'new').length + state.data.candidates.filter(c => c.status === 'New candidate').length),
+        overview: () => navItem('overview', 'Today', 'overview'),
+        projects: () => navItem('projects', deskWord('projects'), 'grid', onSuppliers() ? state.data.projects.filter(p => p.tender && p.tender.status === 'open').length : state.data.projects.filter(p => p.funding?.fundingGap > 0).length),
+        prospects: () => navItem('prospects', deskMeta().targetLabel || 'Funders', 'prospects'),
+        'media-kit': () => `<button type="button" class="nav-item ${state.view === 'settings' && state.settingsSection === 'media-kit' ? 'active' : ''}" data-action="open-media-kit" title="Media kit"><span class="nav-icon">${svgIcon('fileText')}</span><span class="nav-label">Media kit</span></button>`,
+        briefings: () => navItem('briefings', deskWord('briefings'), 'briefings', pending),
+        sent: () => navItem('sent', 'Sent', 'mail'),
+        partners: () => navItem('partners', 'Partners', 'partners')
+      })}
       ${navItem('ops', isRoot() ? 'Health' : 'Results', 'activity', ((state.ops.data ? (state.ops.data.counts.critical + state.ops.data.counts.warn) : 0) + (state.data.mailboxes || []).filter(m => m.status === 'paused').length + (state.dq.data ? (state.dq.data.openMergeReviews || 0) : 0)) || null)}
       ${navItem('settings', 'Settings', 'settings')}
       <button type="button" class="nav-item mobile-more-button ${['projects','prospects','briefings','sent','partners','settings'].includes(state.view) ? 'active' : ''}" data-action="mobile-more" aria-label="More sections" aria-haspopup="dialog" aria-expanded="${state.mobileMoreOpen ? 'true' : 'false'}" title="More sections"><span class="nav-icon">${svgIcon('dots')}</span><span class="nav-label">More</span></button>
@@ -446,11 +472,11 @@ function shellSidebar() {
 function renderMobileMoreMenu() {
   if (!state.mobileMoreOpen) return '';
   const items = [
-    ['projects', 'Projects', 'grid'], ['prospects', 'Prospects', 'prospects'], ['pipeline', 'Pipeline', 'pipeline'],
-    ['briefings', 'Briefings', 'briefings'], ['sent', 'Sent', 'mail'],
+    ['projects', deskWord('projects'), 'grid'], ['prospects', deskMeta().targetLabel || 'Funders', 'prospects'], ['pipeline', 'Pipeline', 'pipeline'],
+    ['briefings', deskWord('briefings'), 'briefings'], ['sent', 'Sent', 'mail'],
     ['partners', 'Partners', 'partners'],
     ['settings', 'Settings', 'settings']
-  ];
+  ].filter(([v]) => v === 'pipeline' ? deskAllowsView('prospects') && currentDesk() === 'csi' : deskAllowsView(v));
   return `<div class="mobile-more-backdrop" id="mobile-more-backdrop"><section class="mobile-more-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-more-title"><div class="mobile-more-heading"><div><span class="eyebrow">Workspace</span><h2 id="mobile-more-title">More sections</h2></div><button type="button" class="close-button" data-action="mobile-more-close" aria-label="Close navigation">${svgIcon('close')}</button></div><div class="mobile-more-grid">${items.map(([view, label, icon]) => `<button type="button" class="mobile-more-link ${state.view === view ? 'active' : ''}" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ''}><span class="mobile-more-icon">${svgIcon(icon)}</span><span>${label}</span>${state.view === view ? '<span class="mobile-more-current">Current</span>' : ''}</button>`).join('')}</div></section></div>`;
 }
 function renderApp() {
@@ -507,7 +533,7 @@ function overviewView() {
   }).join('');
   const followupRows = followUps.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('mail')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>Follow-up ${Number(l.followUpStep || 1)} of 2 · ${isoDate(l.followUpAt)}</span></div><button type="button" class="panel-action" data-action="follow-up" data-id="${esc(l.id)}">${svgIcon('send')}Draft</button></div>`).join('');
   const today = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
-  return `${pageHead('Today', 'Today', today, `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add a funder</button>`, 'overview')}
+  return `${pageHead('Today', 'Today', today, deskAddButton(), 'overview')}
     ${state.dismissDemo ? '' : demoBanner()}
     <section class="dashboard-grid">
       <div class="panel"><div class="panel-header"><div><h2 class="panel-title">${svgIcon('clock')}Follow-up queue</h2></div><button class="panel-action" data-view="prospects">${svgIcon('prospects')}View prospects</button></div><div class="shortcut-list">${followupRows || `<div class="panel-empty"><strong>You're up to date</strong>No follow-up tasks are due yet.</div>`}</div></div>
@@ -528,6 +554,16 @@ function overviewView() {
     </section>${radarPanel}${signalsPanel()}`;
 }
 
+/** v70: the Suppliers list is an account register, not a pipeline. */
+function supplierTable(leads) {
+  const rows = leads.filter(isSupplierLead).map(l => {
+    const sp = l.supplier || {}; const v = sp.vetting?.status || 'pending'; const a = l.account || {}; const d = a.documents || {};
+    const vet = v === 'approved' ? '<span class="stage-pill pill-won">Approved</span>' : v === 'rejected' ? '<span class="stage-pill pill-not-proceeding">Rejected</span>' : '<span class="stage-pill pill-interested">Vetting</span>';
+    const docs = d.items ? `${d.received}/${d.items.length}${d.insured ? ' · insured' : ' · <strong>no insurance</strong>'}${d.expired ? ` · ${d.expired} expired` : d.expiring ? ` · ${d.expiring} expiring` : ''}` : '—';
+    return `<tr><td><strong>${esc(l.company)}</strong><span class="company-secondary">${esc(l.contactName || '')}${l.phone ? ` · ${esc(l.phone)}` : ''}</span></td><td>${esc((sp.trades || []).map(t => TRADE_LABELS[t] || t).join(', '))}<span class="company-secondary">${esc(sp.location?.town || (sp.provinces || []).join(', '))}${sp.location?.radiusKm ? ` · ${sp.location.radiusKm} km` : ''}</span></td><td>${vet}</td><td>${docs}</td><td>${a.done ?? 0} done · ${a.signed ?? 0} awarded<span class="company-secondary">R ${Math.round(a.awardedValue || 0).toLocaleString('en-ZA')}${a.places?.length ? ` · ${esc(a.places.slice(0, 2).join(', '))}` : ''}</span></td><td><button type="button" class="button button-ghost button-small" data-action="sup-open" data-id="${esc(l.id)}">Open</button></td></tr>`;
+  }).join('');
+  return `<div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Supplier</th><th>Trades · based in</th><th>Vetting</th><th>Documents</th><th>Jobs</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="6"><div class="panel-empty"><strong>No suppliers yet.</strong> Share the sign-up link.</div></td></tr>'}</tbody></table></div></div>`;
+}
 function filteredLeads() {
   const query = state.query.trim().toLowerCase();
   return sortRecent(state.data.leads).filter(l => {
@@ -551,8 +587,8 @@ function prospectsView() {
   const stages = ['All stages', ...(state.data.stages || [])];
   const mode = state.prospectsMode === 'board' ? 'board' : 'table';
   const toggle = `<div class="view-toggle" role="tablist" aria-label="Layout"><button type="button" role="tab" class="view-toggle-btn ${mode === 'table' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="table" aria-selected="${mode === 'table'}">${svgIcon('listCheck')} Table</button><button type="button" role="tab" class="view-toggle-btn ${mode === 'board' ? 'is-active' : ''}" data-action="prospects-mode" data-mode="board" aria-selected="${mode === 'board'}">${svgIcon('kanban')} Board</button></div>`;
-  const body = mode === 'board' ? pipelineBoard() : `<div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects match.</strong><p>Adjust the filters or add an organisation in the Workbench.</p></div></td></tr>`}</tbody></table></div></div>`;
-  return `${pageHead('Funders', 'Funders', 'Everyone we are talking to.', `<button class="button button-primary" data-view="workbench">${svgIcon('plus')} Add a funder</button>`)}
+  const body = onSuppliers() ? supplierTable(leads) : mode === 'board' ? pipelineBoard() : `<div class="panel lead-table-panel"><div class="lead-table-wrap"><table class="table"><thead><tr><th>Organisation / point of contact</th><th>Pipeline stage</th><th>Impact focus</th><th>Potential ask</th><th>Fit</th><th>Actions</th></tr></thead><tbody>${leadTableRows(leads) || `<tr><td colspan="6"><div class="panel-empty"><strong>No prospects match.</strong><p>Adjust the filters or add an organisation in the Workbench.</p></div></td></tr>`}</tbody></table></div></div>`;
+  return `${pageHead('Funders', deskMeta().targetLabel || 'Funders', deskWord('prospectsBlurb'), deskAddButton())}
     <div class="page-controls"><div class="control-left"><label class="input-search">${svgIcon('search')}<input id="lead-search" type="search" placeholder="Search organisation, contact, project…" value="${esc(state.query)}" /></label>${mode === 'table' ? `<select class="select-control" id="stage-filter">${stages.map(s => `<option value="${esc(s)}" ${state.stageFilter === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>` : ''}</div><div class="control-right">${toggle}</div></div>
     ${body}`;
 }
@@ -633,14 +669,14 @@ function bookingsView() {
     const parts = dateParts(b.date);
     return `<article class="briefing-card"><div class="briefing-main"><div class="briefing-head"><div><h3>${esc(b.organization)}</h3><span class="contact-small">${esc(b.contactName)} · ${esc(b.email)}</span></div>${statusPill(b.status)}</div><div class="briefing-details"><span>${svgIcon('phone')}${esc(b.phone || 'No phone added')}</span><span>${svgIcon('grid')}${esc(lead?.project || 'Education impact partnership')}</span><span>${svgIcon('clock')}${Number(b.durationMinutes || INTRO_MEETING_MINUTES)} min intro</span><span>${svgIcon('building')}${esc(lead?.owner || 'Chelo team')}</span><span>${svgIcon('external')}${esc(platformLabel(b.videoPlatform))}${b.meetingUrl ? ` · <a href="${esc(safeUrl(b.meetingUrl))}" target="_blank" rel="noopener noreferrer">join link</a>` : ' · link pending'}</span>${b.confirmationStatus ? `<span>${svgIcon('mail')}Invite: ${esc(b.confirmationStatus)}</span>` : ''}</div>${b.note ? `<div class="detail-note" style="margin-top:11px">${esc(b.note)}</div>` : ''}</div><div class="briefing-side"><div class="briefing-time"><strong>${parts.day} ${esc(parts.month)}</strong>${esc(b.time)} · SAST</div><div class="briefing-actions">${lead ? `<button class="button button-ghost button-small" data-action="open-lead" data-id="${esc(lead.id)}">${svgIcon('eye')}Prospect</button>` : ''}<button class="button button-ghost button-small" data-action="edit-booking" data-id="${esc(b.id)}">${svgIcon('edit')} Link & time</button>${b.status === 'Requested' ? `<button class="button button-primary button-small" data-action="confirm-booking" data-id="${esc(b.id)}">${svgIcon('checkCircle')}Confirm & send invite</button><button class="button button-ghost button-small" data-action="decline-booking" data-id="${esc(b.id)}">${svgIcon('xCircle')}Decline</button>` : b.status === 'Confirmed' ? `<a class="button button-ghost button-small" href="/api/bookings/${encodeURIComponent(b.id)}/invite.ics" download>${svgIcon('download')} .ics</a><button class="button button-secondary button-small" data-action="resend-invite" data-id="${esc(b.id)}">${svgIcon('send')} Resend invite</button><button class="button button-secondary button-small" data-action="complete-booking" data-id="${esc(b.id)}">${svgIcon('check')}Complete</button>` : ''}</div></div></article>`;
   }).join('');
-  return `${pageHead('Briefings', 'Briefings', 'Funders who said yes to a call. Confirm a time, or suggest another.', '')}
+  return `${pageHead('Briefings', deskWord('briefings'), onSchools() ? 'Principals who booked a call. Confirm a time, or suggest another.' : onMarketing() ? 'Producers and editors who asked for an interview or a call.' : 'Funders who said yes to a call. Confirm a time, or suggest another.', '')}
     <div class="booking-grid"><div><div class="metric-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));max-width:480px">${metricCard('Awaiting confirmation', String(requested), 'date/time requests', 'clock', requested ? 'Review now' : 'All clear', Boolean(requested))}${metricCard('Confirmed briefings', String(confirmed), 'on the calendar manually', 'calendar', 'Calendar sync later', false)}</div><div class="booking-cards">${cards || `<div class="empty-state"><div class="empty-state-icon">${svgIcon('calendar')}</div><strong>No briefing requests yet</strong><p>When a donor follows the booking link in an approved email, their preferred date and time will be added here.</p></div>`}</div></div>
     <aside class="briefing-aside"><div class="aside-card dark"><h3 class="h-icon">${svgIcon('bell')}Booking requests</h3><p>The prospect chooses a preferred slot and leaves a phone number. Your team confirms the actual meeting time.</p><span class="aside-number">${requested}</span><p>need a team response</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('calendar')}Calendar invites</h3><p>Confirming a request emails an RFC 5545 .ics invite (Africa/Johannesburg) with the Google Meet, Microsoft Teams or Zoom link. Set default room links under Settings → Briefings.</p></div><div class="aside-card"><h3 class="h-icon">${svgIcon('video')}Default platform</h3><p>${esc(platformLabel(state.data.settings?.defaultPlatform))}${state.data.settings?.smtpConfigured ? ' · SMTP ready' : ' · SMTP not configured: download .ics and send manually'}</p></div></aside></div>`;
 }
 function proposalsView() {
   const leads = sortRecent(state.data.leads.filter(l => !['Not proceeding'].includes(l.stage)));
   const deskDoc = { csi: 'Impact proposals', marketing: 'Press backgrounders', schools: 'School briefs', suppliers: 'Scopes of works' }[currentDesk()] || 'Documents';
-  return `${pageHead(deskDoc, 'Documents', { csi: 'Review each proposal before you create the PDF.', marketing: 'A one-page backgrounder per outlet, built from the approved media kit.', schools: 'A plain-language brief per school: the need, what happens next, what the school does.', suppliers: 'The scope of works each supplier quotes against.' }[currentDesk()] || '', `<button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>`)}
+  return `${pageHead(deskDoc, 'Documents', { csi: 'Review each proposal before you create the PDF.', marketing: 'A one-page backgrounder per outlet, built from the approved media kit.', schools: 'A plain-language brief per school: the need, what happens next, what the school does.', suppliers: 'The scope of works each supplier quotes against.' }[currentDesk()] || '', currentDesk() === 'csi' ? `<button class="button button-primary" data-action="new-lead">${svgIcon('plus')} Add prospect</button>` : deskAddButton())}
     ${currentDesk() === 'csi' ? `<div class="note-callout" style="margin-bottom:15px"><span class="note-callout-icon">${svgIcon('info')}</span><span><strong>Chelo-guided drafting:</strong> proposals use the verified-recipient, traceability and impact-reporting context plus your project notes. Confirm project scope, contribution and every factual claim before sharing.</span></div>` : ''}
     <div class="proposal-grid">${leads.map(l => `<article class="proposal-card"><div class="proposal-icon">${svgIcon('proposals')}</div><h3>${esc(l.company)}</h3><p>${esc(l.project || pdfLabels(l).doc)}${(l.kind || 'funder') === 'funder' ? ` · ${money(l.amount)} potential ask` : ` · ${esc(pdfLabels(l).doc)}`}</p><div class="proposal-card-foot"><span>${l.proposalFile ? `Updated ${isoDate(l.updatedAt)}` : 'No PDF generated yet'}</span><div style="display:flex;gap:5px">${l.proposalFile ? `<a class="button button-secondary button-small" href="${proposalDownload(l)}" download>${svgIcon('download')} PDF</a>` : ''}<button class="button ${l.proposalFile ? 'button-ghost' : 'button-primary'} button-small" type="button" data-action="create-proposal" data-id="${esc(l.id)}">${svgIcon('proposals')}${l.proposalFile ? 'Edit & regenerate' : 'Create PDF'}</button></div></div>${l.proposalFile ? `<div class="proposal-card-foot" style="margin-top:10px;padding-top:9px"><span>Share after briefing or on request</span><div><button class="table-action" data-action="copy-proposal-link" data-id="${esc(l.id)}">${svgIcon('copy')}Copy secure link</button><button class="table-action" data-action="email" data-id="${esc(l.id)}">${svgIcon('mail')}Draft email</button></div></div>` : ''}</article>`).join('')}</div>`;
 }
@@ -1271,6 +1307,7 @@ const VIEW_ALIASES = {
 function resolveView(view) { return VIEW_ALIASES[view] ? VIEW_ALIASES[view]() : view; }
 function setView(view) {
   view = resolveView(view);
+  if (!deskAllowsView(view)) view = 'workbench'; // v70: a desk only opens its own sections
   if (view === 'ops' && !isRoot() && ROOT_ONLY_OPS_TABS.includes(state.ops.tab || 'health')) state.ops.tab = 'analytics';
   state.view = view; state.modal = null; state.mobileMoreOpen = false;
   if (!['workbench', 'discover', 'prospects', 'pipeline', 'partners', 'sent', 'projects'].includes(view)) state.query = '';
@@ -1421,6 +1458,13 @@ async function dispatchAction(button) {
     if (action === 'photo-pin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: button.dataset.theme, n: Number(button.dataset.n) }) }); toast('Picture pinned for this project.'); await refresh(); return; }
     if (action === 'photo-unpin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: '' }) }); toast('Back to automatic rotation.'); await refresh(); return; }
     if (action === 'sch-toggle') { state.sch.collapsed = !state.sch.collapsed; try { localStorage.setItem('chelo-sch-collapsed', state.sch.collapsed ? '1' : ''); } catch {} renderApp(); return; }
+    if (action === 'sup-open') { state.wb.filter = 'all'; state.wb.selectedId = id; setView('workbench'); return; }
+    if (action === 'desk-add') {
+      const desk = currentDesk();
+      if (desk === 'suppliers') { const l = state.sup.link || await API('/api/suppliers/signup-link'); state.sup.link = l; await navigator.clipboard?.writeText(l.url).catch(() => {}); toast('Supplier sign-up link copied. Share it on WhatsApp groups and with district offices.'); if (state.view !== 'workbench') setView('workbench'); return; }
+      if (desk === 'schools') { state.sch.collapsed = false; try { localStorage.setItem('chelo-sch-collapsed', '0'); } catch {} setView('workbench'); return; }
+      state.wb.intake = 'add'; setView('workbench'); setTimeout(() => $('#wb-add-form input[name="company"]')?.focus(), 50); return;
+    }
     if (action === 'open-media-kit') { state.settingsSection = 'media-kit'; setView('settings'); return; }
     if (action === 'mfa-restart') { state.mfaChallenge = null; state.authError = ''; renderAuthGate(); return; }
     if (action === 'mfa-setup') { state.mfa.setup = await API('/api/auth/mfa/setup', { method: 'POST', body: '{}' }); renderApp(); return; }
@@ -1448,7 +1492,7 @@ async function dispatchAction(button) {
     if (action === 'media-kit-approve') { state.mediaKit = await API('/api/media-kit/approve', { method: 'POST', body: '{}' }); renderApp(); toast(state.mediaKit.rerun ? `Media kit approved — ${state.mediaKit.rerun} waiting pitch${state.mediaKit.rerun === 1 ? ' is' : 'es are'} being written now.` : 'Media kit approved — pitches can go out.'); await refresh(); return; }
     if (action === 'pitch-track') { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ pitchTrack: button.dataset.track }) }); toast(button.dataset.track === 'partnership' ? 'Partnership pitch — Chelo redrafts.' : 'PR pitch — Chelo redrafts.'); await wbRunFlow(id, { redraft: true }); return; }
     if (action === 'media-outcome') { const on = button.dataset.on !== 'false'; const r = await API(`/api/leads/${encodeURIComponent(id)}/outcome`, { method: 'PUT', body: JSON.stringify({ outcome: button.dataset.outcome, on }) }); toast(on ? `${button.dataset.outcome.charAt(0).toUpperCase()}${button.dataset.outcome.slice(1)} recorded for ${r.lead.company}.` : 'Cleared.'); await refresh(); return; }
-    if (action === 'desk-switch') { try { localStorage.setItem(DESK_KEY, button.dataset.desk); } catch {} state.wb.selectedId = null; state.wb.discovery = { query: '', results: [], busy: false, error: '' }; if (state.ix) state.ix.data = null; refresh(); return; }
+    if (action === 'desk-switch') { try { localStorage.setItem(DESK_KEY, button.dataset.desk); } catch {} if (!deskAllowsView(state.view, button.dataset.desk)) state.view = 'workbench'; state.wb.selectedId = null; state.wb.discovery = { query: '', results: [], busy: false, error: '' }; if (state.ix) state.ix.data = null; refresh(); return; }
     if (action === 'edit-lead') return openModal('lead-form', id);
     if (action === 'lead-share-open') return openModal('lead-share', id);
     if (action === 'project-team-open') return openModal('project-team', id);
@@ -2556,7 +2600,7 @@ function workbenchView() {
   if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
-  return `${pageHead('To do', 'To do', deskMeta().todoBlurb || 'Funders that need you. Chelo checks the email address, researches them and writes the first draft — you read it and press Send.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  return `${pageHead('To do', 'To do', deskMeta().todoBlurb || 'Funders that need you. Chelo checks the email address, researches them and writes the first draft — you read it and press Send.', onSchools() ? '' : onSuppliers() ? deskAddButton() : `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}${esc(deskWord('addLabel'))}</button>`)}
   ${wbIntakeBar()}
   <div class="wb-layout">
     <section class="panel wb-list-panel">
@@ -2876,7 +2920,18 @@ function wbMediaCard(lead) {
     <p class="subtle">${track === 'pr' ? 'Story first: pick the Verified Project below; the pitch names it and offers the spokesperson and photos.' : 'Partnership: an ongoing series on verified projects. No single project needed.'}${kitOk ? '' : ` <strong>The media kit is not approved yet.</strong> <button type="button" class="link-button" data-action="open-media-kit">Open media kit</button>`}</p>
     <div class="wb-outcomes"><span class="subtle">Outcome</span>${oc('booked', 'Call booked', 'calendar')}${oc('published', 'Published', 'check')}${oc('signed', 'Partnership signed', 'trophy')}</div>`);
 }
+/** v70: a supplier is an account, not a prospect — no research, no drafted email, no sequence. */
+function wbSupplierPage(lead) {
+  const v = lead.supplier?.vetting || { status: 'pending' }; const loc = lead.supplier?.location || {};
+  const pill = v.status === 'approved' ? `<span class="stage-pill pill-won">${svgIcon('check')}Approved</span>` : v.status === 'rejected' ? `<span class="stage-pill pill-not-proceeding">Rejected</span>` : `<span class="stage-pill pill-interested">Vetting pending</span>`;
+  return `<div class="panel wb-stepper wb-lead-page"><div class="wb-detail-head">
+    <div>${pill}<h2>${esc(lead.company)}</h2><p class="subtle">${esc(lead.contactName || 'No contact')}${lead.title ? ` · ${esc(lead.title)}` : ''}${lead.phone ? ` · ${esc(lead.phone)}` : ''}${lead.email ? ` · ${esc(lead.email)}` : ''}${loc.town ? ` · ${esc(loc.town)}` : ''}</p></div>
+    <div class="wb-detail-actions"><button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button></div></div>
+    ${wbSupplierCard(lead)}
+  </div>`;
+}
 function wbLeadPage(lead) {
+  if (isSupplierLead(lead)) return wbSupplierPage(lead);
   const s = wbStatusOf(lead); const busy = state.wb.busy[lead.id];
   state.wb.openStep = null;
   const header = `<div class="wb-detail-head">
@@ -2889,7 +2944,6 @@ function wbLeadPage(lead) {
     ${wbActionCard(lead, s, busy)}
     ${isMediaLead(lead) ? wbMediaCard(lead) : ''}
     ${isSchoolLead(lead) ? wbSchoolCard(lead) : ''}
-    ${isSupplierLead(lead) ? wbSupplierCard(lead) : ''}
     ${wbWhoCard(lead, s, busy)}
     ${wbSendCard(lead, s, busy)}
   </div>`;

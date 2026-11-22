@@ -309,3 +309,8 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Projects from a school need carry `location` (DBE GPS by NatEMIS, else town). `rankSuppliers` tags each approved supplier with the first ring that reaches them (25 km, 75 km, province; supplier radius respected). Opening a quote request sends ring 0; `dueWave` widens 48 h later while quotes < 3; `sweepTenderWaves` runs in `/api/cron/send-tick`; `POST /tender/widen` for staff. Emails say "about N km from you".
 - `PUT /api/leads/:id/documents`; `workbenchLead` adds `account` (`supplierSummary`: invited, quoted, awarded value and net of fee, completed value, places, documents, location). Supplier card: account strip, location, documents table with save per row, quotes with where. Tender form shows ring counts; open tender shows waves + next widening.
 - Fix: grey tile text (#33). Tests `tests/geo-waves.test.js`; 126/0.
+
+## v70 — Each desk shows only what it uses
+- `DESK_NAV` / `DESK_WORDS` in app.js: per-desk sidebar (CSI: full; Marketing: Inbox, To do, Shows & outlets, Media kit, Projects, Sent, Results, Settings; Schools: Inbox, To do, Schools & districts, Calls, Projects, Sent, Results, Settings; Suppliers: To do, Suppliers, Jobs, Sent, Results, Settings). `setView` and desk-switch redirect disallowed views to To do; topbar bell hidden where there are no briefings.
+- `deskAddButton()` replaces "Add a funder" on Today, the list page, Documents and To do: funders/media focus the add form; schools open the DBE browser; suppliers copy the sign-up link.
+- `wbSupplierPage` (vetting pill, edit, supplier card only); `supplierTable` for the Suppliers list; Briefings page titled Calls / Interviews with desk wording. Test added to tests/consolidation.test.js. 127/0.
