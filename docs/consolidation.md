@@ -283,3 +283,10 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - UI: two-step code screen at sign-in (with "start again"), "Your sign-in security" card under Team & governance (setup with key + otpauth link, recovery codes shown once, disable with password, sign out everywhere else), staff table 2-step pill + Sign out / Reset 2-step actions, tender earlier rounds list, privacy link on sign-in and supplier pages.
 - `docs/privacy-notice.md` + `public/privacy.html` served at `/privacy` (POPIA incl. s72 cross-border hosting).
 - Tests: `tests/security.test.js` (RFC vectors, limiter, challenges, e2e MFA, rate limit, fallback audit). 114/0.
+
+## v65 — Discover: emails only; PDFs per desk
+- Discover (`GET /api/discovery/search`): mailbox finder runs on every result (≤12) with pattern guesses, 30 s budget (`DISCOVERY_MAILBOX_BUDGET_MS`), `profile` by desk; results without a mailbox are dropped into `withoutEmail[]` (shown collapsed as "left out"). `discoverOrganisations` resolve budget trimmed to 15 s so the whole call stays inside Vercel's 60 s.
+- `lib/mailbox-finder.js`: `PROFILES.funder|media` (priority list, wrong-department list, pages, pattern locals); `find(org,{profile})`; `findLeadMailbox` passes the media profile for media leads.
+- `lib/desk-pdf.js`: `fieldLabels`, `defaults`, `layoutFor`, `filenameFor` for media/school/supplier. `pdf-engine.makeProposalPdf` honours `proposal.layout` (kicker, title, labels, box, sections, footer); funder path untouched.
+- Server: `deskPdfContext(lead)` (project, media kit, open tender the supplier was sent); `createProposal`/rebuild/attachment/download use the desk layout and filename; `proposal/draft` returns desk defaults (`mode: 'desk-template'`) for non-funder leads.
+- UI: `PDF_LABELS` per kind in the proposal modal (titles, field labels, button), amount/metrics/research only for funders; "Documents" page copy per desk; lead action button names the document. Tests: `tests/desk-pdf.test.js`. 120/0.

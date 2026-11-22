@@ -28,6 +28,7 @@ const media = require('./lib/media');
 const schools = require('./lib/schools');
 const suppliers = require('./lib/suppliers');
 const security = require('./lib/security');
+const deskPdf = require('./lib/desk-pdf');
 // R5: API-wide rate limiting (G3). Per IP for anonymous traffic (public forms, auth), per session once signed in.
 // Limits are per minute; RATE_LIMIT_SCALE lets a load test raise them without code changes.
 const RATE_SCALE = Math.max(0.1, Number(process.env.RATE_LIMIT_SCALE || 1));
@@ -630,7 +631,9 @@ function proposalPdfPath(lead) {
   const p = path.join(PROPOSAL_DIR, safeFilename(lead.proposalFile));
   if (fs.existsSync(p)) return p;
   try {
-    fs.writeFileSync(p, makeProposalPdf(lead, { ...(lead.proposalData || {}), ...proposalContext(lead) }));
+    const ctx = deskPdfContext(lead); const data = { ...(lead.proposalData || {}), ...proposalContext(lead) };
+    if (ctx.kind !== 'funder') data.layout = deskPdf.layoutFor(ctx.kind, lead, data, ctx);
+    fs.writeFileSync(p, makeProposalPdf(lead, data));
     return p;
   } catch (err) { console.warn(`[proposal] could not rebuild the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return ''; }
 }
@@ -638,7 +641,7 @@ function proposalPdfPath(lead) {
 function proposalAttachment(lead) {
   const p = proposalPdfPath(lead);
   if (!p) return null;
-  return { filename: 'Chelo-Partnership-Proposal.pdf', content: fs.readFileSync(p).toString('base64'), encoding: 'base64', contentType: 'application/pdf' };
+  return { filename: deskPdf.filenameFor(desks.kindOfLead(lead), lead), content: fs.readFileSync(p).toString('base64'), encoding: 'base64', contentType: 'application/pdf' };
 }
 /** Linked-project fields plus the co-branded cover photo (same photo the hosted page uses, chosen by project type). */
 function proposalContext(lead) {
@@ -669,10 +672,24 @@ function ensureProposalPdf(lead, actor = 'staff') {
   try { createProposal(lead, {}, actor); return Boolean(proposalPdfPath(lead)); }
   catch (err) { console.warn(`[proposal] could not auto-generate the PDF for ${lead.id}: ${String(err.message || err).slice(0, 160)}`); return false; }
 }
+/** v65: what each desk's document is built from (media kit, school needs, the open quote request). */
+function deskPdfContext(lead) {
+  const kind = desks.kindOfLead(lead);
+  const project = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
+  const ctx = { kind, project, kit: kind === 'media' ? mediaKit() : null, tender: null };
+  if (kind === 'supplier') {
+    const withMe = db.projects.filter(p => p.tender && (p.tender.sentTo || []).some(x => (x.supplierId || x.id || x) === lead.id) && p.tender.status !== 'done').sort((a, b) => String(b.tender.openedAt).localeCompare(String(a.tender.openedAt)));
+    const pick = (project && project.tender) ? project : withMe[0] || null;
+    if (pick) { ctx.project = pick; ctx.tender = pick.tender; }
+  }
+  return ctx;
+}
 function createProposal(lead, proposal, actor = 'staff') {
   const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
   if (linkedProject) proposal = { ...proposal, verifiedMetrics: proposal.verifiedMetrics || linkedProject.verifiedMetrics };
   proposal = { ...proposal, ...proposalContext(lead) };
+  const pdfCtx = deskPdfContext(lead);
+  if (pdfCtx.kind !== 'funder') proposal.layout = deskPdf.layoutFor(pdfCtx.kind, lead, proposal, pdfCtx);
   const buffer = makeProposalPdf(lead, proposal);
   const filename = `chelo-proposal-${lead.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${Date.now()}.pdf`;
   fs.writeFileSync(path.join(PROPOSAL_DIR, filename), buffer);
@@ -1715,7 +1732,7 @@ function mailboxSearchDue(lead) {
   return lead.mailboxSearch.status === 'unreachable' && age > 24 * 3600e3; // retry unreachable sites daily; "none published" is final until staff re-run
 }
 async function findLeadMailbox(lead, actor = 'staff', { tryPatterns = true, signal } = {}) {
-  const result = await mailboxFinder.find({ company: lead.company, website: lead.website, sourceUrl: lead.sourceUrl, email: lead.email }, { tryPatterns, signal });
+  const result = await mailboxFinder.find({ company: lead.company, website: lead.website, sourceUrl: lead.sourceUrl, email: lead.email }, { tryPatterns, signal, profile: desks.kindOfLead(lead) === 'media' ? 'media' : 'funder' });
   lead.mailboxSearch = { ranAt: result.ranAt, durationMs: result.durationMs, domain: result.domain, pages: result.pages.slice(0, 8), status: result.status, ...(result.cutShort ? { cutShort: true, error: 'Ran out of time in this batch; will be retried.' } : {}), candidates: result.candidates.map(c => ({ email: c.email, kind: c.kind, score: c.score, pattern: Boolean(c.pattern), sources: c.sources.slice(0, 3), verification: c.verification })) };
   const chosen = result.chosen;
   if (chosen && !normalizeEmail(lead.email) && !isSuppressedEmail(chosen.email)) {
@@ -2716,11 +2733,13 @@ async function handleApi(req, res, url) {
       const searchConfig = configStore.getSearchConfig();
       if (!searchConfig.apiKey) return sendJson(res, 409, { error: 'Add a web search provider key in Settings → Integrations to discover organisations on the web.', organisations: [] });
       const onMarketing = req.authSession?.desk === 'marketing';
-      const result = onMarketing ? await media.discoverOutlets(searchConfig, q, { runSearch: research.runSearch, aiConfig: configStore.getAIConfig() }) : await research.discoverOrganisations(searchConfig, q, { aiConfig: configStore.getAIConfig() });
-      // v58: show the published mailbox for the top results (own-site organisations only; generic mailboxes, never people).
-      const budget = AbortSignal.timeout(20000);
-      await Promise.all(result.organisations.filter(o => o.website).slice(0, 6).map(async o => {
-        try { const r = await mailboxFinder.find({ company: o.name, website: o.website }, { tryPatterns: false, signal: budget }); o.mailbox = r.chosen ? { email: r.chosen.email, source: r.chosen.sources?.[0] || '' } : { status: r.status }; }
+      const result = onMarketing ? await media.discoverOutlets(searchConfig, q, { runSearch: research.runSearch, aiConfig: configStore.getAIConfig() }) : await research.discoverOrganisations(searchConfig, q, { aiConfig: configStore.getAIConfig(), resolveBudgetMs: 15000 });
+      // v65: dig for a mailbox on *every* result (own site, contact pages, then SMTP-confirmed pattern guesses) and only
+      // show organisations that can actually be written to. The rest are listed by name so nothing is silently lost.
+      const budget = AbortSignal.timeout(Number(process.env.DISCOVERY_MAILBOX_BUDGET_MS || 30000));
+      const profile = onMarketing ? 'media' : 'funder';
+      await Promise.all(result.organisations.filter(o => o.website).slice(0, 12).map(async o => {
+        try { const r = await mailboxFinder.find({ company: o.name, website: o.website }, { tryPatterns: true, signal: budget, profile }); o.mailbox = r.chosen ? { email: r.chosen.email, source: r.chosen.sources?.[0] || '', kind: r.chosen.kind || '', status: r.status } : { status: r.status }; }
         catch { o.mailbox = { status: 'unreachable' }; }
       }));
       const known = new Set(db.leads.map(l => String(l.website || l.sourceUrl || '').replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase()).filter(Boolean));
@@ -2733,7 +2752,10 @@ async function handleApi(req, res, url) {
         // v59.1: "Tracked" is actionable — say where it is and let the person open it (or ask an admin when it is private).
         return { ...o, alreadyTracked: true, tracked: { id: visible ? existing.id : '', company: visible ? existing.company : '', hidden: Boolean(existing.hidden), visible, stage: visible ? existing.stage : '' } };
       });
-      configStore.recordAudit({ actor: actorName(), action: 'discovery.search', entityType: 'system', summary: `Web discovery: "${q}" → ${result.organisations.length} organisation(s)` });
+      const found = result.organisations.filter(o => o.mailbox?.email || o.alreadyTracked);
+      result.withoutEmail = result.organisations.filter(o => !o.mailbox?.email && !o.alreadyTracked).map(o => ({ name: o.name, domain: o.domain || '', website: o.website || '', status: o.mailbox?.status || (o.website ? 'not checked' : 'no website') }));
+      result.organisations = found;
+      configStore.recordAudit({ actor: actorName(), action: 'discovery.search', entityType: 'system', summary: `Web discovery: "${q}" → ${found.length} with a mailbox, ${result.withoutEmail.length} without (not shown)` });
       return sendJson(res, 200, result);
     }
     if (method === 'POST' && pathname === '/api/discovery/add') {
@@ -3300,7 +3322,7 @@ async function handleApi(req, res, url) {
     if (proposalShare && method === 'GET') {
       const lead = db.leads.find(l => l.proposalToken === proposalShare[1] && l.proposalFile);
       if (!lead) return sendJson(res, 404, { error: 'Proposal link not found.' });
-      return sendPdf(res, proposalPdfPath(lead), `${lead.company}-Chelo-proposal.pdf`, 'inline');
+      return sendPdf(res, proposalPdfPath(lead), deskPdf.filenameFor(desks.kindOfLead(lead), lead), 'inline');
     }
 
     if (method === 'POST' && pathname === '/api/leads') {
@@ -3676,7 +3698,9 @@ async function handleApi(req, res, url) {
         const body = await readBody(req);
         const verifiedMetrics = parseVerifiedMetrics(body.verifiedMetrics ?? lead.proposalData?.verifiedMetrics ?? [], { strict: true });
         const draftingInput = { ...body, verifiedMetrics };
-        const result = await generateProposalDraft(lead, draftingInput);
+        const pdfKind = desks.kindOfLead(lead);
+        const result = pdfKind === 'funder' ? await generateProposalDraft(lead, draftingInput)
+          : { mode: 'desk-template', draft: deskPdf.defaults(pdfKind, lead, deskPdfContext(lead)), message: `${deskPdf.fieldLabels(pdfKind).doc}: filled from Chelo's records (${pdfKind === 'media' ? 'media kit and linked project' : pdfKind === 'school' ? 'the needs captured on the call' : 'the open quote request'}). Edit any paragraph, then generate.` };
         lead.proposalData = {
           ...(lead.proposalData || {}), company: clampText(body.company || lead.company, 150),
           contactName: clampText(body.contactName || lead.contactName, 150), project: clampText(body.project || lead.project, 250),
@@ -3747,7 +3771,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'GET' && action === 'proposal/download') {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
-        return sendPdf(res, proposalPdfPath(lead), `Chelo-proposal-${lead.id}.pdf`, 'attachment');
+        return sendPdf(res, proposalPdfPath(lead), deskPdf.filenameFor(desks.kindOfLead(lead), lead), 'attachment');
       }
       // "What the funder will receive": one JSON the review screen renders verbatim — from, to, subject, the exact HTML/text,
       // every link, the attachment, and a pre-flight checklist. ?step=N previews a sequence step; default is the first touch.
@@ -3788,7 +3812,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'GET' && action === 'proposal/preview') {
         if (!lead.proposalFile) return sendJson(res, 404, { error: 'Generate a proposal PDF first.' });
-        return sendPdf(res, proposalPdfPath(lead), `Chelo-proposal-${lead.id}.pdf`, 'inline');
+        return sendPdf(res, proposalPdfPath(lead), deskPdf.filenameFor(desks.kindOfLead(lead), lead), 'inline');
       }
       if (method === 'GET' && action === 'email/eml') {
         if (lead.doNotContact) return sendJson(res, 409, { error: 'This prospect is on the do-not-contact list.' });
