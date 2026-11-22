@@ -41,6 +41,7 @@ const SMTP_PROBE_DISABLED = process.env.SMTP_PROBE_DISABLED === 'true';
 const flowRuns = new Map(); // leadId -> Promise (dedupes concurrent runs)
 const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SEND_WORKER === 'off');
 const domainHealth = createDomainHealth();
+const BUILD_TAG = (() => { try { return (require('node:fs').readFileSync(require('node:path').join(__dirname, 'public', 'index.html'), 'utf8').match(/app\.js\?v=([\w-]+)/) || [])[1] || 'dev'; } catch { return 'dev'; } })();
 const googleMail = createGoogleMail({ getConfig: () => configStore.getGoogleConfig(), signingKey: configStore.deriveKey('google-oauth-state'), log: m => console.log(`[google] ${m}`) });
 function mailboxTransport(mailbox) {
   if (mailbox.authType === 'google') return googleMail.transport(mailbox);
@@ -2034,7 +2035,7 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const pathname = url.pathname;
   try {
-    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Communication Center', version: '0.2.0', storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
+    if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Communication Center', version: '0.2.0', build: BUILD_TAG, googleReady: configStore.getGoogleConfig().configured, storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/send-tick') {
       const secret = process.env.CRON_SECRET || '';
       const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');

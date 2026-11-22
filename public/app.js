@@ -721,8 +721,8 @@ function loadMyMailboxes(force) {
 function myMailboxView(settings, isAdmin) {
   loadMyMailboxes();
   const r = state.myMailboxes;
-  const configured = r ? r.googleConfigured : settings.googleConfigured;
-  const domain = r?.hostedDomain || '';
+  const configured = Boolean(r?.googleConfigured || state.googleStatus?.configured || settings.googleConfigured); // all three come from the server; any fresh 'yes' wins over a cached 'no'
+  const domain = r?.hostedDomain || state.googleStatus?.hostedDomain || '';
   const boxes = r?.mailboxes || [];
   const when = iso => iso ? new Date(iso).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'not yet';
   const card = m => {
