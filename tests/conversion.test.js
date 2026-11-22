@@ -184,3 +184,18 @@ test('v58: opt-out footer — plain text keeps the address, every template ends 
     assert.ok(conversion.OPT_OUT_LINE.test(e.body));
   }
 });
+
+test('v70: finaliseOutreach strips model-written opt-out lines and placeholder signatures, then appends CTA → signature → footer', () => {
+  const links = { optOut: 'https://x/opt-out/t1', booking: 'https://x/track/cta/t1' };
+  const raw = ['Dear Mr Dlamini,', '', 'Thank you for your leadership in STEM.', '', '[Your Name]', '[Your Position]', 'Chelo', '[Your Contact Information]', '', 'Opt-out:', '', `Yes — choose a time for a 20-minute introductory video briefing: ${links.booking}`, 'For your 20-minute introductory video chat', '', links.optOut, '', 'One possible focus is Mobile Labs.'].join('\n');
+  const opts = { ...links, signature: { name: 'Nandi Mokoena' }, ctaLine: `Yes — choose a time for a 20-minute introductory video briefing: ${links.booking}` };
+  const out = conversion.finaliseOutreach(raw, opts);
+  assert.doesNotMatch(out, /\[Your|Opt-out:|^Chelo$/m);
+  assert.equal((out.match(/opt-out\//g) || []).length, 1, 'exactly one opt-out address, in the footer');
+  assert.ok(out.endsWith(`Don't want more emails from Chelo? Opt out: ${links.optOut}`), 'footer is last');
+  assert.ok(out.indexOf('Yes — choose a time') < out.indexOf('Kind regards,\nNandi Mokoena\nChelo · cheloapp.com'), 'button before signature');
+  assert.ok(out.indexOf('One possible focus') < out.indexOf('Yes — choose a time'), 'body before button');
+  assert.equal(conversion.finaliseOutreach(out, opts), out, 'idempotent');
+  const templated = `Hi Sipho,\n\nBody.\n\nKind regards,\nNandi Mokoena\nChelo · cheloapp.com\n\nDon't want more emails from Chelo? Opt out: ${links.optOut}`;
+  assert.equal(conversion.finaliseOutreach(templated, { optOut: links.optOut, signature: { name: 'Nandi Mokoena' } }), templated, 'already-correct emails are untouched');
+});

@@ -838,13 +838,13 @@ async function generateFollowUpEmail(lead, input = {}, origin) {
     meetingDurationMinutes: INTRO_MEETING_MINUTES,
     proposalPdfWillBeAttached: attachProposal,
     priorityQuestion: 'Which education or community-impact priorities are most important to your team this year?',
-    performanceSignals: learning, bookingUrl: links.booking, optOutUrl: links.optOut,
+    performanceSignals: learning, bookingUrl: links.booking,
     rewriteRequest: clampText(input.rewriteNotes, 800)
   };
   const response = await fetch(aiConfig.endpoint, {
     method: 'POST', headers: { 'Authorization': `Bearer ${aiConfig.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: aiConfig.model, temperature: 0.35, max_tokens: 450, messages: [
-      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} Write a concise, formal, low-pressure follow-up for the same executive audience and fixed project context; do not suggest that the recipient has shown interest. Keep it around 70–115 words. Ask exactly the supplied priorityQuestion once. Preserve project and proposedContributionZar; never add, change or infer an amount, result, metric, deadline or relationship. Use performanceSignals only as aggregate, observational direction when adequately sampled; optimise for submitted preferred-time requests, not opens or CTA clicks, and never claim causality. The link is a preferred-time request only; Chelo manually confirms it. Say no preparation or commitment is required. Use the exact “Yes — choose a time” CTA before bookingUrl and include the opt-out link. ${context.proposalPdfWillBeAttached ? 'State that the personalised Chelo proposal PDF is attached.' : 'Do not mention a proposal, PDF or attachment.'} Do not include a proposal URL. Return only valid JSON with subject and body. Follow rewriteRequest only if it preserves all fixed facts and guardrails.` },
+      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} Write a concise, formal, low-pressure follow-up for the same executive audience and fixed project context; do not suggest that the recipient has shown interest. Keep it around 70–115 words. Ask exactly the supplied priorityQuestion once. Preserve project and proposedContributionZar; never add, change or infer an amount, result, metric, deadline or relationship. Use performanceSignals only as aggregate, observational direction when adequately sampled; optimise for submitted preferred-time requests, not opens or CTA clicks, and never claim causality. The link is a preferred-time request only; Chelo manually confirms it. Say no preparation or commitment is required. Use the exact “Yes — choose a time” CTA before bookingUrl. Do not write a signature, placeholders such as [Your Name], or any opt-out line — Chelo appends them. ${context.proposalPdfWillBeAttached ? 'State that the personalised Chelo proposal PDF is attached.' : 'Do not mention a proposal, PDF or attachment.'} Do not include a proposal URL. Return only valid JSON with subject and body. Follow rewriteRequest only if it preserves all fixed facts and guardrails.` },
       { role: 'user', content: JSON.stringify(context) }
     ] }), signal: AbortSignal.timeout(30000)
   });
@@ -875,7 +875,7 @@ async function generateFollowUpEmail(lead, input = {}, origin) {
   if (context.proposalPdfWillBeAttached && !/proposal.{0,40}attached|attached.{0,40}proposal/i.test(body)) insertBeforeBooking('The personalised Chelo proposal PDF is attached for context.');
   if (!body.includes(links.optOut)) body += `\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`;
   body = ensurePrimaryBookingCta(body, links);
-  body = cleanApprovedEmailBody({ subject, body }, context.proposalPdfWillBeAttached);
+  body = cleanApprovedEmailBody({ subject, body }, context.proposalPdfWillBeAttached, lead, origin);
   return { draft: { subject, body }, mode: 'openai', message: `Follow-up drafted with ${aiConfig.model} using aggregate outcome signals where available. Review and approve before sharing.` };
 }
 /** Bodies of the last N emails Chelo actually sent (any funder) — the anti-sameness yardstick. */
@@ -941,13 +941,13 @@ async function generateOutreachEmailOnce(lead, input, origin) {
     performanceSignals: learning,
     approvedFunderResearch: approvedResearchContext(lead),
     writingBrief: brief,
-    bookingUrl: links.booking, optOutUrl: links.optOut
+    bookingUrl: links.booking
   };
   const model = aiConfig.model;
   const response = await fetch(aiConfig.endpoint, {
     method: 'POST', headers: { 'Authorization': `Bearer ${aiConfig.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, temperature: input.rewriteNotes ? 0.75 : 0.6, max_tokens: 650, messages: [
-      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} ${brief} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl and optOutUrl exactly as supplied, with one primary CTA. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl. If approvedFunderResearch is present it contains staff-approved, publicly sourced organisational facts about the funder: use at most one or two of them to show genuine alignment between the funder's stated priorities and Chelo's verified-project model, paraphrased in a respectful, non-flattering tone; never quote figures that are not in citedFunderFacts and never imply inside knowledge. If it is absent, do not speculate about the funder's priorities.` },
+      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} ${brief} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl exactly as supplied, with one primary CTA. Do not write a signature, sign-off block, placeholders such as [Your Name], or any opt-out / unsubscribe line — Chelo appends the real signature and footer. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl. If approvedFunderResearch is present it contains staff-approved, publicly sourced organisational facts about the funder: use at most one or two of them to show genuine alignment between the funder's stated priorities and Chelo's verified-project model, paraphrased in a respectful, non-flattering tone; never quote figures that are not in citedFunderFacts and never imply inside knowledge. If it is absent, do not speculate about the funder's priorities.` },
       { role: 'user', content: JSON.stringify(context) }
     ] }), signal: AbortSignal.timeout(30000)
   });
@@ -979,7 +979,7 @@ async function generateOutreachEmailOnce(lead, input, origin) {
   if (!/chelo.{0,80}confirm/i.test(body)) insertBeforeBooking('Chelo will review your preferred time and confirm it personally.');
   if (!body.includes(links.optOut)) body += `\n\n${conversion.OPT_OUT_FOOTER}${links.optOut}`;
   body = ensurePrimaryBookingCta(body, links);
-  body = cleanApprovedEmailBody({ subject, body }, false);
+  body = cleanApprovedEmailBody({ subject, body }, false, lead, origin);
   return { draft: { subject, body }, mode: 'openai', message: `Email draft generated with ${model}. Performance signals were aggregate and directional; review every claim and approve before sharing.` };
 }
 
@@ -1386,7 +1386,7 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   if (step.n > 1 && seq.threadMessageId) { headers['In-Reply-To'] = seq.threadMessageId; headers.References = seq.threadMessageId; }
   if (step.n === 1) ensureProposalPdf(lead, actor); // the first email always carries the PDF
   const pdf = step.n === 1 ? proposalAttachment(lead) : null;
-  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdf)) : step.body;
+  const body = step.n === 1 ? cleanApprovedEmailBody({ body: step.body }, Boolean(pdf), lead, origin_) : step.body;
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
     attachments: pdf ? [pdf] : [], mailboxId: seq.mailboxId || lead.mailboxId || '',
@@ -1976,13 +1976,19 @@ function smtpTransporter() {
   });
   return { smtp, transport };
 }
-function cleanApprovedEmailBody(draft, attachProposal = false) {
+/** v70: when `lead` is given, the end of the email is rebuilt: model/human opt-out lines and placeholder signatures out, real CTA → signature → footer in. */
+function cleanApprovedEmailBody(draft, attachProposal = false, lead = null, origin = '') {
   const lines = String(draft?.body || '').split(/\r?\n/)
     .filter(line => !/\/track\/proposal\/|\/api\/public\/proposal\/|\/proposal\/[a-f0-9]{40,}/i.test(line)
       && !/^(?:A tailored proposal is ready to review:|For context, here is the tailored proposal:|Review the tailored proposal:)\s*$/i.test(line)
       && (attachProposal || !/(?:proposal|pdf).{0,60}(?:attach|enclos)|(?:attach|enclos).{0,60}(?:proposal|pdf)/i.test(line)));
   let body = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   if (attachProposal && !/proposal.{0,40}attached|attached.{0,40}proposal/i.test(body)) body += '\n\nThe personalised Chelo proposal PDF is attached for context.';
+  if (lead && lead.bookingToken) {
+    const base = origin || configStore.getPublicBaseUrl() || `http://localhost:${PORT}`; const links = outreachLinks(lead, base);
+    const hasBooking = body.includes(links.booking) || /yes\s*[—-]\s*choose/i.test(body);
+    body = conversion.finaliseOutreach(body, { optOut: links.optOut, booking: hasBooking ? links.booking : '', signature: staffSignature(lead), ctaLine: hasBooking ? `Yes — choose a time for a ${INTRO_MEETING_MINUTES}-minute introductory video briefing: ${links.booking}` : '' });
+  }
   return body;
 }
 function escapeHtml(value) {
@@ -2023,7 +2029,7 @@ function recordSentMessage(lead, followUp, provider, openToken = null, providerM
   const draft = followUp ? lead.followUpDraft : lead.emailDraft;
   if (!draft) throw new Error('Approved email draft is missing.');
   const step = followUp ? Number(lead.followUpStep || 1) : 0;
-  const cleanBody = cleanApprovedEmailBody(draft, Boolean(followUp && draft.attachProposal && lead.proposalFile));
+  const cleanBody = cleanApprovedEmailBody(draft, Boolean(followUp && draft.attachProposal && lead.proposalFile), lead);
   const message = { id: id('message'), leadId: lead.id, kind: followUp ? 'follow-up' : 'initial', sequence: step, subject: draft.subject, body: cleanBody, copyProfile: emailCopyProfile({ subject: draft.subject, body: cleanBody }), sentAt: now, status: provider === 'SMTP' ? 'Sent' : 'Confirmed by staff', provider, openToken: openToken || null, ...(providerMessageId ? { providerMessageId: String(providerMessageId).slice(0, 250) } : {}) };
   db.messages.unshift(message);
   addEmailEvent(lead.id, followUp ? 'sent_follow_up' : 'sent_initial', message.id);
@@ -3877,7 +3883,7 @@ async function handleApi(req, res, url) {
         const draft = seqStep ? { subject: seqStep.subject, body: seqStep.body } : lead.emailDraft;
         if (!draft) return sendJson(res, 404, { error: 'There is no email written for this funder yet. Go back and press Start, or Edit email to write one.' });
         const attachProposal = (!seqStep || seqStep.n === 1) ? shouldAttachProposal(lead, false) : false;
-        const text = (!seqStep || seqStep.n === 1) ? cleanApprovedEmailBody(draft, attachProposal) : String(draft.body || '');
+        const text = (!seqStep || seqStep.n === 1) ? cleanApprovedEmailBody(draft, attachProposal, lead, publicOrigin(req)) : String(draft.body || '');
         const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
         const mailbox = (() => { try { return sendEngine.pickMailbox(lead.mailboxId || ''); } catch { return null; } })();
         const origin = publicOrigin(req);
@@ -4172,7 +4178,7 @@ async function handleApi(req, res, url) {
           const openTokenCandidate = configStore.publicSettings().openTrackingEnabled ? crypto.randomBytes(24).toString('hex') : '';
           const pixelUrl = openTrackingUrl(openTokenCandidate);
           const openToken = pixelUrl ? openTokenCandidate : null;
-          const emailBody = cleanApprovedEmailBody(draft, attachProposal);
+          const emailBody = cleanApprovedEmailBody(draft, attachProposal, lead, publicOrigin(req));
           const subject = String(draft.subject || '').replace(/[\r\n]+/g, ' ').trim();
           const origin = publicOrigin(req);
           const headers = {
