@@ -1992,7 +1992,7 @@ function emailHtml(body, pixelUrl = '') {
   const paragraphs = String(body || '').split(/\n{2,}/).map(paragraph => {
     // v58: the opt-out line becomes a small grey footer with only "Opt out" linked (plain text keeps the full address).
     const foot = paragraph.trim().match(/^(?:Don't want more emails from Chelo\? Opt out:|To stop further outreach:|If you prefer not to receive further outreach, opt out here:)\s*(https?:\/\/\S+)\s*$/i);
-    if (foot) { let href = foot[1]; while (/[),.;!?]$/.test(href)) href = href.slice(0, -1); return `<p style="margin:24px 0 0;padding-top:12px;border-top:1px solid #e6e4f2;font-size:12px;line-height:1.5;color:#6b6885">Don't want more emails from Chelo? <a href="${escapeHtml(href)}" style="color:#6b6885;text-decoration:underline">Opt out</a>.</p>`; }
+    if (foot) { let href = foot[1]; while (/[),.;!?]$/.test(href)) href = href.slice(0, -1); return `<p style="margin:24px 0 0;padding-top:12px;border-top:1px solid #e6e4f2;font-size:12px;line-height:1.5;color:#6b6885"><a href="${escapeHtml(href)}" style="color:#6b6885;text-decoration:none">Don't want more emails from Chelo? Opt out.</a></p>`; } // v70: the whole sentence is the link, styled as text
     const lines = paragraph.split('\n').map(line => {
       const cta = line.match(/yes\s*[—-]\s*choose\b[^\r\n]*?(https?:\/\/[^\s<]+)/i);
       if (cta) {
