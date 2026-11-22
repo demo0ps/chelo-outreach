@@ -2476,7 +2476,8 @@ function wbSendCard(lead, s, busy) {
     <label class="form-group"><span>Subject</span><input id="email-subject" class="form-control" value="${esc(d.subject || '')}" ${locked ? 'readonly' : ''} /></label>
     <label class="form-group"><span>Email</span><textarea id="email-body" class="form-control wb-email-body" rows="10" ${locked ? 'readonly' : ''}>${esc(d.body || '')}</textarea></label>
     <p class="subtle wb-followup-note">${svgIcon('clock')}If they don't reply, Chelo sends ${followUps} short follow-up${followUps === 1 ? '' : 's'} in the same thread over about two weeks and stops the moment they answer. You can stop it any time.</p>
-    ${locked ? '' : `<div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="email-save-draft" data-id="${esc(lead.id)}">${svgIcon('save')}Save changes</button><button type="button" class="button button-ghost button-small" data-action="wb-redraft" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('wand')}Write it again</button>${lead.proposalFile ? `<a class="button button-ghost button-small" href="/api/leads/${encodeURIComponent(lead.id)}/proposal/preview" target="_blank" rel="noopener">${svgIcon('proposals')}Open the PDF</a>` : ''}</div>`}
+    ${lead.emailDraft?.opening ? `<p class="subtle wb-opening-note">Opening: ${esc(OPENING_LABELS[lead.emailDraft.opening] || lead.emailDraft.opening)}. Each rewrite tries a different way in.</p>` : ''}
+    ${locked ? '' : `<div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="email-save-draft" data-id="${esc(lead.id)}">${svgIcon('save')}Save changes</button><button type="button" class="button button-ghost button-small" data-action="wb-redraft" data-id="${esc(lead.id)}" ${busy ? 'disabled' : ''}>${svgIcon('wand')}Rewrite differently</button>${lead.proposalFile ? `<a class="button button-ghost button-small" href="/api/leads/${encodeURIComponent(lead.id)}/proposal/preview" target="_blank" rel="noopener">${svgIcon('proposals')}Open the PDF</a>` : ''}</div>`}
     ${seq && seq.status !== 'draft' ? wbSequencePanel(lead) : ''}`;
   return wbCard('mail', "What we'll send", body);
 }
@@ -2522,6 +2523,7 @@ function wbActionCard(lead, s, busy) {
   return `<section class="wb-card wb-action-card"><div class="wb-action-main"><div><strong>${esc(SIMPLE_META[simpleStatusOf(lead)][0])}</strong><p class="subtle">${esc(note)}</p>${facts.length ? `<p class="subtle wb-action-facts">${facts.map(esc).join(' · ')}</p>` : ''}</div>${primary}</div>${wait}<div class="wb-action-secondary">${secondary.join('')}</div></section>`;
 }
 // ---------------- Private workspaces (v56): who can see this funder ----------------
+const OPENING_LABELS = { figure: 'a number', question: 'a question', priority: 'their stated priority', story: 'one beneficiary', ask: 'the ask itself' };
 function wbAccessLine(lead) {
   const a = lead.access; if (!a) return '';
   const me = String(state.auth.userId || '');

@@ -22,6 +22,7 @@ const mailAutodiscover = require('./lib/mail-autodiscover');
 const createGoogleMail = require('./lib/google-mail');
 const relationships = require('./lib/relationships');
 const access = require('./lib/access');
+const voice = require('./lib/voice');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -693,7 +694,7 @@ function staffSignature(lead) {
 // Ladder step 1: interest-based first touch, no booking link (page + meeting come at step 2). See lib/conversion.js.
 function makeLadderEmail(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
-  return conversion.ladderStep({ step: 1, lead, project, links: outreachLinks(lead, origin), staff: staffSignature(lead), reason: researchAlignmentSentence(lead).trim().replace(/\.$/, '') });
+  return conversion.ladderStep({ step: 1, lead, project, links: outreachLinks(lead, origin), staff: staffSignature(lead), facts: approvedFactsFor(lead), reason: researchAlignmentSentence(lead).trim().replace(/\.$/, ''), opening: lead.voice?.pending || voice.pickOpening(lead, 1) });
 }
 function guardrailCheck(lead, text, step = 1) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
@@ -827,11 +828,37 @@ async function generateFollowUpEmail(lead, input = {}, origin) {
   body = cleanApprovedEmailBody({ subject, body }, context.proposalPdfWillBeAttached);
   return { draft: { subject, body }, mode: 'openai', message: `Follow-up drafted with ${aiConfig.model} using aggregate outcome signals where available. Review and approve before sharing.` };
 }
+/** Bodies of the last N emails Chelo actually sent (any funder) — the anti-sameness yardstick. */
+function recentSentBodies(limit = 20, excludeLeadId = null) {
+  return db.messages.filter(m => m.body && m.kind !== 'reply' && m.leadId !== excludeLeadId).slice(0, limit).map(m => m.body);
+}
+/** v57: one voice, five ways in. Rotates the opening per funder, checks the result against the last 20 sent, retries once. */
 async function generateOutreachEmail(lead, input, origin) {
+  const rewrite = Boolean(input.rewriteNotes) || input.differently === true;
+  const exclude = rewrite && lead.voice?.last ? [lead.voice.last] : [];
+  let strategy = input.opening || voice.pickOpening(lead, 1, { exclude });
+  lead.voice = { ...(lead.voice || {}), pending: strategy };
+  let result = await generateOutreachEmailOnce(lead, { ...input, opening: strategy }, origin);
+  const check = voice.tooSimilar(result.draft.body, recentSentBodies(20, lead.id));
+  if (check.tooSimilar) {
+    const second = voice.pickOpening(lead, 1, { exclude: [...exclude, strategy] });
+    try {
+      const again = await generateOutreachEmailOnce(lead, { ...input, opening: second, rewriteNotes: `${input.rewriteNotes || ''} Your previous attempt read like a template; use a clearly different opening and rhythm.`.trim() }, origin);
+      const check2 = voice.tooSimilar(again.draft.body, recentSentBodies(20, lead.id));
+      if (check2.score <= check.score) { result = again; strategy = second; result.message = `${result.message} Rewritten once so it does not read like recent emails.`; }
+    } catch { /* keep the first draft */ }
+  }
+  delete lead.voice.pending;
+  lead.voice = voice.remember(lead, strategy);
+  result.draft.opening = strategy;
+  return result;
+}
+async function generateOutreachEmailOnce(lead, input, origin) {
   const fallback = outreachStyle() === 'ladder' ? makeLadderEmail(lead, origin) : makeOutreachEmail(lead, origin);
   const aiConfig = configStore.getAIConfig();
-  if (!aiConfig.apiKey) return { draft: fallback, mode: 'guided-preview', message: outreachStyle() === 'ladder' ? 'Ladder step 1: interest-based first touch (no link). The one-page + meeting ask follows at step 2.' : 'AI provider is not configured. This email uses a local guided template.' };
+  if (!aiConfig.apiKey) return { draft: fallback, mode: 'guided-preview', message: outreachStyle() === 'ladder' ? `First email, opening: ${voice.OPENING_LABEL[input.opening] || 'rotated'}. The one-page + meeting ask follows at step 2.` : 'AI provider is not configured. This email uses a local guided template.' };
   const links = outreachLinks(lead, origin);
+  const brief = voice.aiBrief({ strategy: input.opening, step: 1, lead, fact: voice.angleFrom(approvedFactsFor(lead), input.opening), signOff: voice.signOffFor(lead, 1) });
   const learning = outreachLearningSignals();
   const context = {
     company: clampText(lead.company, 150), contactName: clampText(lead.contactName, 120),
@@ -842,13 +869,14 @@ async function generateOutreachEmail(lead, input, origin) {
     successDefinition: 'A preferred-time request submitted on Chelo’s form; it is not a confirmed appointment.',
     performanceSignals: learning,
     approvedFunderResearch: approvedResearchContext(lead),
+    writingBrief: brief,
     bookingUrl: links.booking, optOutUrl: links.optOut
   };
   const model = aiConfig.model;
   const response = await fetch(aiConfig.endpoint, {
     method: 'POST', headers: { 'Authorization': `Bearer ${aiConfig.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, temperature: 0.45, max_tokens: 650, messages: [
-      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl and optOutUrl exactly as supplied, with one primary CTA. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl. If approvedFunderResearch is present it contains staff-approved, publicly sourced organisational facts about the funder: use at most one or two of them to show genuine alignment between the funder's stated priorities and Chelo's verified-project model, paraphrased in a respectful, non-flattering tone; never quote figures that are not in citedFunderFacts and never imply inside knowledge. If it is absent, do not speculate about the funder's priorities.` },
+    body: JSON.stringify({ model, temperature: input.rewriteNotes ? 0.75 : 0.6, max_tokens: 650, messages: [
+      { role: 'system', content: `${CHELO_PROPOSAL_GUIDELINES} ${brief} Write a concise, formal, executive-friendly first-touch email for the audienceFrame supplied. Address both corporate CSI/ESG leaders and corporate foundations in neutral, accurate language. Lead with one relevant, supplied reason; make the mutual benefit clear without impact-washing. Target 110–150 words before URLs and signature. Prefer a specific, natural subject around 36–50 characters when it fits; this is a starting heuristic, not a universal rule, and do not pad or use clickbait. Ask exactly one question: use the supplied priorityQuestion verbatim. Invite a ${INTRO_MEETING_MINUTES}-minute no-preparation, no-commitment introductory video briefing. The link is only a request for a preferred time; Chelo must manually confirm it. Success is a submitted preferred-time request, not a CTA click, open or confirmed booking. Use performanceSignals only as weak, aggregate, observational guidance when the sample is sufficient; optimize for preferred-time requests, never estimated opens, and do not imply causality. When the sample is small or has no clear pattern, use the stable concise default. Project and proposedContributionZar are fixed staff-selected inputs: do not select, change, infer, omit or recommend another project or amount. Treat the ask as exploratory and subject to validation. Use only supplied facts; invent no outcomes, metrics, eligibility, deadlines or relationships. Return only valid JSON with subject and body. Follow rewriteRequest only where consistent with the facts and fixed context. Include bookingUrl and optOutUrl exactly as supplied, with one primary CTA. This is a text-only first-touch email: do not mention a proposal, PDF or attachment and do not include a proposal URL. Use the exact CTA “Yes — choose a time” before bookingUrl. If approvedFunderResearch is present it contains staff-approved, publicly sourced organisational facts about the funder: use at most one or two of them to show genuine alignment between the funder's stated priorities and Chelo's verified-project model, paraphrased in a respectful, non-flattering tone; never quote figures that are not in citedFunderFacts and never imply inside knowledge. If it is absent, do not speculate about the funder's priorities.` },
       { role: 'user', content: JSON.stringify(context) }
     ] }), signal: AbortSignal.timeout(30000)
   });
@@ -900,7 +928,15 @@ function localProposalDraft(lead, input) {
   const notes = clampText(input.userNotes, 1800);
   const rewriteNotes = clampText(input.rewriteNotes, 800);
   const contribution = amount ? ` with a proposed contribution of R ${amount.toLocaleString('en-ZA')}` : '';
-  const opening = `We invite ${company} to explore a partnership with Chelo${contribution}, focused on ${project}.`;
+  const strategy = lead?.voice?.last || lead?.voice?.pending || voice.pickOpening(lead, 1);
+  const fact = voice.angleFrom(approvedFactsFor(lead), strategy);
+  const opening = {
+    figure: `${fact && /\d/.test(fact) ? `${fact.replace(/[.\s]+$/, '')}. ` : ''}${project}${contribution} is a traceable way for ${company} to act on that.`,
+    question: `What would it take for ${company}'s next impact report to show every rand landing at a named school? ${project}${contribution} is one answer.`,
+    priority: `${fact ? `${fact.replace(/[.\s]+$/, '')} — ` : ''}${project}${contribution} sits inside ${company}'s stated priorities.`,
+    story: `Behind ${project} is a verified school with a concrete need. Chelo invites ${company} to meet it${contribution}.`,
+    ask: `Chelo invites ${company} to back ${project}${contribution}, with every rand traceable.`
+  }[strategy] || `We invite ${company} to explore a partnership with Chelo${contribution}, focused on ${project}.`;
   const impact = notes
     ? `This draft reflects the project context provided by Chelo: ${notes} The final scope, beneficiaries, milestones and delivery plan should be confirmed with the verified recipient before approval.`
     : `A potential partnership could support ${project}. The project scope, intended beneficiaries, milestones and delivery plan should be confirmed with the verified recipient before approval.`;
@@ -1131,7 +1167,7 @@ async function runLeadFlow(lead, { actor = 'system', origin = '', force = false,
       // 4 · Draft
       const canDraft = contact.status === 'ready' && lead.projectId;
       if (canDraft && (redraft || !lead.emailDraft || force) && lead.emailStatus !== 'Sent' && lead.emailStatus !== 'Approved') {
-        const emailResult = await generateOutreachEmail(lead, { userNotes: '', rewriteNotes: '' }, origin);
+        const emailResult = await generateOutreachEmail(lead, { userNotes: '', rewriteNotes: '', differently: redraft }, origin);
         lead.proposalData = { ...(lead.proposalData || {}), company: lead.company, contactName: lead.contactName, project: lead.project, amount: Number(lead.amount || 0) };
         lead.emailDraft = { ...emailResult.draft, generationMode: emailResult.mode, updatedAt: now() };
         lead.emailStatus = 'Draft'; delete lead.approvedAt;
@@ -1196,7 +1232,7 @@ function approvedFactsFor(lead) {
 function buildLeadSequence(lead, origin) {
   const project = db.projects.find(p => p.id === lead.projectId) || null;
   const links = outreachLinks(lead, origin);
-  const ladder = outreachStyle() === 'ladder' ? step => conversion.ladderStep({ step, lead, project, links, slots: conversion.proposedSlots(new Date()), staff: staffSignature(lead) }) : null;
+  const ladder = outreachStyle() === 'ladder' ? step => conversion.ladderStep({ step, lead, project, links, slots: conversion.proposedSlots(new Date()), staff: staffSignature(lead), facts: approvedFactsFor(lead) }) : null;
   return sequences.buildPlan({ lead, links, project, facts: approvedFactsFor(lead), ladder });
 }
 function stopLeadSequence(lead, reason, actor = 'system') {

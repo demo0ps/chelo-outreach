@@ -38,7 +38,18 @@ test('conversion: 4-step ladder — no link + one question at step 1, page link 
   assert.ok(!/https?:\/\//.test(s1.body.replace(links.optOut, '')), 'step 1 carries no link beyond opt-out');
   assert.equal((s1.body.match(/\?/g) || []).length, 1);
   assert.ok(conversion.words(s1.body) <= 125, `step 1 is ${conversion.words(s1.body)} words`);
-  assert.match(s1.body, /Worth a one-page look\?/);
+  assert.match(s1.body, /one page/i);
+  // v57: five openings, each still one question, ≤125 words, no link beyond opt-out, different first sentences.
+  const firsts = new Set();
+  for (const opening of ['figure', 'question', 'priority', 'story', 'ask']) {
+    const e = conversion.ladderStep({ step: 1, lead, project, links, slots, now: NOW, opening, facts: ['Invests 1% of NPAT in education across Gauteng'] });
+    assert.equal(e.opening, opening);
+    assert.equal((e.body.match(/\?/g) || []).length, 1, `${opening} keeps one question`);
+    assert.ok(conversion.words(e.body) <= 125, `${opening} is ${conversion.words(e.body)} words`);
+    assert.ok(!/https?:\/\//.test(e.body.replace(links.optOut, '')));
+    firsts.add(e.body.split('\n\n')[1]);
+  }
+  assert.equal(firsts.size, 5, 'five distinct openings');
   const s2 = conversion.ladderStep({ step: 2, lead, project, links, slots, now: NOW });
   assert.ok(s2.body.includes(links.page)); assert.match(s2.body, /15-minute/);
   const s3 = conversion.ladderStep({ step: 3, lead, project, links, slots, now: NOW });
@@ -120,7 +131,7 @@ test('conversion API: ladder draft, guardrail blocks approval (422) and admin ov
   const flow = await api('POST', `/api/leads/${l.id}/flow`, {});
   assert.equal(flow.status, 200, JSON.stringify(flow.payload));
   const draft = flow.payload.lead.emailDraft;
-  assert.match(draft.body, /Worth a one-page look\?/, 'fallback first touch uses the ladder');
+  assert.match(draft.body, /one page/i, 'fallback first touch uses the ladder');
   assert.ok(!/\/book\//.test(draft.body), 'no booking link in step 1');
 
   // Guardrail: an edited draft with false urgency + an invented number is blocked, reason surfaced
