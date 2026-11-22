@@ -1549,6 +1549,7 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .notice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid var(--z-200); background: var(--z-50); font-size: 13px; color: var(--z-700); margin-bottom: 16px; }
 .notice .icon-svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
 .notice-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.notice-ok { background: #ecfdf3; border-color: #a7f3d0; color: #065f46; }
 .notice code { font-size: 12px; background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 4px; }
 .dlv-tiles { margin-bottom: 16px; }
 .dlv-mailboxes { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; margin-bottom: 16px; }

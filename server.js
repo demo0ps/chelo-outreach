@@ -2882,7 +2882,7 @@ async function handleApi(req, res, url) {
     if (pathname.startsWith('/api/deliverability') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !roleAllows(req.authSession, ['admin']) && !/\/jobs\//.test(pathname)) return sendJson(res, 403, { error: 'Administrator role required to change sending infrastructure.' });
     if (method === 'GET' && pathname === '/api/deliverability') {
       const metrics = sendEngine.metrics({ days: 14 });
-      return sendJson(res, 200, { ...metrics, jobs: sendEngine.recentJobs(150), serverless: SERVERLESS, workerIntervalSeconds: SERVERLESS ? null : SEND_TICK_SECONDS, openTrackingEnabled: configStore.publicSettings().openTrackingEnabled });
+      return sendJson(res, 200, { ...metrics, jobs: sendEngine.recentJobs(150), serverless: SERVERLESS, cronLastRun: lastCronRuns()['send-tick']?.at || '', cronSecretSet: Boolean(process.env.CRON_SECRET), workerIntervalSeconds: SERVERLESS ? null : SEND_TICK_SECONDS, openTrackingEnabled: configStore.publicSettings().openTrackingEnabled });
     }
     // Email + password → find SMTP and IMAP servers and prove the login. Saves nothing.
     if (method === 'POST' && pathname === '/api/deliverability/mailboxes/autodiscover') {
