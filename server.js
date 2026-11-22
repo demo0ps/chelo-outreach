@@ -27,6 +27,13 @@ const desks = require('./lib/desks');
 const media = require('./lib/media');
 const schools = require('./lib/schools');
 const suppliers = require('./lib/suppliers');
+const security = require('./lib/security');
+// R5: API-wide rate limiting (G3). Per IP for anonymous traffic (public forms, auth), per session once signed in.
+// Limits are per minute; RATE_LIMIT_SCALE lets a load test raise them without code changes.
+const RATE_SCALE = Math.max(0.1, Number(process.env.RATE_LIMIT_SCALE || 1));
+const RATE_LIMITS = { public: Math.round(90 * RATE_SCALE), auth: Math.round(30 * RATE_SCALE), anon: Math.round(120 * RATE_SCALE), session: Math.round(900 * RATE_SCALE) };
+const apiLimiter = security.rateLimiter({ windowMs: 60_000, max: RATE_LIMITS.anon });
+const mfaChallenges = security.mfaChallenges();
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -58,7 +65,7 @@ function mailboxTransport(mailbox) {
     connectionTimeout: 12000, greetingTimeout: 12000, socketTimeout: 25000, tls: { minVersion: 'TLSv1.2' }
   });
 }
-const sendEngine = createSendEngine({ conn: store.conn, encryptSecret: configStore.encryptSecret, decryptSecret: configStore.decryptSecret, transportFactory: mailboxTransport, isSuppressed: value => isSuppressedEmail(value), log: message => console.log(`[send-engine] ${message}`) });
+const sendEngine = createSendEngine({ conn: store.conn, encryptSecret: configStore.encryptSecret, decryptSecret: configStore.decryptSecret, transportFactory: mailboxTransport, isSuppressed: value => isSuppressedEmail(value), log: message => console.log(`[send-engine] ${message}`), onFallback: ({ desk, mailbox, leadId }) => configStore.recordAudit({ actor: 'send-engine', action: 'mailbox.fallback', entityType: 'mailbox', entityId: mailbox.id, summary: `No mailbox tagged for the ${desk} desk; ${mailbox.fromEmail} (${mailbox.desk} desk) used${leadId ? ` for lead ${leadId}` : ''}` }) });
 sendEngine.setPolicy(configStore.getSendPolicy());
 const emailDomainCheckCache = new Map();
 const PORT = Number(process.env.PORT || 3000);
@@ -2053,6 +2060,7 @@ function sendPdf(res, file, downloadName, disposition = 'attachment') {
 }
 function serveStatic(req, res, pathname) {
   let requested = pathname === '/' || pathname.startsWith('/book/') || pathname.startsWith('/p/') || pathname.startsWith('/opt-out/') ? '/index.html' : pathname;
+  if (pathname === '/privacy') requested = '/privacy.html'; // R5 G4
   if (pathname === '/suppliers/join' || pathname.startsWith('/quote/')) requested = '/suppliers.html'; // R4: public supplier pages (static, CSP-safe)
   if (pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   requested = decodeURIComponent(requested.split('?')[0]);
@@ -2156,6 +2164,18 @@ async function handleApi(req, res, url) {
   const pathname = url.pathname;
   try {
     if (method === 'GET' && pathname === '/api/health') return sendJson(res, 200, { ok: true, app: 'Chelo Communication Center', version: '0.2.0', build: BUILD_TAG, googleReady: configStore.getGoogleConfig().configured, storage: 'sqlite-wal', approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, sendWorker: SERVERLESS ? 'on-demand' : `every ${SEND_TICK_SECONDS}s`, queue: sendEngine.metrics({ days: 1 }).queue });
+    {
+      // R5 G3: one bucket per IP (anonymous, public, auth) or per session (signed-in). 429 + Retry-After; nothing else changes.
+      const cookieToken = parseCookies(req.headers.cookie)[SESSION_COOKIE] || '';
+      const cls = pathname.startsWith('/api/public/') ? 'public' : pathname.startsWith('/api/auth/') && !cookieToken ? 'auth' : cookieToken ? 'session' : 'anon';
+      const key = cls === 'session' ? `s:${cookieToken.slice(0, 16)}` : `${cls}:${clientIp(req)}`;
+      const verdict = apiLimiter.hit(key, RATE_LIMITS[cls]);
+      if (!verdict.ok) {
+        if (verdict.retryAfterSeconds > 0 && verdict.remaining === 0) configStore.recordAudit({ actor: cls === 'session' ? 'session' : clientIp(req), action: 'security.rate_limited', entityType: 'security', summary: `Rate limit hit (${cls}) on ${method} ${pathname}` });
+        res.setHeader('Retry-After', String(verdict.retryAfterSeconds));
+        return sendJson(res, 429, { error: `Too many requests. Try again in ${verdict.retryAfterSeconds} second${verdict.retryAfterSeconds === 1 ? '' : 's'}.`, retryAfter: verdict.retryAfterSeconds });
+      }
+    }
     if ((method === 'GET' || method === 'POST') && pathname === '/api/cron/send-tick') {
       const secret = process.env.CRON_SECRET || '';
       const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -2214,8 +2234,35 @@ async function handleApi(req, res, url) {
         return sendJson(res, 401, { error: 'Email or password is incorrect.' });
       }
       store.clearLoginFailure(limitKey);
+      if (configStore.mfaStatus(user.id).enabled) {
+        // R5 G2: password is right, but no session yet — the code comes next, against a short-lived challenge token.
+        const mfaToken = mfaChallenges.issue({ userId: user.id, ip: clientIp(req) });
+        configStore.recordAudit({ actor: user.username, action: 'auth.login.mfa_pending', entityType: 'security', summary: `${user.displayName} passed the password step; two-step code pending` });
+        return sendJson(res, 200, { authenticated: false, mfaRequired: true, mfaToken, username: user.username });
+      }
       configStore.recordAudit({ actor: user.username, action: 'auth.login', entityType: 'security', summary: `${user.displayName} signed in (${user.role})` });
       return sendJson(res, 200, createSession(req, user, res));
+    }
+    if (method === 'POST' && pathname === '/api/auth/mfa/verify') {
+      if (!safeOriginRequest(req)) return sendJson(res, 403, { error: 'Sign-in must be completed from this workspace origin.' });
+      const body = await readBody(req);
+      const limitKey = `mfa@@${clientIp(req)}`;
+      const failure = store.getLoginFailure(limitKey);
+      if (failure && failure.resetAt > Date.now() && failure.count >= 8) return sendJson(res, 429, { error: 'Too many code attempts. Wait 15 minutes and try again.' });
+      const challenge = mfaChallenges.peek(body.mfaToken);
+      if (!challenge) return sendJson(res, 401, { error: 'The sign-in step expired. Enter your email and password again.', restart: true });
+      const user = configStore.findUserById(challenge.userId);
+      const check = user ? configStore.verifyMfa(user.id, body.code) : { ok: false };
+      if (!check.ok) {
+        store.recordLoginFailure(limitKey);
+        const attempts = mfaChallenges.fail(body.mfaToken);
+        configStore.recordAudit({ actor: user?.username || 'unknown', action: 'auth.login.failed', entityType: 'security', summary: 'Two-step code did not match' });
+        return sendJson(res, 401, { error: attempts >= 6 ? 'Too many wrong codes. Sign in again from the start.' : 'That code did not match. Try the next one from your app, or a recovery code.', restart: attempts >= 6 });
+      }
+      mfaChallenges.take(body.mfaToken); store.clearLoginFailure(limitKey);
+      const pub = configStore.listUsers().find(u => u.id === user.id);
+      configStore.recordAudit({ actor: user.username, action: 'auth.login', entityType: 'security', summary: `${user.displayName} signed in (${user.role}) with two-step${check.method === 'recovery' ? ` — recovery code used, ${check.recoveryLeft} left` : ''}` });
+      return sendJson(res, 200, { ...createSession(req, pub, res), recoveryUsed: check.method === 'recovery', recoveryLeft: check.recoveryLeft });
     }
     // ---- Sign in with Google (company Workspace accounts). Password sign-in stays as the fallback. ----
     if (method === 'GET' && pathname === '/api/auth/google/start') {
@@ -2279,7 +2326,8 @@ async function handleApi(req, res, url) {
     }
 
     const publicApi = pathname.startsWith('/api/public/');
-    if (!publicApi && !(method === 'GET' && pathname === '/api/health') && !pathname.startsWith('/api/auth/')) {
+    const authBypass = pathname.startsWith('/api/auth/') && !(pathname.startsWith('/api/auth/mfa') && pathname !== '/api/auth/mfa/verify') && !pathname.startsWith('/api/auth/sessions');
+    if (!publicApi && !(method === 'GET' && pathname === '/api/health') && !authBypass) {
       if (DEMO_OPEN_ACCESS) {
         req.authSession = { username: 'demo@cheloapp.com', displayName: 'Demo Admin', role: 'admin', userId: 'demo', csrfToken: DEMO_OPEN_CSRF_TOKEN, demoAccess: true, openAccessDemo: true };
       } else {
@@ -2385,6 +2433,33 @@ async function handleApi(req, res, url) {
     }
 
     // ---- Staff accounts & governance ----
+    // ---- R5 G2: two-step sign-in for the signed-in account; sign out everywhere. Any role; never for demo sessions. ----
+    if (pathname.startsWith('/api/auth/mfa') || pathname === '/api/auth/sessions/revoke-all') {
+      if (req.authSession.demoAccess || !req.authSession.userId) return sendJson(res, 403, { error: 'Not available in a demo session.' });
+      const me = req.authSession.userId;
+      if (method === 'GET' && pathname === '/api/auth/mfa') return sendJson(res, 200, configStore.mfaStatus(me));
+      if (method === 'POST' && pathname === '/api/auth/mfa/setup') { const r = configStore.beginMfa(me); return sendJson(res, 200, r); }
+      if (method === 'POST' && pathname === '/api/auth/mfa/enable') {
+        const body = await readBody(req);
+        const r = configStore.enableMfa(me, body.code);
+        store.deleteSessionsForUser(req.authSession.username, { except: req.authSession.token });
+        configStore.recordAudit({ actor: actorName(), action: 'auth.mfa_enabled', entityType: 'security', summary: `${req.authSession.displayName} switched on two-step sign-in; other sessions signed out` });
+        return sendJson(res, 200, { ...r, status: configStore.mfaStatus(me) });
+      }
+      if (method === 'POST' && pathname === '/api/auth/mfa/disable') {
+        const body = await readBody(req);
+        if (!configStore.authenticateUser(req.authSession.username, body.password)) return sendJson(res, 401, { error: 'Enter your current password to switch two-step off.' });
+        configStore.disableMfa(me);
+        configStore.recordAudit({ actor: actorName(), action: 'auth.mfa_disabled', entityType: 'security', summary: `${req.authSession.displayName} switched two-step sign-in off` });
+        return sendJson(res, 200, { status: configStore.mfaStatus(me) });
+      }
+      if (method === 'POST' && pathname === '/api/auth/sessions/revoke-all') {
+        const n = store.deleteSessionsForUser(req.authSession.username, { except: req.authSession.token });
+        configStore.recordAudit({ actor: actorName(), action: 'auth.sessions_revoked', entityType: 'security', summary: `${req.authSession.displayName} signed out everywhere else (${n} session${n === 1 ? '' : 's'})` });
+        return sendJson(res, 200, { ok: true, revoked: n });
+      }
+      return sendJson(res, 404, { error: 'Not found.' });
+    }
     if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: visibleUsers(req.authSession), rootUserId: req.authSession.isRoot ? (configStore.getRootUser()?.id || null) : null, isPrimaryRoot: configStore.isPrimaryRoot(req.authSession.userId) || Boolean(req.authSession.demoAccess), approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
     if (method === 'POST' && pathname === '/api/staff') {
       const body = await readBody(req);
@@ -2400,6 +2475,14 @@ async function handleApi(req, res, url) {
         const user = configStore.setCoRoot(staffRoute[1], Boolean(body.coRoot), { actorId: req.authSession.userId });
         configStore.recordAudit({ actor: actorName(), action: body.coRoot ? 'staff.full_access_granted' : 'staff.full_access_revoked', entityType: 'user', entityId: user.id, summary: `${body.coRoot ? 'Full access granted to' : 'Full access revoked from'} ${user.displayName}` });
         return sendJson(res, 200, user);
+      }
+      if (body.mfaReset || body.signOutEverywhere) {
+        const target = configStore.findUserById(staffRoute[1]); if (!target) return sendJson(res, 404, { error: 'Staff account not found.' });
+        if ((target.isRoot || target.coRoot) && target.id !== req.authSession.userId) return sendJson(res, 403, { error: `${target.isRoot ? 'The root account' : 'A full-access account'} manages its own sign-in security.` });
+        if (body.mfaReset) { configStore.disableMfa(target.id); configStore.recordAudit({ actor: actorName(), action: 'staff.mfa_reset', entityType: 'user', entityId: target.id, summary: `Two-step sign-in reset for ${target.displayName} (lost phone / new device)` }); }
+        const n = store.deleteSessionsForUser(target.username, { except: target.id === req.authSession.userId ? req.authSession.token : '' });
+        configStore.recordAudit({ actor: actorName(), action: 'staff.sessions_revoked', entityType: 'user', entityId: target.id, summary: `${target.displayName} signed out everywhere (${n} session${n === 1 ? '' : 's'})` });
+        return sendJson(res, 200, { ...configStore.listUsers().find(u => u.id === target.id), revoked: n });
       }
       const user = configStore.updateUser(staffRoute[1], body, { actorId: req.authSession.userId });
       if (body.active === false || body.password) store.deleteSessionsForUser(user.username);

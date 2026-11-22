@@ -274,3 +274,12 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Public pages `public/suppliers.html` + `suppliers.js` (CSP-safe, no inline script): sign-up form and hosted quote form.
 - Staff UI: Suppliers intake bar (sign-up link + vetting count), supplier card (facts, references, approve/reject with notes, quote history), project modal "Suppliers & quotes" section (who would get it → ask to quote → quotes table → shortlist/sign/decline → school confirmed done → ask again).
 - Tests: `tests/suppliers.test.js` (module + end-to-end). 111/0.
+
+## v64 — Four Desks, Release 5: security backlog & clean-up
+- `lib/security.js` (pure): fixed-window `rateLimiter`, RFC 6238 TOTP (`generateSecret`, `totp`, `verifyTotp` with ±1 step drift and replay guard, `otpauthUrl`), recovery codes (hashed, single use), `mfaChallenges` (5-min single-use token between password and code).
+- `config-store`: `mfaStatus/beginMfa/enableMfa/disableMfa/verifyMfa`; secret encrypted at rest, `mfaEnabled` on public user.
+- Server: rate limit on every `/api/*` request (per IP: auth 30/min, public 90/min, anon 120/min; per session 900/min; `RATE_LIMIT_SCALE` env) with 429 + Retry-After + audit; login returns `{mfaRequired, mfaToken}` when two-step is on, `POST /api/auth/mfa/verify` finishes it (8 attempts/15 min per IP, 6 per challenge); `GET /api/auth/mfa`, `POST /api/auth/mfa/setup|enable|disable`, `POST /api/auth/sessions/revoke-all`; `PUT /api/staff/:id {mfaReset|signOutEverywhere}` (root/co-root protected). `/api/auth/mfa*` and `/api/auth/sessions*` require a session despite the `/api/auth/` prefix. `deleteSessionsForUser(username,{except})` returns the count.
+- Send engine: desk mailbox fallback recorded (`meta.mailboxFallback`, `onFallback` hook → `mailbox.fallback` audit).
+- UI: two-step code screen at sign-in (with "start again"), "Your sign-in security" card under Team & governance (setup with key + otpauth link, recovery codes shown once, disable with password, sign out everywhere else), staff table 2-step pill + Sign out / Reset 2-step actions, tender earlier rounds list, privacy link on sign-in and supplier pages.
+- `docs/privacy-notice.md` + `public/privacy.html` served at `/privacy` (POPIA incl. s72 cross-border hosting).
+- Tests: `tests/security.test.js` (RFC vectors, limiter, challenges, e2e MFA, rate limit, fallback audit). 114/0.

@@ -68,9 +68,9 @@ update statuses every turn. I present candidates with scores; **you choose** wha
 | # | Idea | Source | Status | I / A / E / S | Notes |
 |---|------|--------|--------|---------------|-------|
 | G1 | Hardening batch: CSP/HSTS/frame-ancestors headers; SameSite=Lax on own domain; stop uploading `.settings-key` (env authoritative); bucket snapshot history (7 daily) | security review 2026-10-25 | shipped | 4/2/4/5 | docs/hardening.md |
-| G2 | TOTP MFA for admins + "sign out everywhere" | security review | seed | 3/2/3/5 | |
-| G3 | API-wide rate limiting (not only login) | security review | seed | 2/2/4/5 | |
-| G4 | Privacy notice text covering cross-border hosting (s72 POPIA) | security review | seed | 3/1/5/5 | Document, not code. |
+| G2 | TOTP MFA for admins + "sign out everywhere" | security review | done v64 | 3/2/3/5 | |
+| G3 | API-wide rate limiting (not only login) | security review | done v64 | 2/2/4/5 | |
+| G4 | Privacy notice text covering cross-border hosting (s72 POPIA) | security review | done v64 | 3/1/5/5 | Document, not code. |
 | G5 | Ops dashboard (shipped Batch 6) | | shipped | | |
 | G8 | **Mobile companion mode** (phone ≤ 720px): bottom tab bar **Inbox · Approvals · Leads · More** (More = Relationships, notifications, sign out). Essentials only: triage replies, approve/reject drafts & sequence plans (4-eyes signature), look up lead/relationship, notifications. **No Ops** on phone. Desktop-only views (Workbench flow, Discover, Data, Deliverability, Signals, Ops, Settings) **hidden entirely** from phone nav. Plain responsive web (no PWA). Test device: **Android** (user screenshots). Desktop unchanged. | user 2026-10-25 | shipped | 4/3/2/5 | Spec complete; awaiting go. Shipped 2026-10-26 (Batch 8): `public/mobile.js`, tests/mobile.test.js, docs/mobile.md. |
 | G7 | Chelo logo as platform favicon / brand assets (`public/brand/chelo-mark.svg`, lockup PNG) | user 2026-10-25 | shipped | | Logo file supplied by user; mark rebuilt as crisp SVG. |

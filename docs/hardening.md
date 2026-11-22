@@ -14,7 +14,7 @@
 
 Tests: `tests/remote-sync.test.js` (history + key exclusion; security headers + cookie).
 
-Still open (G2–G4 in the idea bank): TOTP MFA, API-wide rate limiting, privacy-notice text for cross-border hosting.
+G2–G4 closed in v64: TOTP two-step sign-in with recovery codes and sign-out-everywhere, API-wide rate limiting, privacy notice at `/privacy` (docs/privacy-notice.md).
 
 ## Root account (2026-10-26)
 

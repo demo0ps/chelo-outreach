@@ -6,9 +6,9 @@ with its status. Release 5 (final clean-up) closes or consciously parks every op
 | # | Found in | Area | Issue | Status |
 |---|----------|------|-------|--------|
 | 1 | v60 | Desks | Candidates, Sent and Briefings lists are not yet desk-filtered. **v61:** candidates (local pool) now desk-scoped. Sent/Briefings still shared — they are per-lead and leads are already scoped, so only the list labels are off. | partly fixed |
-| 2 | v60 | Desks | `/api/partners` and `/api/projects` are shared across desks by design (Verified Projects are the common ground). Re-check in R5 that nothing desk-private leaks via these. | watch |
-| 3 | v60 | Mailboxes | If every mailbox is tagged to other desks, a send on a desk with no box of its own falls back to *any* active box (so nothing silently blocks). Log a warning in the send audit — not done yet. | open |
-| 4 | pre-v60 | Security | MFA, login rate limiting and POPIA notice still outstanding (G2/G3/G4). | planned R5 |
+| 2 | v60 | Desks | `/api/partners` and `/api/projects` are shared across desks by design (Verified Projects are the common ground). Re-check in R5 that nothing desk-private leaks via these. **v64:** re-checked — projects (incl. tender quotes) and partners are shared by design; suppliers' own records stay on the Suppliers desk. No desk-private field leaks. | checked v64 |
+| 3 | v60 | Mailboxes | If every mailbox is tagged to other desks, a send on a desk with no box of its own falls back to *any* active box (so nothing silently blocks). Log a warning in the send audit — not done yet. **v64:** done — fallback is written on the job meta and as a `mailbox.fallback` audit entry. | fixed v64 |
+| 4 | pre-v60 | Security | MFA, login rate limiting and POPIA notice still outstanding (G2/G3/G4). **v64:** done — TOTP two-step with 8 one-time recovery codes, sign-out-everywhere, admin reset; API-wide rate limiting (sign-in 30/min, public 90/min per IP, 900/min per session); privacy notice at `/privacy` (docs/privacy-notice.md) covering s72 transfers. Google sign-in relies on Google's own two-step. | fixed v64 |
 | 5 | pre-v60 | Settings | Google settings persistence via Supabase never root-caused; env-var workaround in use. | parked |
 | 6 | pre-v60 | DNS | cheloapp.com SPF record missing; CNAME for tracking domain pending (user side). | user |
 | 7 | pre-v60 | Data | Transnet lead failing discovery/research; stale leads to review (user side). | user |
@@ -23,6 +23,10 @@ with its status. Release 5 (final clean-up) closes or consciously parks every op
 | 16 | v62 | Schools | The need → Verified Project step creates the project with the estimate as target and no picture; finish it under Projects. | by design |
 | 17 | v63 | Suppliers | Supplier sign-up is public (`/suppliers/join`) and rate-limited to 40/hour per IP, with no captcha. Junk sign-ups land in the vetting queue and are rejected by hand. | Open |
 | 18 | v63 | Suppliers | Vetting is a human judgement with notes; there is no CSD/CIPC lookup. The card shows the numbers the supplier typed, nothing more. | Open |
-| 19 | v63 | Suppliers | One live quote request per project at a time; opening a new one moves the old round to `tenderHistory` (last 10), which the UI does not yet display. | Open |
+| 19 | v63 | Suppliers | One live quote request per project at a time; opening a new one moves the old round to `tenderHistory` (last 10), which the UI does not yet display. **v64:** earlier rounds now listed under the quotes section. | fixed v64 |
 | 20 | v63 | Suppliers | Quote broadcast emails use the Suppliers desk mailbox (falls back to any active mailbox). Without a configured mailbox the request still opens and the quote link can be copied by hand; the response lists suppliers that could not be queued. | By design |
 | 21 | v63 | Suppliers | The Chelo fee is a single percentage recorded on the signed quote, for the record only. No invoices, ledger or payment status — money stays on the other platform. | By design |
+| 22 | v64 | Security | Two-step setup shows the key and an otpauth link (no QR image, to avoid a QR library). Most apps accept "enter key manually"; the link opens the app directly on a phone. | by design |
+| 23 | v64 | Security | Rate limits are per server instance (memory). On Vercel each warm instance counts separately, so the effective limit is a small multiple of the stated one. Login lockout (5/15 min) is in the database and shared. | by design |
+| 24 | v64 | Security | Google sign-in is not challenged for a Chelo two-step code; Google's own 2SV applies. If the Workspace does not enforce 2SV, switch it on there. | user |
+| 25 | v64 | Desks | Sent and Briefings lists remain shared across desks (#1): leads are already scoped so content is right; only labels are off. Parked. | parked |

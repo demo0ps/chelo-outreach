@@ -2280,3 +2280,6 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .tender-form { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 6px; margin: 8px 0; }
 @media (max-width: 640px) { .tender-form { grid-template-columns: 1fr; } }
 .link-button { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+/* R5 sign-in security */
+.mfa-codes { background: #f6f8fb; border: 1px solid var(--line, #d9dee7); border-radius: 10px; padding: 12px 14px; font-size: 15px; letter-spacing: .04em; line-height: 1.7; }
+.mfa-secret code { font-size: 15px; letter-spacing: .08em; background: #f6f8fb; padding: 4px 8px; border-radius: 6px; }
