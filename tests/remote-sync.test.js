@@ -80,6 +80,7 @@ test('remote-sync: end-to-end with the real server — mutations persist across 
   const s1 = await boot(dir1, port1); const base1 = `http://127.0.0.1:${port1}`; const jar1 = {}; const a1 = api(base1, jar1);
   assert.equal((await a1('POST', '/api/auth/setup', { username: 'admin@cheloapp.com', displayName: 'Nandi', password: 'correct-horse-battery' })).status, 201);
   assert.equal((await a1('POST', '/api/leads', { company: 'Durable Co', contactName: 'Keep Me', website: 'https://www.durable.co.za/', sourceName: 'Website' })).status, 201);
+  const gs = await a1('PUT', '/api/settings/google', { clientId: '1-a.apps.googleusercontent.com', clientSecret: 'GOCSPX-abcdefghijklmnopqrstu' }); assert.equal(gs.status, 200, JSON.stringify(gs.payload)); assert.equal(gs.payload.configured, true);
   const st = (await a1('GET', '/api/storage')).payload; assert.equal(st.durable, true);
   await new Promise(r => { s1.on('exit', r); s1.kill('SIGTERM'); }); // graceful stop pushes the final snapshot
   assert.ok(storage.objects.has('workspace/chelo.sqlite') && storage.objects.has('workspace/auth.json'), 'snapshot uploaded on shutdown');
@@ -88,6 +89,8 @@ test('remote-sync: end-to-end with the real server — mutations persist across 
   const s2 = await boot(dir2, port2); t.after(() => s2.kill('SIGTERM')); const base2 = `http://127.0.0.1:${port2}`; const jar2 = {}; const a2 = api(base2, jar2);
   const login = await a2('POST', '/api/auth/login', { username: 'admin@cheloapp.com', password: 'correct-horse-battery' }); assert.equal(login.status, 200, JSON.stringify(login.payload));
   const leads = (await a2('GET', '/api/leads')).payload; assert.ok(leads.some(l => l.company === 'Durable Co'), 'lead survived the cold start');
+  const g2 = (await a2('GET', '/api/settings/google')).payload; assert.equal(g2.configured, true, `google client survived the cold start: ${JSON.stringify(g2)}`);
+  const auth2 = (await fetch(`${base2}/api/auth/status`).then(r => r.json())); assert.equal(auth2.googleLogin, true, 'login page offers Sign in with Google after a cold start');
   const st2 = (await a2('GET', '/api/storage')).payload; assert.ok(st2.sync.lastPullAt);
 });
 
