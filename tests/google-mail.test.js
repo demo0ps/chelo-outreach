@@ -152,10 +152,11 @@ test('sign in with google: identity-only URL; verified company account accepted;
   const mk = (claims) => fakeFetch([[/oauth2\.googleapis\.com\/token/, { json: { access_token: 'at', id_token: idToken(claims), expires_in: 3600 } }]]);
   const url = new URL(createGoogleMail({ getConfig: () => cfg, signingKey: 'k', now: () => clock.t }).loginUrl({ baseUrl: 'https://communication.cheloapp.com' }));
   assert.equal(url.searchParams.get('redirect_uri'), 'https://communication.cheloapp.com/api/auth/google/callback');
-  assert.equal(url.searchParams.get('scope'), 'openid email profile'); assert.equal(url.searchParams.get('hd'), 'cheloapp.com'); assert.equal(url.searchParams.get('access_type'), null, 'no offline access for login');
+  assert.match(url.searchParams.get('scope'), /^openid email profile .*gmail\.send.*gmail\.readonly/); assert.equal(url.searchParams.get('hd'), 'cheloapp.com'); assert.equal(url.searchParams.get('access_type'), 'offline'); assert.equal(url.searchParams.get('prompt'), 'select_account');
+  assert.equal(new URL(createGoogleMail({ getConfig: () => cfg, signingKey: 'k', now: () => clock.t }).loginUrl({ baseUrl: 'https://x', consent: true })).searchParams.get('prompt'), 'consent');
   let f = mk({ aud: cfg.clientId, email: 'Thandi@cheloapp.com', email_verified: true, hd: 'cheloapp.com', name: 'Thandi M' });
   const who = await createGoogleMail({ getConfig: () => cfg, signingKey: 'k', now: () => clock.t, fetch: f.fetch }).exchangeLoginCode({ code: 'c', baseUrl: 'https://communication.cheloapp.com' });
-  assert.deepEqual([who.email, who.name], ['thandi@cheloapp.com', 'Thandi M']);
+  assert.deepEqual([who.email, who.name], ['thandi@cheloapp.com', 'Thandi M']); assert.equal(who.missing.length, 2, 'no gmail scopes in this fake → both reported missing');
   f = mk({ aud: cfg.clientId, email: 'someone@gmail.com', email_verified: true, name: 'X' });
   await assert.rejects(createGoogleMail({ getConfig: () => cfg, signingKey: 'k', now: () => clock.t, fetch: f.fetch }).exchangeLoginCode({ code: 'c', baseUrl: 'https://x' }), /not a cheloapp\.com account/);
   f = mk({ aud: cfg.clientId, email: 'thandi@cheloapp.com', email_verified: false, hd: 'cheloapp.com' });
@@ -167,7 +168,8 @@ test('sign in with google: identity-only URL; verified company account accepted;
 test('sign in with google end-to-end: first company user joins as staff, second visit reuses the account, password login still works, session is set', async () => {
   const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const http = require('node:http'); const { spawn } = require('node:child_process');
   const claims = { aud: '1-a.apps.googleusercontent.com', email: 'thandi@cheloapp.com', email_verified: true, hd: 'cheloapp.com', name: 'Thandi M' };
-  const fakeGoogle = http.createServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ access_token: 'at', id_token: idToken(claims), expires_in: 3600 })); });
+  const google = { scope: 'openid email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly', refresh: 'rt-1', calls: 0 };
+  const fakeGoogle = http.createServer((req, res) => { google.calls += 1; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ access_token: 'at', id_token: idToken(claims), expires_in: 3600, scope: google.scope, ...(google.refresh ? { refresh_token: google.refresh } : {}) })); });
   await new Promise(r => fakeGoogle.listen(0, '127.0.0.1', r)); const gport = fakeGoogle.address().port;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-gl-')); const port = 3700 + Math.floor(Math.random() * 500);
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir, NODE_ENV: 'development', SMTP_PROBE_DISABLED: 'true', HOST: '127.0.0.1', PORT: String(port), GOOGLE_TOKEN_URL_OVERRIDE: `http://127.0.0.1:${gport}/token`, GOOGLE_CLIENT_ID: '1-a.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'GOCSPX-test' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -181,11 +183,24 @@ test('sign in with google end-to-end: first company user joins as staff, second 
     s = await j('/api/auth/status'); assert.equal(s.body.googleLogin, true); assert.equal(s.body.googleDomain, 'cheloapp.com');
     st = await j('/api/auth/google/start'); assert.equal(st.r.status, 302); const loc = new URL(st.r.headers.get('location')); assert.equal(loc.searchParams.get('redirect_uri'), `${base}/api/auth/google/callback`);
     const state = loc.searchParams.get('state');
-    let cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`); assert.equal(cb.r.status, 302); assert.equal(cb.r.headers.get('location'), '/?login=welcome');
+    let cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`); assert.equal(cb.r.status, 302); assert.equal(cb.r.headers.get('location'), '/?login=welcome&mailbox=connected&email=thandi%40cheloapp.com');
     const cookie = (cb.r.headers.get('set-cookie') || '').split(';')[0]; assert.ok(cookie, 'session cookie set');
     s = await j('/api/auth/status', { headers: { cookie } }); assert.equal(s.body.authenticated, true); assert.equal(s.body.username, 'thandi@cheloapp.com'); assert.equal(s.body.displayName, 'Thandi M'); assert.equal(s.body.role, 'owner'); assert.equal(s.body.isRoot, false);
     const me = await j('/api/me/mailboxes', { headers: { cookie } }); assert.equal(me.r.status, 200); assert.equal(me.body.login, 'thandi@cheloapp.com');
-    cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(new URL((await j('/api/auth/google/start')).r.headers.get('location')).searchParams.get('state'))}`); assert.equal(cb.r.headers.get('location'), '/?', 'second visit: no welcome, same account');
+    assert.equal(me.body.mailboxes.length, 1, 'mailbox connected at sign-in'); assert.equal(me.body.mailboxes[0].fromEmail, 'thandi@cheloapp.com'); assert.equal(me.body.mailboxes[0].owner, 'thandi@cheloapp.com'); assert.equal(me.body.mailboxes[0].authType, 'google'); assert.equal(me.body.mailboxes[0].fromName, 'Thandi M');
+    // Returning visit: Google gives no refresh token on select_account; mailbox already usable → straight in, no consent round-trip
+    google.refresh = ''; const before = google.calls;
+    cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(new URL((await j('/api/auth/google/start')).r.headers.get('location')).searchParams.get('state'))}`); assert.equal(cb.r.headers.get('location'), '/?login=ok&mailbox=ready&email=thandi%40cheloapp.com', 'second visit: no welcome, same account'); assert.equal(google.calls, before + 1);
+    // Mailbox removed → next sign-in without a token bounces once to the consent screen, then connects
+    const del = await j(`/api/me/mailboxes/${encodeURIComponent(me.body.mailboxes[0].id)}`, { method: 'DELETE', headers: { cookie, 'x-csrf-token': s.body.csrfToken } }); assert.equal(del.r.status, 200);
+    cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(new URL((await j('/api/auth/google/start')).r.headers.get('location')).searchParams.get('state'))}`);
+    const again = new URL(cb.r.headers.get('location')); assert.equal(again.hostname, 'accounts.google.com'); assert.equal(again.searchParams.get('prompt'), 'consent'); assert.equal(again.searchParams.get('login_hint'), 'thandi@cheloapp.com');
+    google.refresh = 'rt-2';
+    cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(again.searchParams.get('state'))}`); assert.equal(cb.r.headers.get('location'), '/?login=ok&mailbox=connected&email=thandi%40cheloapp.com');
+    // Boxes unticked → sign-in refused with a plain message
+    google.scope = 'openid email profile';
+    cb = await j(`/api/auth/google/callback?code=abc&state=${encodeURIComponent(new URL((await j('/api/auth/google/start')).r.headers.get('location')).searchParams.get('state'))}`); assert.match(cb.r.headers.get('location'), /login=error.*both\+boxes\+ticked/); assert.equal(cb.r.headers.get('set-cookie'), null, 'no session when refused');
+    google.scope = 'openid email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly';
     const bad = await j('/api/auth/google/callback?code=abc&state=tampered'); assert.match(bad.r.headers.get('location'), /login=error/);
     const pw = await j('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'root@cheloapp.com', password: 'correct-horse-battery-staple' }) }); assert.equal(pw.r.status, 200, 'password login still works');
     const guess = await j('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'thandi@cheloapp.com', password: 'anything-at-all-12' }) }); assert.equal(guess.r.status, 401, 'google-created accounts have no guessable password');

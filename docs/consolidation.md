@@ -210,3 +210,9 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - `configStore.provisionGoogleUser`: existing staff account reused (deactivated refused); new @cheloapp.com account created as **owner** (staff) with a random unusable password, flagged `googleOnly`. Audit `auth.google.joined` / `auth.login`. Rate-limited per IP like password login. Password sign-in unchanged.
 - First visit lands on Settings → My mailbox with a welcome toast; `?login=error` shows on the login card.
 - Test-only `GOOGLE_TOKEN_URL_OVERRIDE` (ignored in production) lets the e2e test run a fake Google token endpoint.
+
+## v55 — One Google screen: sign in + mailbox (2026-11-21)
+- Login scopes = `openid email profile` + `gmail.send` + `gmail.readonly`, `access_type=offline`, `include_granted_scopes`. First visit `prompt=select_account`; if Google returns no refresh token and the person has no usable Google mailbox, one automatic bounce with `prompt=consent` (state `consent:true` prevents loops). Returning visits: single click.
+- Callback connects/refreshes the mailbox (`owner` = the signer, from-name = display name) and audits `mailbox.google_connected`. Unticked Gmail boxes → sign-in refused (no session) with a plain message, per user decision.
+- `api/index.js`: `/api/auth/google/callback` counted as mutating → session/account/mailbox pushed to the shared snapshot before the response (fixes "Sign in required" right after Google).
+- Return params: `login=welcome|ok`, `mailbox=connected|ready|missing`, `email`.

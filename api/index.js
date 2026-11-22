@@ -49,7 +49,7 @@ async function ensureFresh(req) {
   return booted;
 }
 
-function isMutating(req) { return !['GET', 'HEAD', 'OPTIONS'].includes(req.method) || /^\/api\/cron\//.test(req.url) || /^\/track\//.test(req.url) || /^\/api\/oauth\//.test(req.url); }
+function isMutating(req) { return !['GET', 'HEAD', 'OPTIONS'].includes(req.method) || /^\/api\/cron\//.test(req.url) || /^\/track\//.test(req.url) || /^\/api\/oauth\//.test(req.url) || /^\/api\/auth\/google\/callback/.test(req.url); } // Google returns with GET, but it creates sessions/accounts/mailboxes
 
 async function persist(app) {
   try { app.flushPendingWrites(); } catch (err) { console.error('Flush failed:', err.message); }

@@ -2112,12 +2112,27 @@ async function handleApi(req, res, url) {
       const failure = store.getLoginFailure(limitKey);
       if (failure && failure.resetAt > Date.now() && failure.count >= 10) return back({ login: 'error', message: 'Too many sign-in attempts. Wait 15 minutes and try again.' });
       try {
-        const who = await googleMail.exchangeLoginCode({ code: url.searchParams.get('code'), baseUrl: configStore.getPublicBaseUrl() || publicOrigin(req) });
+        const baseUrl = configStore.getPublicBaseUrl() || publicOrigin(req);
+        const who = await googleMail.exchangeLoginCode({ code: url.searchParams.get('code'), baseUrl });
+        if (who.missing.length) { configStore.recordAudit({ actor: who.email, action: 'auth.login.failed', entityType: 'security', summary: `Google sign-in without mailbox permission (${who.missing.join('; ')})` }); return back({ login: 'error', message: `Sign-in needs both boxes ticked on the Google screen (${who.missing.join(' and ')}). Press Sign in with Google again and tick everything.` }); }
         const { user, created } = configStore.provisionGoogleUser({ email: who.email, displayName: who.name });
         store.clearLoginFailure(limitKey);
         configStore.recordAudit({ actor: user.username, action: created ? 'auth.google.joined' : 'auth.login', entityType: 'security', summary: created ? `${user.displayName} joined with Google (${user.role})` : `${user.displayName} signed in with Google (${user.role})` });
         createSession(req, user, res);
-        return back(created ? { login: 'welcome' } : {});
+        // Mailbox: Google only hands out a long-lived token on the consent screen. First visit → connect it now; returning
+        // visit → the mailbox is already there. If neither (grant revoked/expired), go round once more with the consent screen.
+        const existing = sendEngine.listMailboxes().find(m => m.fromEmail === who.email);
+        const usable = existing && existing.authType === 'google' && existing.hasPassword;
+        if (who.refreshToken) {
+          const mailbox = sendEngine.connectGoogleMailbox({ email: who.email, refreshToken: who.refreshToken, actor: `${user.displayName} <${user.username}>`, owner: user.username, fromName: existing ? undefined : (user.displayName || undefined) });
+          googleMail.forget(mailbox.id);
+          configStore.recordAudit({ actor: user.username, action: 'mailbox.google_connected', entityType: 'mailbox', entityId: mailbox.id, summary: `${mailbox.fromEmail} connected with Google at sign-in (send + read-only)` });
+          domainHealth.check(mailbox.fromEmail, { selectors: ['google'], force: true }).then(h => h && sendEngine.setMailboxHealth(mailbox.id, h)).catch(() => {});
+          return back({ login: created ? 'welcome' : 'ok', mailbox: 'connected', email: mailbox.fromEmail });
+        }
+        if (usable) return back({ login: created ? 'welcome' : 'ok', mailbox: 'ready', email: existing.fromEmail });
+        if (!st.consent) { res.writeHead(302, { Location: googleMail.loginUrl({ baseUrl, loginHint: who.email, consent: true }), 'Cache-Control': 'no-store' }); return res.end(); }
+        return back({ login: created ? 'welcome' : 'ok', mailbox: 'missing' });
       } catch (err) {
         store.recordLoginFailure(limitKey);
         configStore.recordAudit({ actor: 'unknown', action: 'auth.login.failed', entityType: 'security', summary: `Google sign-in refused: ${String(err.message).slice(0, 120)}` });
