@@ -21,6 +21,7 @@ const conversion = require('./lib/conversion');
 const mailAutodiscover = require('./lib/mail-autodiscover');
 const createGoogleMail = require('./lib/google-mail');
 const relationships = require('./lib/relationships');
+const access = require('./lib/access');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -93,7 +94,7 @@ try {
     console.log('[send-engine] migrated legacy SMTP settings into the mailbox registry');
   }
 } catch (err) { console.warn(`[send-engine] legacy SMTP migration skipped: ${err.message}`); }
-const inboxCenter = inboxLib.createInbox({ db, saveDb, configStore, sendEngine, id, addActivity });
+const inboxCenter = inboxLib.createInbox({ db, saveDb, configStore, sendEngine, id, addActivity, leadGate: (session, conv) => { if (!conv.leadId || (conv.assigneeId && String(conv.assigneeId) === String(session.userId))) return true; const lead = db.leads.find(l => l.id === conv.leadId); return !lead || access.canSeeLead(session, lead, access.projectTeams(db.projects)); } });
 try { const backfilled = inboxCenter.backfill(); if (backfilled) console.log(`[inbox] opened ${backfilled} conversation(s) for existing replies`); } catch (err) { console.warn(`[inbox] backfill skipped: ${err.message}`); }
 sendEngine.hooks({
   onSent(job, { mailbox }) {
@@ -1308,12 +1309,19 @@ function applyTriageOutcome(lead, body, actor) {
   configStore.recordAudit({ actor, action: 'reply.triaged', entityType: 'lead', entityId: lead.id, summary: `Reply from ${lead.company} triaged as ${category}${outcome.redirect ? ` → ${outcome.redirect.name}` : ''}${outcome.resumeOn ? ` (resume ${outcome.resumeOn})` : ''}` });
   return t;
 }
-function triageQueue() {
+function triageQueue(session) {
   const now = Date.now();
-  return db.leads.filter(l => l.triage && !l.triage.handled).map(l => ({ leadId: l.id, company: l.company, contactName: l.contactName, category: l.triage.category, confidence: l.triage.confidence, receivedAt: l.triage.receivedAt, dueAt: l.triage.dueAt, overdue: Boolean(l.triage.dueAt && Date.parse(l.triage.dueAt) < now), excerpt: l.triage.excerpt, hints: l.triage.hints })).sort((a, b) => (b.overdue - a.overdue) || Date.parse(a.dueAt || a.receivedAt) - Date.parse(b.dueAt || b.receivedAt));
+  return visibleLeads(session).filter(l => l.triage && !l.triage.handled).map(l => ({ leadId: l.id, company: l.company, contactName: l.contactName, category: l.triage.category, confidence: l.triage.confidence, receivedAt: l.triage.receivedAt, dueAt: l.triage.dueAt, overdue: Boolean(l.triage.dueAt && Date.parse(l.triage.dueAt) < now), excerpt: l.triage.excerpt, hints: l.triage.hints })).sort((a, b) => (b.overdue - a.overdue) || Date.parse(a.dueAt || a.receivedAt) - Date.parse(b.dueAt || b.receivedAt));
 }
 // ---------------- Data engine (Batch 3): identity resolution, freshness, contact waterfall ----------------
 function dedupPools(excludeId = null) { return { leads: db.leads.filter(l => l.id !== excludeId), candidates: db.candidates.filter(c => c.id !== excludeId && !c.promotedLeadId), partners: db.partners.filter(p => p.id !== excludeId) }; }
+/** Duplicate refusal that never leaks another person's funder: if you cannot see the match you only learn that it exists. */
+function duplicateRefusal(dup, session) {
+  const teams = access.projectTeams(db.projects);
+  const visible = dup.exact.filter(m => { const lead = m.type === 'leads' || !m.type ? db.leads.find(l => l.id === m.id) : null; return !lead || access.canSeeLead(session, lead, teams); });
+  if (visible.length) return { error: `${visible[0].company} is already in your workspace (${visible[0].reasons[0]}).`, duplicates: visible, code: 'duplicate' };
+  return { error: 'Already in Chelo — ask an admin to share it with you.', code: 'duplicate-private' };
+}
 function checkDuplicates(record, { excludeId = null } = {}) {
   const matches = dataEngine.findDuplicates(record, dedupPools(excludeId));
   return { matches, exact: matches.filter(m => m.level === 'exact'), likely: matches.filter(m => m.level === 'likely') };
@@ -1431,9 +1439,9 @@ function leadFit(lead, now = new Date()) {
   const project = lead.projectId ? db.projects.find(p => p.id === lead.projectId) || null : null;
   return signals.fitScore(lead, { project, events: db.emailEvents, bookings: db.bookings, now });
 }
-function signalsSummary() {
+function signalsSummary(session) {
   const now = new Date();
-  const rows = visibleLeads().filter(l => !l.doNotContact && l.stage !== 'Won').map(l => { const fit = leadFit(l, now); return { id: l.id, company: l.company, contactName: l.contactName, project: l.project || '', stage: l.stage, financialYearEnd: l.financialYearEnd || null, fyeSource: l.fyeSource || '', fit: fit.score, band: fit.band, window: fit.window, weakest: fit.weakest }; });
+  const rows = visibleLeads(session).filter(l => !l.doNotContact && l.stage !== 'Won').map(l => { const fit = leadFit(l, now); return { id: l.id, company: l.company, contactName: l.contactName, project: l.project || '', stage: l.stage, financialYearEnd: l.financialYearEnd || null, fyeSource: l.fyeSource || '', fit: fit.score, band: fit.band, window: fit.window, weakest: fit.weakest }; });
   const known = rows.filter(r => r.window?.known);
   const phases = known.reduce((acc, r) => { acc[r.window.phase] = (acc[r.window.phase] || 0) + 1; return acc; }, {});
   return {
@@ -1513,7 +1521,18 @@ function relationshipsSummary(now = new Date()) {
 }
 
 // ---- Discovered leads catalogue (curated SA CSI funders) + bulk organisation verification ----
-function visibleLeads() { return db.leads.filter(l => !l.hidden); }
+/** Every funder has an owner; ones that pre-date private workspaces go to the root account (admins see them anyway). */
+function ensureLeadOwners() { const root = configStore.getRootUser(); const n = access.assignMissingOwners(db.leads, root?.id || ''); if (n) saveDbDeferred(); return n; }
+function visibleLeads(session) { const list = db.leads.filter(l => !l.hidden); return session ? access.filterLeads(session, list, db.projects) : list; }
+function leadVisible(session, lead) { return access.canSeeLead(session, lead, access.projectTeams(db.projects)); }
+function addLead(lead, session) { lead.ownerId = String(session?.userId || lead.ownerId || configStore.getRootUser()?.id || ''); if (!Array.isArray(lead.sharedWith)) lead.sharedWith = []; db.leads.unshift(lead); return lead; }
+/** Names for owner / shared-with chips (no emails leak to non-admins beyond display names). */
+function staffDirectory() { return configStore.listUsers().filter(u => u.active !== false).map(u => ({ id: u.id, displayName: u.displayName, username: u.username, role: u.role })); }
+function leadAccessView(lead, session) {
+  const dir = staffDirectory(); const byId = Object.fromEntries(dir.map(u => [String(u.id), u]));
+  const teams = access.projectTeams(db.projects);
+  return { ownerId: lead.ownerId || '', ownerName: byId[lead.ownerId]?.displayName || '', sharedWith: (lead.sharedWith || []).map(id => ({ id, displayName: byId[id]?.displayName || 'Former staff' })), projectTeam: lead.projectId && teams.get(lead.projectId) ? [...teams.get(lead.projectId)].map(id => ({ id, displayName: byId[id]?.displayName || 'Former staff' })) : [], reason: access.accessReason(session, lead, teams), canManage: access.canManageLead(session, lead) };
+}
 function revealLeadIfContactable(lead) { if (lead.hidden === 'awaiting-contact' && normalizeEmail(lead.email)) { delete lead.hidden; lead.revealedAt = new Date().toISOString(); return true; } return false; }
 function catalogueStatus() {
   const rows = discoveredCatalogue.discoveredLeads();
@@ -2190,6 +2209,30 @@ async function handleApi(req, res, url) {
 
     // ---- Verified Projects Catalog ----
     if (method === 'GET' && pathname === '/api/projects') return sendJson(res, 200, db.projects.map(clientProject));
+    if (method === 'PUT' && pathname === '/api/leads/owner') { // admin: hand several funders to one person at once
+      if (!access.seesEverything(req.authSession)) return sendJson(res, 403, { error: 'Only an administrator can change who owns funders.' });
+      const body = await readBody(req);
+      const [ownerId] = access.cleanUserIds([body.userId], configStore.listUsers()); if (!ownerId) return sendJson(res, 400, { error: 'Choose an active staff member.' });
+      const ids = new Set([].concat(body.leadIds || []).map(String)); let n = 0;
+      for (const l of db.leads) if (ids.has(l.id)) { l.ownerId = ownerId; l.sharedWith = (l.sharedWith || []).filter(id => id !== ownerId); l.updatedAt = new Date().toISOString(); n += 1; }
+      const name = staffDirectory().find(u => String(u.id) === ownerId)?.displayName || ownerId;
+      if (n) configStore.recordAudit({ actor: actorName(), action: 'lead.owner_changed', entityType: 'lead', summary: `${n} funder${n === 1 ? '' : 's'} handed to ${name}` });
+      saveDb();
+      return sendJson(res, 200, { ok: true, changed: n });
+    }
+    const projectTeamRoute = pathname.match(/^\/api\/projects\/([^/]+)\/team$/);
+    if (projectTeamRoute && method === 'PUT') {
+      if (!access.seesEverything(req.authSession)) return sendJson(res, 403, { error: 'Only an administrator can set the team on a project.' });
+      const project = db.projects.find(p => p.id === projectTeamRoute[1]); if (!project) return sendJson(res, 404, { error: 'Project not found.' });
+      const body = await readBody(req);
+      const next = access.cleanUserIds(body.userIds, configStore.listUsers()); const before = new Set(project.team || []);
+      project.team = next; project.updatedAt = new Date().toISOString();
+      const names = id => staffDirectory().find(u => String(u.id) === String(id))?.displayName || id;
+      const added = next.filter(id => !before.has(id)).map(names), removed = [...before].filter(id => !next.includes(id)).map(names);
+      if (added.length || removed.length) configStore.recordAudit({ actor: actorName(), action: 'project.team', entityType: 'project', entityId: project.id, summary: `${project.name}: ${added.length ? `team + ${added.join(', ')}` : ''}${added.length && removed.length ? '; ' : ''}${removed.length ? `team − ${removed.join(', ')}` : ''}` });
+      saveDb();
+      return sendJson(res, 200, { project: clientProject(project) });
+    }
     if (method === 'POST' && pathname === '/api/projects') {
       const body = await readBody(req);
       const project = safeProject(body);
@@ -2222,7 +2265,7 @@ async function handleApi(req, res, url) {
       if (!project) return sendJson(res, 404, { error: 'Project not found.' });
       if (method === 'PUT') {
         const body = await readBody(req);
-        Object.assign(project, safeProject({ ...project, ...body }), { id: project.id, createdAt: project.createdAt, updatedAt: new Date().toISOString() });
+        Object.assign(project, safeProject({ ...project, ...body }), { id: project.id, team: project.team || [], createdAt: project.createdAt, updatedAt: new Date().toISOString() });
         for (const lead of db.leads) if (lead.projectId === project.id) lead.project = project.name;
         saveDb();
         configStore.recordAudit({ actor: actorName(), action: 'project.updated', entityType: 'project', entityId: project.id, summary: `Verified project updated: ${project.name}` });
@@ -2276,13 +2319,13 @@ async function handleApi(req, res, url) {
     }
     if (method === 'GET' && pathname === '/api/radar') {
       const now = new Date();
-      const items = [...visibleLeads().map(l => ({ kind: 'prospect', id: l.id, company: l.company, owner: l.owner, stage: l.stage, project: l.project, amount: l.amount, cycle: popia.computeGrantCycleStatus(l, now) })), ...db.candidates.filter(c => !c.promotedLeadId).map(c => ({ kind: 'candidate', id: c.id, company: c.company, owner: c.owner, stage: c.status, project: c.project, amount: c.amount, cycle: popia.computeGrantCycleStatus(c, now) }))]
+      const items = [...visibleLeads(req.authSession).map(l => ({ kind: 'prospect', id: l.id, company: l.company, owner: l.owner, stage: l.stage, project: l.project, amount: l.amount, cycle: popia.computeGrantCycleStatus(l, now) })), ...db.candidates.filter(c => !c.promotedLeadId).map(c => ({ kind: 'candidate', id: c.id, company: c.company, owner: c.owner, stage: c.status, project: c.project, amount: c.amount, cycle: popia.computeGrantCycleStatus(c, now) }))]
         .filter(item => item.cycle.code !== 'none');
       const order = { 'closing-soon': 0, open: 1, upcoming: 2, scheduled: 3, passed: 4 };
       items.sort((a, b) => (order[a.cycle.code] ?? 9) - (order[b.cycle.code] ?? 9));
-      return sendJson(res, 200, { generatedAt: now.toISOString(), items, followUps: inbound.buildFollowUpDigest(db.leads, now) });
+      return sendJson(res, 200, { generatedAt: now.toISOString(), items, followUps: inbound.buildFollowUpDigest(visibleLeads(req.authSession), now) });
     }
-    if (method === 'GET' && pathname === '/api/followups/digest') return sendJson(res, 200, inbound.buildFollowUpDigest(db.leads));
+    if (method === 'GET' && pathname === '/api/followups/digest') return sendJson(res, 200, inbound.buildFollowUpDigest(visibleLeads(req.authSession)));
     if (method === 'POST' && pathname === '/api/inbound/imap-sync') {
       const result = await syncAllInboxes(actorName());
       return sendJson(res, 200, result);
@@ -2292,10 +2335,14 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'GET' && pathname === '/api/init') {
-      const messages = db.messages.map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
-      const leads = visibleLeads().map(clientLead);
+      ensureLeadOwners(); // first admin may have been created after boot
+      const scopedLeads = visibleLeads(req.authSession);
+      const all = access.seesEverything(req.authSession); const ids = new Set(scopedLeads.map(l => l.id));
+      const inScope = r => all || (r.leadId ? ids.has(r.leadId) : false);
+      const messages = db.messages.filter(inScope).map(({ openToken, body, ...message }) => ({ ...message, openTracked: Boolean(openToken) }));
+      const leads = scopedLeads.map(l => ({ ...clientLead(l), access: leadAccessView(l, req.authSession) }));
       const settings = configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) });
-      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners, bookings: db.bookings, activities: db.activities, messages, emailEvents: db.emailEvents, projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
+      return sendJson(res, 200, { leads, candidates: db.candidates, partners: db.partners.filter(inScope), bookings: db.bookings.filter(inScope), activities: db.activities.filter(inScope), messages, emailEvents: db.emailEvents.filter(inScope), projects: db.projects.map(clientProject), provinces: PROVINCES, videoPlatforms: Object.values(calendar.VIDEO_PLATFORMS), staff: roleAllows(req.authSession, ['admin']) ? visibleUsers(req.authSession) : [], directory: staffDirectory(), canSeeAll: all, currentUser: { username: req.authSession.username, displayName: req.authSession.displayName, role: req.authSession.role, userId: req.authSession.userId }, stages: STAGES, aiConfigured: settings.aiConfigured, aiModel: settings.aiModel, emailProviderConfigured: settings.smtpConfigured || sendEngine.listMailboxes().some(m => m.status === 'active'), mailboxes: sendEngine.listMailboxes().map(m => ({ id: m.id, label: m.label, fromEmail: m.fromEmail, status: m.status, today: m.today, owner: m.owner || '', authType: m.authType, health: { status: m.health?.status || 'unknown' } })), sendPolicy: sendEngine.policy, settings });
     }
     // ---- Workbench: discovery + lead flow ----
     if (method === 'GET' && pathname === '/api/discovery/search') {
@@ -2314,13 +2361,13 @@ async function handleApi(req, res, url) {
       if (!name) return sendJson(res, 400, { error: 'Organisation name is required.' });
       const email = normalizeEmail(body.email);
       const dup = checkDuplicates({ company: name, email, website });
-      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, { error: `${dup.exact[0].company} is already in your workspace (${dup.exact[0].reasons[0]}).`, duplicates: dup.exact, code: 'duplicate' });
+      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, duplicateRefusal(dup, req.authSession));
       const contactCheck = await inspectContactRecord({ company: name, contactName: body.contactName || '', email, sourceUrl: website });
       if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason });
       const lead = safeLead({ company: name, contactName: clampText(body.contactName, 120), title: clampText(body.title, 120), email, sourceUrl: website, sourceName: 'Web discovery', sector: clampText(body.sector, 80), notes: clampText(body.summary, 400), stage: 'New' }, contactCheck);
       lead.website = website;
       lead.discovery = { query: clampText(body.query, 200), summary: clampText(body.summary, 400), sources: Array.isArray(body.sources) ? body.sources.slice(0, 3).map(String) : [], addedAt: new Date().toISOString() };
-      db.leads.unshift(lead);
+      addLead(lead, req.authSession);
       queueLikelyDuplicates(lead, 'leads', dup.likely, actorName());
       configStore.recordAudit({ actor: actorName(), action: 'discovery.added', entityType: 'lead', entityId: lead.id, summary: `${name} added from web discovery (${website || 'no website'})` });
       addActivity(`${name} added from web discovery`, 'lead', actorName());
@@ -2452,7 +2499,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true, ran: result.ran, results: (result.results || []).map(j => ({ id: j.id, status: j.status, leadId: j.leadId, error: j.lastError })) });
     }
     if (method === 'GET' && pathname === '/api/data') return sendJson(res, 200, dataSummary());
-    if (method === 'GET' && pathname === '/api/signals') return sendJson(res, 200, signalsSummary());
+    if (method === 'GET' && pathname === '/api/signals') return sendJson(res, 200, signalsSummary(req.authSession));
     // ---- Batch 5: relationships + stewardship ----
     if (method === 'GET' && pathname === '/api/relationships') return sendJson(res, 200, relationshipsSummary());
     if (method === 'GET' && pathname === '/api/leads/catalogue') return sendJson(res, 200, catalogueStatus());
@@ -2553,7 +2600,7 @@ async function handleApi(req, res, url) {
       catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
     if (method === 'POST' && pathname === '/api/data/check-duplicates') { const body = await readBody(req); return sendJson(res, 200, checkDuplicates({ company: body.company, email: normalizeEmail(body.email), website: body.website }, { excludeId: body.excludeId || null })); }
-    if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(), categories: triage.CATEGORIES });
+    if (method === 'GET' && pathname === '/api/triage') return sendJson(res, 200, { items: triageQueue(req.authSession), categories: triage.CATEGORIES });
     // ---- Communication Center: shared inbox ----
     if (pathname === '/api/inbox' && method === 'GET') {
       const data = inboxCenter.overview(req.authSession);
@@ -2598,7 +2645,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 405, { error: 'Unsupported inbox action.' });
     }
     if (method === 'GET' && pathname === '/api/workbench') {
-      const leads = visibleLeads().map(workbenchLead);
+      const leads = visibleLeads(req.authSession).map(workbenchLead);
       const counts = leads.reduce((acc, l) => { acc[l.flowStatus] = (acc[l.flowStatus] || 0) + 1; return acc; }, {});
       return sendJson(res, 200, { leads, counts, running: [...flowRuns.keys()], smtpProbe: !SMTP_PROBE_DISABLED, searchConfigured: configStore.publicSettings().searchConfigured });
     }
@@ -2610,9 +2657,9 @@ async function handleApi(req, res, url) {
       await Promise.all(pending.map(l => runLeadFlow(l, { actor: actorName(), origin })));
       return sendJson(res, 200, { ok: true, ran: pending.map(l => l.id), remaining: db.leads.filter(l => !l.flow && !l.doNotContact && l.emailStatus !== 'Sent').length });
     }
-    if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, (url.searchParams.get('include') === 'hidden' ? db.leads : visibleLeads()).map(clientLead));
+    if (method === 'GET' && pathname === '/api/leads') return sendJson(res, 200, (url.searchParams.get('include') === 'hidden' && access.seesEverything(req.authSession) ? db.leads : visibleLeads(req.authSession)).map(clientLead));
     if (method === 'GET' && pathname === '/api/candidates') return sendJson(res, 200, db.candidates);
-    if (method === 'GET' && pathname === '/api/partners') return sendJson(res, 200, db.partners);
+    if (method === 'GET' && pathname === '/api/partners') { const ids = access.seesEverything(req.authSession) ? null : new Set(visibleLeads(req.authSession).map(l => l.id)); return sendJson(res, 200, ids ? db.partners.filter(p => ids.has(p.leadId)) : db.partners); }
     if (method === 'GET' && pathname === '/api/bookings') return sendJson(res, 200, db.bookings);
 
     if (method === 'GET' && pathname === '/api/settings') return sendJson(res, 200, configStore.publicSettings({ technical: Boolean(req.authSession?.isRoot) }));
@@ -2834,12 +2881,12 @@ async function handleApi(req, res, url) {
       const dates = verificationDateFields(body);
       if (!dates.ok) return sendJson(res, 400, { error: dates.issues.join(' ') });
       const dup = checkDuplicates({ company: body.company, email, website: body.website || body.sourceUrl });
-      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, { error: `${dup.exact[0].company} is already in your workspace (${dup.exact[0].reasons[0]}).`, duplicates: dup.exact, code: 'duplicate' });
+      if (dup.exact.length && body.allowDuplicate !== true) return sendJson(res, 409, duplicateRefusal(dup, req.authSession));
       const contactCheck = await inspectContactRecord({ ...body, email });
       if (contactCheck.status === 'invalid') return sendJson(res, 400, { error: contactCheck.reason || 'Email validation failed; the invalid contact was not saved.' });
       const lead = safeLead({ ...body, ...dates, email }, contactCheck);
       if (lead.doNotContact) rememberSuppressedEmail(lead.email);
-      db.leads.unshift(lead);
+      addLead(lead, req.authSession);
       queueLikelyDuplicates(lead, 'leads', body.allowDuplicate === true ? dup.matches : dup.likely, actorName());
       addActivity(`New prospect added: ${lead.company}${contactCheck.status === 'ready' ? '' : ' · contact details need clarification'}`, 'lead', actorName());
       saveDb();
@@ -2931,7 +2978,7 @@ async function handleApi(req, res, url) {
         if (check.status === 'invalid') { skipped.push({ id: cid, company: candidate.company, reason: 'email address does not work' }); continue; }
         candidate.contactCheck = check;
         const lead = safeLead(candidate, check);
-        db.leads.unshift(lead);
+        addLead(lead, req.authSession);
         candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
         added.push(lead);
       }
@@ -3037,7 +3084,7 @@ async function handleApi(req, res, url) {
           return sendJson(res, 409, { error: `Complete intake checks before promotion. ${(check.issues || []).join(', ') || check.status}`, contactCheck: check });
         }
         const lead = safeLead(candidate, check);
-        db.leads.unshift(lead);
+        addLead(lead, req.authSession);
         if (runFlow) { const origin = publicOrigin(req); setTimeout(() => runLeadFlow(lead, { actor: actorName(), origin }).catch(() => {}), 0); }
         queueLikelyDuplicates(lead, 'leads', checkDuplicates(lead, { excludeId: lead.id }).matches.filter(x => x.id !== candidate.id), actorName());
         candidate.status = 'Added to pipeline'; candidate.promotedLeadId = lead.id; candidate.promotedAt = new Date().toISOString();
@@ -3051,7 +3098,30 @@ async function handleApi(req, res, url) {
     if (leadRoute) {
       const lead = findLead(leadRoute[1]);
       const action = leadRoute[2] || '';
-      if (!lead) return sendJson(res, 404, { error: 'Prospect not found.' });
+      if (!lead || !leadVisible(req.authSession, lead)) return sendJson(res, 404, { error: 'Prospect not found.' });
+      if (method === 'GET' && action === 'access') return sendJson(res, 200, { access: leadAccessView(lead, req.authSession), directory: staffDirectory() });
+      if (method === 'PUT' && action === 'share') {
+        if (!access.canManageLead(req.authSession, lead)) return sendJson(res, 403, { error: 'Only the owner or an administrator can share this funder.' });
+        const body = await readBody(req);
+        const next = access.cleanUserIds(body.userIds, configStore.listUsers()).filter(id => id !== String(lead.ownerId));
+        const before = new Set(lead.sharedWith || []); lead.sharedWith = next; lead.updatedAt = new Date().toISOString();
+        const names = id => staffDirectory().find(u => String(u.id) === String(id))?.displayName || id;
+        const added = next.filter(id => !before.has(id)).map(names), removed = [...before].filter(id => !next.includes(id)).map(names);
+        if (added.length || removed.length) configStore.recordAudit({ actor: actorName(), action: 'lead.shared', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: ${added.length ? `shared with ${added.join(', ')}` : ''}${added.length && removed.length ? '; ' : ''}${removed.length ? `unshared ${removed.join(', ')}` : ''}` });
+        saveDb();
+        return sendJson(res, 200, { access: leadAccessView(lead, req.authSession), lead: clientLead(lead) });
+      }
+      if (method === 'PUT' && action === 'owner') {
+        if (!access.seesEverything(req.authSession)) return sendJson(res, 403, { error: 'Only an administrator can change who owns a funder.' });
+        const body = await readBody(req);
+        const [ownerId] = access.cleanUserIds([body.userId], configStore.listUsers());
+        if (!ownerId) return sendJson(res, 400, { error: 'Choose an active staff member.' });
+        const prev = lead.ownerId; lead.ownerId = ownerId; lead.sharedWith = (lead.sharedWith || []).filter(id => id !== ownerId); lead.updatedAt = new Date().toISOString();
+        const names = id => staffDirectory().find(u => String(u.id) === String(id))?.displayName || id || 'nobody';
+        configStore.recordAudit({ actor: actorName(), action: 'lead.owner_changed', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: owner ${names(prev)} → ${names(ownerId)}` });
+        saveDb();
+        return sendJson(res, 200, { access: leadAccessView(lead, req.authSession), lead: clientLead(lead) });
+      }
       if (method === 'POST' && action === 'flow') {
         const body = await readBody(req);
         const flow = await runLeadFlow(lead, { actor: actorName(), origin: publicOrigin(req), force: body.force === true, redraft: body.redraft === true });
@@ -3525,7 +3595,7 @@ async function handleApi(req, res, url) {
       }
       if (method === 'POST' && action === 'triage') {
         const body = await readBody(req);
-        try { const t = applyTriageOutcome(lead, body, actorName()); saveDb(); return sendJson(res, 200, { triage: t, lead: clientLead(lead), queue: triageQueue().length }); }
+        try { const t = applyTriageOutcome(lead, body, actorName()); saveDb(); return sendJson(res, 200, { triage: t, lead: clientLead(lead), queue: triageQueue(req.authSession).length }); }
         catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
       if (method === 'POST' && action === 'send-email') {
@@ -3803,6 +3873,7 @@ if (!SERVERLESS && process.env.NODE_ENV !== 'test') {
   healthTimer.unref();
   setTimeout(() => refreshMailboxHealth().catch(() => {}), 5000).unref();
 }
+try { ensureLeadOwners(); } catch (err) { console.warn('[access] owner migration skipped:', err.message); }
 const server = http.createServer(requestHandler);
 
 function listen() {

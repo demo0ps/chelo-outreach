@@ -63,6 +63,8 @@ test('inbox: replies become conversations, members scope visibility, assignment,
   // A lead owned by Sipho, contacted from mailbox A (simulated via a sent message on the lead), replies
   const lead = (await root('POST', '/api/leads', { company: 'Metsi Energy Group', contactName: 'Lerato M', email: 'lerato@github.com', owner: 'Sipho Dlamini', projectId: 'proj-chelo-solar-gp', sector: 'Energy', province: 'Gauteng' })).payload;
   assert.ok(lead.id, JSON.stringify(lead));
+  // Private workspaces: replies follow the funder. Root shares this funder with Thandi so inbox A's member can work it.
+  assert.equal((await root('PUT', `/api/leads/${lead.id}/share`, { userIds: [u1.id] })).status, 200);
   const info = (await root('GET', '/api/inbound/webhook-info')).payload;
   const evt = JSON.stringify({ type: 'inbound', from: 'Lerato M <lerato@github.com>', to: 'partnerships@github.com', subject: 'Re: Solar classrooms', text: 'Thanks — this looks interesting. Could we talk next week? Lerato' });
   const sig = crypto.createHmac('sha256', info.secret).update(evt).digest('hex');

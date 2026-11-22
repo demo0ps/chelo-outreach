@@ -779,6 +779,8 @@ function renderModal() {
   if (type === 'copilot') return copilotModal();
   if (type === 'research') return researchModal(getLead(id));
   if (type === 'staff-form') return staffFormModal(state.data.staff.find(u => u.id === id));
+  if (type === 'lead-share') return leadShareModal(getLead(id));
+  if (type === 'project-team') return projectTeamModal(state.data.projects.find(p => p.id === id));
   if (type === 'booking-edit') return bookingEditModal(getBooking(id));
   return '';
 }
@@ -1379,6 +1381,8 @@ async function dispatchAction(button) {
       return;
     }
     if (action === 'edit-lead') return openModal('lead-form', id);
+    if (action === 'lead-share-open') return openModal('lead-share', id);
+    if (action === 'project-team-open') return openModal('project-team', id);
     if (['create-outreach', 'email', 'follow-up', 'create-proposal'].includes(action)) {
       const check = await API(`/api/leads/${encodeURIComponent(id)}/contact-check`, { method: 'POST', body: '{}' });
       await refresh();
@@ -1664,6 +1668,8 @@ async function handleSubmit(event) {
   if (!type) return;
   event.preventDefault();
   if (type === 'wb-add') return wbAddSubmit(form);
+  if (type === 'lead-share') return leadShareSubmit(form);
+  if (type === 'project-team') return projectTeamSubmit(form);
   if (type === 'dlv-mailbox') return dlvMailboxSubmit(form);
   if (type === 'dlv-mailbox-connect') return dlvMailboxConnect(form);
   if (type === 'dlv-policy') return dlvPolicySubmit(form);
@@ -2123,6 +2129,7 @@ function projectDetailModal(p) {
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('trend')}Funding ledger</span></div>${fundingBar(p.funding, p.targetAmount)}<div class="detail-grid" style="margin-top:12px"><div class="detail-item"><small>Target</small><strong>${money(p.targetAmount)}</strong></div><div class="detail-item"><small>Committed (incl. won)</small><strong>${money(p.funding?.committedTotal)}</strong></div><div class="detail-item"><small>Funding gap</small><strong>${money(p.funding?.fundingGap)}</strong></div><div class="detail-item"><small>Active pipeline</small><strong>${money(p.funding?.pipelineAmount)}</strong></div></div></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('checkCircle')}Verification</span></div><div class="detail-item"><small>Source</small>${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(source)} ${svgIcon('external')}</a>` : '<strong>No source URL</strong>'}<small>Verified ${esc(dateOnly(p.verifiedAt) || '—')} · ${esc(p.status)}</small></div>${p.summary ? `<div class="detail-note" style="margin-top:10px">${esc(p.summary)}</div>` : ''}</div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('analytics')}Verified metrics</span></div>${(p.verifiedMetrics || []).map(m => `<div class="project-metric"><strong>${esc(m.label)}</strong><span>${esc(String(m.baselineValue))} → <b>${esc(String(m.currentValue))}</b> ${esc(m.unit)}</span><small>${esc(m.period)} · ${esc(m.source)}</small></div>`).join('') || '<span class="subtle">None recorded.</span>'}</div>
+    <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('users')}Team on this project</span>${state.data.canSeeAll ? `<button class="table-action" data-action="project-team-open" data-id="${esc(p.id)}">${svgIcon('edit')}Change</button>` : ''}</div><p class="subtle">${(p.team || []).length ? esc((p.team || []).map(id => (state.data.directory || []).find(u => String(u.id) === String(id))?.displayName || 'Former staff').join(', ')) + ' — they see every funder linked to this project.' : 'Nobody extra yet. Owners of each funder, people it is shared with, and admins can see them.'}</p></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('prospects')}Linked prospects (${linked.length}) & partners (${partners.length})</span></div>${linked.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('prospects')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>${esc(l.stage)} · ${money(l.amount)} · ${esc(grantCycleLabel(l))}</span></div><button class="table-action" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></div>`).join('')}${partners.map(x => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('partners')}</div><div class="shortcut-copy"><strong>${esc(x.company)}</strong><span>Partner · ${money(x.amount)}</span></div></div>`).join('') || (!linked.length ? '<span class="subtle">No prospects linked yet.</span>' : '')}</div>`;
   const footer = `<div class="modal-footer-left"><span class="subtle">Updated ${isoDate(p.updatedAt)}</span></div><div class="modal-footer-right"><button type="button" class="button button-secondary" data-action="close-modal">${svgIcon('close')}Close</button>${state.auth.role !== 'reviewer' ? `<button type="button" class="button button-primary" data-action="edit-project" data-id="${esc(p.id)}">${svgIcon('edit')} Edit project</button>` : ''}</div>`;
   return modalFrame('Verified project', 'Funding gap, provenance and linked outreach.', body, footer);
@@ -2388,7 +2395,7 @@ function wbRow(l, active) {
   const s = wbStatusOf(l);
   return `<button type="button" class="wb-row ${active ? 'is-active' : ''} wb-row-${s}" data-action="wb-select" data-id="${esc(l.id)}">
     <span class="wb-row-avatar">${initials(l.company)}</span>
-    <span class="wb-row-copy"><strong>${esc(l.company)}</strong><small>${esc(l.contactName || 'No contact yet')}${l.project ? ` · ${esc(l.project)}` : ''}</small></span>
+    <span class="wb-row-copy"><strong>${esc(l.company)}</strong><small>${esc(l.contactName || 'No contact yet')}${l.project ? ` · ${esc(l.project)}` : ''}${state.data.canSeeAll && l.access?.ownerName && String(l.access.ownerId) !== String(state.auth.userId || '') ? ` · ${esc(l.access.ownerName)}` : ''}</small></span>
     <span class="wb-row-status">${orgPill(l.orgCheck)}${fitPill(l.fit)}${wbPill(s)}${s === 'running' ? '<span class="wb-spinner" aria-hidden="true"></span>' : ''}</span>
   </button>`;
 }
@@ -2514,6 +2521,49 @@ function wbActionCard(lead, s, busy) {
   const wait = wbReplyPointer(lead);
   return `<section class="wb-card wb-action-card"><div class="wb-action-main"><div><strong>${esc(SIMPLE_META[simpleStatusOf(lead)][0])}</strong><p class="subtle">${esc(note)}</p>${facts.length ? `<p class="subtle wb-action-facts">${facts.map(esc).join(' · ')}</p>` : ''}</div>${primary}</div>${wait}<div class="wb-action-secondary">${secondary.join('')}</div></section>`;
 }
+// ---------------- Private workspaces (v56): who can see this funder ----------------
+function wbAccessLine(lead) {
+  const a = lead.access; if (!a) return '';
+  const me = String(state.auth.userId || '');
+  const people = [a.ownerName ? `${a.ownerId === me ? 'You' : a.ownerName} (owner)` : 'No owner yet', ...a.sharedWith.map(u => (String(u.id) === me ? 'you' : u.displayName)), ...a.projectTeam.map(u => `${String(u.id) === me ? 'you' : u.displayName} (project team)`)];
+  const seen = new Set(); const names = people.filter(n => { const k = n.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  const btn = a.canManage ? `<button type="button" class="button button-ghost button-small" data-action="lead-share-open" data-id="${esc(lead.id)}">${svgIcon('users')}Share with…</button>` : '';
+  return `<p class="wb-access subtle">${svgIcon('users')} Who can see this: ${esc(names.join(', '))}${state.data.canSeeAll ? ' · admins see everything' : ''} ${btn}</p>`;
+}
+function leadShareModal(lead) {
+  if (!lead || !lead.access) return '';
+  const a = lead.access; const me = String(state.auth.userId || '');
+  const dir = (state.data.directory || []).filter(u => String(u.id) !== String(a.ownerId));
+  const onTeam = new Set(a.projectTeam.map(u => String(u.id))); const shared = new Set(a.sharedWith.map(u => String(u.id)));
+  const rows = dir.map(u => `<label class="share-row"><input type="checkbox" name="share" value="${esc(u.id)}" ${shared.has(String(u.id)) ? 'checked' : ''} ${onTeam.has(String(u.id)) ? 'disabled' : ''} /> <span>${esc(u.displayName)}${String(u.id) === me ? ' (you)' : ''}${onTeam.has(String(u.id)) ? ' <small class="subtle">— already on the project team</small>' : u.role === 'admin' ? ' <small class="subtle">— admin, sees everything</small>' : ''}</span></label>`).join('') || '<p class="subtle">No other staff yet. Add people under Settings → Staff.</p>';
+  const ownerPick = state.data.canSeeAll ? `<div class="form-group" style="margin-top:14px"><label for="share-owner">Owner (admins only)</label><select class="form-control" id="share-owner" name="owner">${(state.data.directory || []).map(u => `<option value="${esc(u.id)}" ${String(u.id) === String(a.ownerId) ? 'selected' : ''}>${esc(u.displayName)}</option>`).join('')}</select><small class="subtle">Changing the owner hands the funder over. The old owner loses access unless you also tick them above.</small></div>` : '';
+  const body = `<form id="lead-share-form" data-form="lead-share" data-id="${esc(lead.id)}"><p class="subtle">People you tick can open ${esc(lead.company)}, read the research, see the emails and replies, and work it with you.</p><div class="share-list">${rows}</div>${ownerPick}</form>`;
+  const footer = `<button type="button" class="button button-secondary" data-action="close-modal">Cancel</button><button type="submit" form="lead-share-form" class="button button-primary">Save</button>`;
+  return modalFrame('Share this funder', `Owner: ${a.ownerName || '—'}`, body, footer, true);
+}
+function projectTeamModal(p) {
+  if (!p) return '';
+  const team = new Set((p.team || []).map(String));
+  const rows = (state.data.directory || []).map(u => `<label class="share-row"><input type="checkbox" name="team" value="${esc(u.id)}" ${team.has(String(u.id)) ? 'checked' : ''} /> <span>${esc(u.displayName)}${u.role === 'admin' ? ' <small class="subtle">— admin, sees everything</small>' : ''}</span></label>`).join('') || '<p class="subtle">No staff yet.</p>';
+  const body = `<form id="project-team-form" data-form="project-team" data-id="${esc(p.id)}"><p class="subtle">Everyone on the team sees every funder linked to <strong>${esc(p.name)}</strong> — the ones linked today and any linked later.</p><div class="share-list">${rows}</div></form>`;
+  const footer = `<button type="button" class="button button-secondary" data-action="close-modal">Cancel</button><button type="submit" form="project-team-form" class="button button-primary">Save</button>`;
+  return modalFrame('Team on this project', p.name, body, footer, true);
+}
+async function leadShareSubmit(form) {
+  const id = form.dataset.id; const lead = getLead(id);
+  const userIds = [...form.querySelectorAll('input[name="share"]:checked')].map(i => i.value);
+  try {
+    const ownerSel = form.querySelector('select[name="owner"]');
+    if (ownerSel && lead && String(ownerSel.value) !== String(lead.access?.ownerId)) await API(`/api/leads/${encodeURIComponent(id)}/owner`, { method: 'PUT', body: JSON.stringify({ userId: ownerSel.value }) });
+    await API(`/api/leads/${encodeURIComponent(id)}/share`, { method: 'PUT', body: JSON.stringify({ userIds }) });
+    toast('Sharing saved.'); closeModal(); await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+async function projectTeamSubmit(form) {
+  const id = form.dataset.id; const userIds = [...form.querySelectorAll('input[name="team"]:checked')].map(i => i.value);
+  try { await API(`/api/projects/${encodeURIComponent(id)}/team`, { method: 'PUT', body: JSON.stringify({ userIds }) }); toast('Team saved.'); closeModal(); await refresh(); }
+  catch (err) { toast(err.message, true); }
+}
 function wbLeadPage(lead) {
   const s = wbStatusOf(lead); const busy = state.wb.busy[lead.id];
   state.wb.openStep = null;
@@ -2522,6 +2572,7 @@ function wbLeadPage(lead) {
     <div class="wb-detail-actions">${wbPill(s)}<button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${esc(lead.id)}">${svgIcon('edit')}Edit details</button><button type="button" class="button button-ghost button-small" data-action="wb-run" data-id="${esc(lead.id)}" ${busy || s === 'running' ? 'disabled' : ''} title="Check the address, research and draft again">${svgIcon('refresh')}${busy || s === 'running' ? 'Working…' : 'Run again'}</button></div>
   </div>`;
   return `<div class="panel wb-stepper wb-lead-page">${header}
+    ${wbAccessLine(lead)}
     ${lead.flow?.error ? `<p class="form-error wb-flow-error">${esc(lead.flow.error)}</p>` : ''}
     ${wbActionCard(lead, s, busy)}
     ${wbWhoCard(lead, s, busy)}

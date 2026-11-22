@@ -216,3 +216,11 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - Callback connects/refreshes the mailbox (`owner` = the signer, from-name = display name) and audits `mailbox.google_connected`. Unticked Gmail boxes → sign-in refused (no session) with a plain message, per user decision.
 - `api/index.js`: `/api/auth/google/callback` counted as mutating → session/account/mailbox pushed to the shared snapshot before the response (fixes "Sign in required" right after Google).
 - Return params: `login=welcome|ok`, `mailbox=connected|ready|missing`, `email`.
+
+## v56 — Private workspaces with sharing (2026-11-21)
+- `lib/access.js`: `accessReason(session, lead, teams)` → `all | owner | shared | project | ''`. Admins, reviewers (4-eyes second approver), root and demo see everything; everyone else sees funders they own (`lead.ownerId`), are shared on (`lead.sharedWith[]`) or whose Verified Project team they are on (`project.team[]`).
+- `visibleLeads(session)` now scopes every list: To do, `/api/leads`, `/api/workbench`, `/api/radar` (+ follow-up digest), `/api/signals`, `/api/triage`, `/api/partners`, and `/api/init` (messages, events, bookings, activities, partners filtered by visible lead ids; `canSeeAll`, `directory`, each lead carries `access`). Lead routes 404 for funders you cannot see; Inbox `canSee` runs a `leadGate` first (assignee of a thread keeps access).
+- Routes: `GET /api/leads/:id/access`, `PUT /api/leads/:id/share {userIds}` (owner/admin), `PUT /api/leads/:id/owner {userId}` and bulk `PUT /api/leads/owner {userId, leadIds}` (admin), `PUT /api/projects/:id/team {userIds}` (admin). Audit actions `lead.shared`, `lead.owner_changed`, `project.team`.
+- Migration: `ensureLeadOwners()` at boot and on `/api/init` gives ownerless funders to the root account.
+- Duplicate protection stays global; when the match is private the reply is `Already in Chelo — ask an admin to share it with you.` with no record details (`code: duplicate-private`).
+- UI: funder page shows "Who can see this" + "Share with…" (owner/admin; admins also change owner there); To-do rows show the owner's name for admins; project detail has "Team on this project". Cache tag `v56`.
