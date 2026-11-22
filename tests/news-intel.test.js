@@ -89,3 +89,43 @@ test('discovery: company pages count directly, articles are read for funders, ma
   assert.ok(mystery && mystery.unresolved && !mystery.website, 'unresolved funders are shown without a website');
   assert.ok(!fetchCalls.some(h => /careers24|gov\.za/.test(h)), 'directories and government pages are never fetched');
 });
+
+test('v59: proper names, publishers judged by AI, tool domains dropped, article step reported', async () => {
+  assert.equal(news.orgNameFor('Corporate social investment | BP Southern Africa', 'bp.com'), 'BP Southern Africa');
+  assert.equal(news.orgNameFor('Corporate social investment', 'bp.com'), 'BP');
+  assert.ok(['JSE', 'Johannesburg Stock Exchange'].includes(news.orgNameFor('Corporate Social Investment | Johannesburg Stock Exchange', 'jse.co.za')));
+  assert.equal(news.orgNameFor('Datatec | CSI Datatec Foundation', 'datatec.com'), 'Datatec');
+  assert.equal(news.classifyHost('www.businessinsider.co.za'), 'media');
+  assert.equal(news.classifyHost('billionaires.africa'), 'media');
+  assert.equal(news.classifyHost('trialogueknowledgehub.co.za'), 'media');
+  assert.equal(news.classifyHost('tavily.com'), 'directory');
+
+  // The screenshot case: AI says Business Insider is a publisher; the article names the Motsepe Foundation.
+  const fetchImpl = async (href, init = {}) => {
+    if (href === 'https://ai.example/v1/chat/completions') {
+      const body = JSON.parse(init.body); const user = JSON.parse(body.messages[1].content);
+      if (user.items) return json({ choices: [{ message: { content: JSON.stringify({ items: user.items.map(it => ({ i: it.i, kind: /businessinsider|tavily|trialogue/.test(it.url) ? 'publisher' : 'org', name: /bp\.com/.test(it.url) ? 'BP Southern Africa' : /datatec/.test(it.url) ? 'Datatec' : '' })) }) } }] });
+      if (user.sources) return json({ choices: [{ message: { content: JSON.stringify({ organisations: [{ name: 'Motsepe Foundation', ref: 'N1', evidence: 'The Motsepe Foundation pledged $417.8m to education.' }] }) } }] });
+    }
+    if (href === 'https://api.tavily.com/search') {
+      const q = JSON.parse(init.body).query;
+      if (/official website/.test(q)) return json({ results: [{ title: 'Motsepe Foundation', url: 'https://www.motsepefoundation.org/', content: '' }] });
+      return json({ results: [
+        { title: 'CSI', url: 'https://tavily.com/csi', content: 'South African companies spent ZAR13.1 billion on CSI' },
+        { title: 'Corporate social investment', url: 'https://www.bp.com/en_za/south-africa/home/sustainability/csi.html', content: 'The Energy Mobility Education Trust' },
+        { title: 'Datatec | CSI Datatec Foundation', url: 'https://www.datatec.com/csi', content: 'Partnerships' },
+        { title: 'Businessinsider', url: 'https://www.businessinsider.co.za/2026/06/billionaire-education', content: 'South African billionaire plots Africa\'s largest education investment with $417.8m' }
+      ] });
+    }
+    if (href.includes('businessinsider')) return html('<html><head><title>Billionaire education</title></head><body><p>The Motsepe Foundation pledged $417.8m to education across Africa.</p></body></html>');
+    throw new Error(`unexpected fetch ${href}`);
+  };
+  function json(obj) { return new Response(JSON.stringify(obj), { status: 200, headers: { 'content-type': 'application/json' } }); }
+  function html(body) { return new Response(body, { status: 200, headers: { 'content-type': 'text/html' } }); }
+  const researcher = createResearch({ fetch: fetchImpl, resolver: { lookup: async () => [{ address: '41.0.0.1' }] } });
+  const r = await researcher.discoverOrganisations({ provider: 'tavily', apiKey: 'k' }, 'JSE energy companies with education csi', { aiConfig: { apiKey: 'ai', model: 'm', endpoint: 'https://ai.example/v1/chat/completions' } });
+  const names = r.organisations.map(o => o.name).sort();
+  assert.deepEqual(names, ['BP Southern Africa', 'Datatec', 'Motsepe Foundation'], names.join('|'));
+  assert.ok(!r.organisations.some(o => /tavily|businessinsider/.test(o.domain)));
+  assert.deepEqual(r.read.named, ['Motsepe Foundation']); assert.equal(r.read.aiOn, true); assert.equal(r.read.articles, 1);
+});
