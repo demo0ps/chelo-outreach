@@ -23,6 +23,7 @@ const createGoogleMail = require('./lib/google-mail');
 const relationships = require('./lib/relationships');
 const access = require('./lib/access');
 const voice = require('./lib/voice');
+const desks = require('./lib/desks');
 const discoveredCatalogue = require('./lib/discovered-leads');
 const { createMailboxFinder } = require('./lib/mailbox-finder');
 const observability = require('./lib/observability');
@@ -95,7 +96,7 @@ try {
     console.log('[send-engine] migrated legacy SMTP settings into the mailbox registry');
   }
 } catch (err) { console.warn(`[send-engine] legacy SMTP migration skipped: ${err.message}`); }
-const inboxCenter = inboxLib.createInbox({ db, saveDb, configStore, sendEngine, id, addActivity, leadGate: (session, conv) => { if (!conv.leadId || (conv.assigneeId && String(conv.assigneeId) === String(session.userId))) return true; const lead = db.leads.find(l => l.id === conv.leadId); return !lead || access.canSeeLead(session, lead, access.projectTeams(db.projects)); } });
+const inboxCenter = inboxLib.createInbox({ db, saveDb, configStore, sendEngine, id, addActivity, leadGate: (session, conv) => { if (!conv.leadId) return true; const lead = db.leads.find(l => l.id === conv.leadId); if (!lead) return true; if (session.desk && desks.deskOfLead(lead) !== session.desk) return false; if (conv.assigneeId && String(conv.assigneeId) === String(session.userId)) return true; return access.canSeeLead(session, lead, access.projectTeams(db.projects)); } });
 try { const backfilled = inboxCenter.backfill(); if (backfilled) console.log(`[inbox] opened ${backfilled} conversation(s) for existing replies`); } catch (err) { console.warn(`[inbox] backfill skipped: ${err.message}`); }
 sendEngine.hooks({
   onSent(job, { mailbox }) {
@@ -1257,7 +1258,7 @@ function queueSequenceStep(lead, step, { origin, actor = 'sequence', earliest = 
   const job = sendEngine.enqueue({
     leadId: lead.id, kind: step.n === 1 ? 'initial' : 'follow-up', to: lead.email, subject: step.subject, text: body, html: emailHtml(body, ''), headers,
     attachments: pdf ? [pdf] : [], mailboxId: seq.mailboxId || lead.mailboxId || '',
-    requestedBy: actor, earliest, immediate: step.n === 1, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor: seq.approval?.firstApprover || actor, company: lead.company, openToken: null }
+    requestedBy: actor, earliest, immediate: step.n === 1, meta: { sequenceId: seq.id, sequenceStep: step.n, followUp: step.n > 1, attachProposal: Boolean(pdf), actor: seq.approval?.firstApprover || actor, company: lead.company, openToken: null, desk: desks.deskOfLead(lead) }
   });
   seq.mailboxId = job.mailboxId; // follow-ups stay in the same mailbox so the thread holds together
   step.status = 'queued'; step.jobId = job.id; step.scheduledFor = job.scheduledAt;
@@ -1559,9 +1560,11 @@ function relationshipsSummary(now = new Date()) {
 // ---- Discovered leads catalogue (curated SA CSI funders) + bulk organisation verification ----
 /** Every funder has an owner; ones that pre-date private workspaces go to the root account (admins see them anyway). */
 function ensureLeadOwners() { const root = configStore.getRootUser(); const n = access.assignMissingOwners(db.leads, root?.id || ''); if (n) saveDbDeferred(); return n; }
-function visibleLeads(session) { const list = db.leads.filter(l => !l.hidden); return session ? access.filterLeads(session, list, db.projects) : list; }
+function visibleLeads(session, desk = session?.desk) { const list = db.leads.filter(l => !l.hidden && (!desk || desks.deskOfLead(l) === desk)); return session ? access.filterLeads(session, list, db.projects) : list; }
+/** Which desk this request is looking through: X-Chelo-Desk header (or ?desk=), limited to desks the person holds. */
+function requestDesk(req, url) { return desks.resolveDesk(req.authSession, req.headers['x-chelo-desk'] || url?.searchParams?.get('desk')); }
 function leadVisible(session, lead) { return access.canSeeLead(session, lead, access.projectTeams(db.projects)); }
-function addLead(lead, session) { lead.ownerId = String(session?.userId || lead.ownerId || configStore.getRootUser()?.id || ''); if (!Array.isArray(lead.sharedWith)) lead.sharedWith = []; db.leads.unshift(lead); return lead; }
+function addLead(lead, session) { if (!lead.kind) lead.kind = desks.kindForDesk(session?.desk || desks.DEFAULT_DESK); lead.ownerId = String(session?.userId || lead.ownerId || configStore.getRootUser()?.id || ''); if (!Array.isArray(lead.sharedWith)) lead.sharedWith = []; db.leads.unshift(lead); return lead; }
 /** Names for owner / shared-with chips (no emails leak to non-admins beyond display names). */
 function staffDirectory() { return configStore.listUsers().filter(u => u.active !== false).map(u => ({ id: u.id, displayName: u.displayName, username: u.username, role: u.role })); }
 function leadAccessView(lead, session) {
@@ -1772,7 +1775,7 @@ function createSession(req, user, res, options = {}) {
   const csrfToken = crypto.randomBytes(32).toString('hex');
   const demoAccess = Boolean(options.demoAccess);
   const account = typeof user === 'string' ? { username: user, displayName: user.split('@')[0], role: 'admin', id: '' } : user;
-  store.putSession(token, { username: account.username, userId: account.id || '', displayName: account.displayName || account.username, role: account.role || 'admin', csrfToken, demoAccess, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
+  store.putSession(token, { username: account.username, userId: account.id || '', displayName: account.displayName || account.username, role: account.role || 'admin', desks: desks.desksOf(account), csrfToken, demoAccess, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
   res.setHeader('Set-Cookie', cookieHeader(req, token, Math.floor(SESSION_TTL_MS / 1000)));
   return { authenticated: true, setupRequired: false, isRoot: demoAccess || configStore.isRootUser(account.id || ''), isPrimaryRoot: demoAccess || configStore.isPrimaryRoot(account.id || ''), username: account.username, displayName: account.displayName || account.username, role: account.role || 'admin', userId: account.id || '', csrfToken, demoAccess, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy };
 }
@@ -1821,7 +1824,7 @@ function authStatus(req) {
   if (session.expiresAt - Date.now() < SESSION_TTL_MS - 5 * 60 * 1000) {
     store.putSession(session.token, { ...session, expiresAt: Date.now() + SESSION_TTL_MS });
   }
-  return { authenticated: true, setupRequired: false, username: session.username, displayName: session.displayName, role: session.role, userId: session.userId, isRoot: isRootSession(session), isPrimaryRoot: configStore.isPrimaryRoot(session.userId), csrfToken: session.csrfToken, demoAccess: Boolean(session.demoAccess), demoAccessAvailable: DEMO_ADMIN_ACCESS, approvalPolicy };
+  return { authenticated: true, setupRequired: false, username: session.username, displayName: session.displayName, role: session.role, userId: session.userId, desks: desks.sessionDesks({ ...session, desks: session.desks || configStore.findUserById(session.userId)?.desks }), deskCatalogue: desks.DESKS, isRoot: isRootSession(session), isPrimaryRoot: configStore.isPrimaryRoot(session.userId), csrfToken: session.csrfToken, demoAccess: Boolean(session.demoAccess), demoAccessAvailable: DEMO_ADMIN_ACCESS, approvalPolicy };
 }
 function smtpTransporter() {
   let smtp = configStore.getSmtpConfig();
@@ -2229,8 +2232,10 @@ async function handleApi(req, res, url) {
       if (req.authSession.userId && !req.authSession.demoAccess) {
         // Live role: promotions/demotions and display-name changes apply on the next request, not the next login.
         const liveUser = configStore.findUserById(req.authSession.userId);
-        if (liveUser) { req.authSession.role = liveUser.role || 'admin'; req.authSession.displayName = liveUser.displayName || req.authSession.displayName; }
+        if (liveUser) { req.authSession.role = liveUser.role || 'admin'; req.authSession.displayName = liveUser.displayName || req.authSession.displayName; req.authSession.desks = desks.desksOf(liveUser); }
       }
+      // Desk lens: every list below is read through the desk the person is on (X-Chelo-Desk), limited to desks they hold.
+      req.authSession = { ...req.authSession, desk: requestDesk(req, url) };
       if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !csrfMatches(req.authSession.csrfToken, req.headers['x-csrf-token'])) return sendJson(res, 403, { error: 'Security token expired. Refresh and try again.' });
       // Role gate: reviewers can read everything and approve, but cannot change workspace settings or staff; settings/staff are admin-only.
       const adminOnly = pathname.startsWith('/api/settings') || pathname.startsWith('/api/staff') || pathname === '/api/demo/clear' || pathname === '/api/inbound/imap-sync';
@@ -2324,7 +2329,7 @@ async function handleApi(req, res, url) {
     if (method === 'GET' && pathname === '/api/staff') return sendJson(res, 200, { users: visibleUsers(req.authSession), rootUserId: req.authSession.isRoot ? (configStore.getRootUser()?.id || null) : null, isPrimaryRoot: configStore.isPrimaryRoot(req.authSession.userId) || Boolean(req.authSession.demoAccess), approvalPolicy: configStore.getGovernanceConfig().approvalPolicy });
     if (method === 'POST' && pathname === '/api/staff') {
       const body = await readBody(req);
-      const user = configStore.createUser({ username: body.username, displayName: body.displayName, role: body.role, password: body.password });
+      const user = configStore.createUser({ username: body.username, displayName: body.displayName, role: body.role, password: body.password, desks: body.desks });
       configStore.recordAudit({ actor: actorName(), action: 'staff.created', entityType: 'user', entityId: user.id, summary: `Staff account created for ${user.displayName} (${user.role})` });
       return sendJson(res, 201, user);
     }
@@ -2479,7 +2484,7 @@ async function handleApi(req, res, url) {
         return sendJson(res, body.id ? 200 : 201, { mailbox: sendEngine.setMailboxHealth(mailbox.id, health) });
       } catch (err) { return sendJson(res, 400, { error: err.message }); }
     }
-    const mailboxRoute = pathname.match(/^\/api\/deliverability\/mailboxes\/([^/]+)(?:\/(pause|resume|check|test|restart-ramp|sync-inbox|imap|dns))?$/);
+    const mailboxRoute = pathname.match(/^\/api\/deliverability\/mailboxes\/([^/]+)(?:\/(pause|resume|check|test|restart-ramp|sync-inbox|imap|dns|desk))?$/);
     if (mailboxRoute) {
       const mailbox = sendEngine.getMailbox(mailboxRoute[1]);
       if (!mailbox) return sendJson(res, 404, { error: 'Mailbox not found.' });
@@ -2488,6 +2493,13 @@ async function handleApi(req, res, url) {
         sendEngine.deleteMailbox(mailbox.id);
         configStore.recordAudit({ actor: actorName(), action: 'mailbox.deleted', entityType: 'mailbox', entityId: mailbox.id, summary: `Mailbox ${mailbox.fromEmail} removed` });
         return sendJson(res, 200, { ok: true });
+      }
+      if (method === 'PUT' && sub === 'desk') { // R1: tag a mailbox to a desk ('' = any)
+        const body = await readBody(req); const want = String(body.desk || '');
+        if (want && !desks.isDesk(want)) return sendJson(res, 400, { error: 'Choose CSI, Marketing, Schools, Suppliers or any.' });
+        const m = sendEngine.setMailboxDesk(mailbox.id, want);
+        configStore.recordAudit({ actor: actorName(), action: 'mailbox.desk', entityType: 'mailbox', entityId: mailbox.id, summary: `${mailbox.fromEmail} → ${want ? desks.describe(want).title : 'any desk'}` });
+        return sendJson(res, 200, { mailbox: m });
       }
       if (method === 'POST' && sub === 'pause') { const body = await readBody(req); return sendJson(res, 200, { mailbox: sendEngine.setMailboxStatus(mailbox.id, 'paused', `manual: ${String(body.reason || 'paused by ' + actorName()).slice(0, 120)}`) }); }
       if (method === 'POST' && sub === 'resume') {
@@ -3694,7 +3706,7 @@ async function handleApi(req, res, url) {
             leadId: lead.id, kind: followUp ? 'follow-up' : 'initial', to, subject, text: emailBody, html: emailHtml(emailBody, pixelUrl), headers,
             attachments: pdfAttachment ? [pdfAttachment] : [],
             mailboxId: body.mailboxId || '', requestedBy: actorName(), sendAt: body.sendNow === true ? new Date().toISOString() : null, immediate: !followUp,
-            meta: { openToken, followUp, attachProposal, actor: actorName(), company: lead.company }
+            meta: { openToken, followUp, attachProposal, actor: actorName(), company: lead.company, desk: desks.deskOfLead(lead) }
           });
           lead[followUp ? 'followUpEmailStatus' : 'emailStatus'] = 'Queued';
           lead.sendJobId = job.id;

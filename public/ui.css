@@ -2245,3 +2245,13 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 /* v58 — discovery result meta (mailbox, source article) */
 .wb-org-meta { display: block; margin-top: 6px; color: var(--text-muted, #6b6885); font-size: 12px; }
 .wb-org-meta svg { width: 12px; height: 12px; vertical-align: -2px; }
+
+/* R1 desks */
+.desk-switch { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px 2px; }
+.desk-tab { border: 1px solid rgba(255,255,255,.14); background: transparent; color: rgba(255,255,255,.62); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.desk-tab:hover { color: #fff; border-color: rgba(255,255,255,.35); }
+.desk-tab.is-active { background: #fff; color: #10203a; border-color: #fff; }
+.desk-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 4px 0; }
+.check-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.dlv-desk { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; }
+.dlv-desk .form-control { width: auto; min-height: 30px; padding: 2px 8px; font-size: 12.5px; }

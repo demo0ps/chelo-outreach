@@ -244,3 +244,12 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - `news.orgNameFor(title, domain)`: never a page title ("CSI", "Corporate social investment"); picks the title segment that matches the domain, else a brand table (bp → BP, jse → JSE…), else the domain core.
 - Only `media`/`company`-listed publishers are read as articles; directories/job boards never fetched. `read` now reports `named`, `articleTitles`, `aiOn`; the UI prints "Read N articles → funders named inside: …" or "AI key not set — article reading is off". Cache tag `v59`.
 - **v59b — "Tracked" is actionable.** `/api/discovery/search` returns `tracked {id, company, hidden, visible, stage}` for matches; the card shows **In To do · Open** / **Parked · Open** (hidden awaiting-contact leads are revealed via new `POST /api/leads/:id/reveal`, audited `lead.revealed`), or "Already in Chelo — ask an admin to share it" when the match belongs to someone else.
+
+## v60 — Four Desks, Release 1: desks & roles
+- One Chelo, four desks (CSI, Marketing, Schools, Suppliers). `lib/desks.js` is the single catalogue.
+- Accounts hold one or more desks (`users.desks`); admins, reviewers and root hold all four. Staff form has desk tick-boxes.
+- Sidebar desk switch (shown only when you hold ≥2 desks). Client sends `X-Chelo-Desk`; server resolves to a held desk.
+- Targets carry `kind` (funder / media / school / supplier). Missing kind = funder = CSI, so all existing data stays on the CSI desk with no migration.
+- Leads, To do, Workbench and Inbox are desk-scoped; Verified Projects stay shared.
+- Mailboxes can be tagged to one desk (`PUT /api/deliverability/mailboxes/:id/desk`); untagged boxes serve any desk.
+- Issue log started: `docs/known-issues.md`.

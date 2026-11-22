@@ -1,7 +1,7 @@
 const BRAND_MARK = '<img class="brand-mark" src="/brand/chelo-mark.svg" alt="" width="32" height="32" decoding="async" />';
 const API = async (url, options = {}) => {
   const method = String(options.method || 'GET').toUpperCase();
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const headers = { 'Content-Type': 'application/json', 'X-Chelo-Desk': currentDesk(), ...(options.headers || {}) };
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && state.auth?.csrfToken && !headers['X-CSRF-Token']) headers['X-CSRF-Token'] = state.auth.csrfToken;
   const response = await fetch(url, { credentials: 'same-origin', ...options, method, headers });
   const contentType = response.headers.get('content-type') || '';
@@ -10,6 +10,16 @@ const API = async (url, options = {}) => {
   return payload;
 };
 
+// ---- Desks (R1): one engine, four lenses. The chosen desk travels on every request as X-Chelo-Desk. ----
+const DESK_KEY = 'chelo-desk';
+function myDesks() { const list = Array.isArray(state?.auth?.desks) && state.auth.desks.length ? state.auth.desks : ['csi']; return list; }
+function currentDesk() { try { const saved = (typeof localStorage !== 'undefined' && localStorage.getItem(DESK_KEY)) || ''; const mine = myDesks(); return mine.includes(saved) ? saved : mine[0]; } catch { return 'csi'; } }
+function deskMeta(id = currentDesk()) { return (state?.auth?.deskCatalogue || []).find(d => d.id === id) || { id, label: id === 'csi' ? 'CSI' : id, title: `${id} desk`, targetLabel: 'Funders', targetSingular: 'funder', todoBlurb: '' }; }
+function deskSwitch() {
+  const mine = myDesks(); if (mine.length < 2) return '';
+  const cur = currentDesk();
+  return `<div class="desk-switch" role="tablist" aria-label="Desk">${mine.map(id => { const m = deskMeta(id); return `<button type="button" role="tab" class="desk-tab ${id === cur ? 'is-active' : ''}" data-action="desk-switch" data-desk="${esc(id)}" aria-selected="${id === cur}" title="${esc(m.title)}">${esc(m.label)}</button>`; }).join('')}</div>`;
+}
 const state = {
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
@@ -402,13 +412,14 @@ function shellSidebar() {
   const pending = state.data.bookings.filter(b => b.status === 'Requested').length;
   return `<aside class="sidebar">
     <a class="brand" href="#" data-view="overview"><span class="brand-symbol">${BRAND_MARK}</span><span class="brand-copy"><span class="brand-name">Chelo</span><span class="brand-tag">Communication Center</span></span></a>
-    <div class="nav-caption">Workspace</div>
+    ${deskSwitch()}
+    <div class="nav-caption">${esc(myDesks().length > 1 ? deskMeta().title : 'Workspace')}</div>
     <nav class="nav-list" aria-label="Main navigation">
       ${navItem('inbox', 'Inbox', 'reply', typeof window.inboxUnreadCount === 'function' ? window.inboxUnreadCount() : 0)}
       ${navItem('workbench', 'To do', 'wand', state.data.leads.filter(l => simpleStatusOf(l) === 'your-turn' && wbStatusOf(l) !== 'new').length + state.data.candidates.filter(c => c.status === 'New candidate').length)}
       ${navItem('overview', 'Today', 'overview')}
       ${navItem('projects', 'Projects', 'grid', state.data.projects.filter(p => p.funding?.fundingGap > 0).length)}
-      ${navItem('prospects', 'Funders', 'prospects')}
+      ${navItem('prospects', deskMeta().targetLabel || 'Funders', 'prospects')}
       ${navItem('briefings', 'Briefings', 'briefings', pending)}
       ${navItem('sent', 'Sent', 'mail')}
       ${navItem('partners', 'Partners', 'partners')}
@@ -1382,6 +1393,7 @@ async function dispatchAction(button) {
       finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
+    if (action === 'desk-switch') { try { localStorage.setItem(DESK_KEY, button.dataset.desk); } catch {} state.wb.selectedId = null; state.wb.discovery = { query: '', results: [], busy: false, error: '' }; if (state.ix) state.ix.data = null; refresh(); return; }
     if (action === 'edit-lead') return openModal('lead-form', id);
     if (action === 'lead-share-open') return openModal('lead-share', id);
     if (action === 'project-team-open') return openModal('project-team', id);
@@ -1693,9 +1705,10 @@ async function handleSubmit(event) {
     }
     if (type === 'staff') {
       const data = formDataObject(form);
+      data.desks = [...form.querySelectorAll('input[name="desks"]:checked')].map(i => i.value);
       if (!form.dataset.id && data.password !== data.confirmPassword) throw new Error('The passwords do not match.');
       if (form.dataset.id) { if (!data.password) delete data.password; delete data.confirmPassword; delete data.username; await API(`/api/staff/${encodeURIComponent(form.dataset.id)}`, { method: 'PUT', body: JSON.stringify(data) }); }
-      else await API('/api/staff', { method: 'POST', body: JSON.stringify({ username: data.username, displayName: data.displayName, role: data.role, password: data.password }) });
+      else await API('/api/staff', { method: 'POST', body: JSON.stringify({ username: data.username, displayName: data.displayName, role: data.role, password: data.password, desks: data.desks }) });
       state.modal = null; await refresh(); toast(form.dataset.id ? 'Staff account updated.' : 'Staff account created.'); return;
     }
     if (type === 'booking-edit') {
@@ -2203,6 +2216,7 @@ function staffFormModal(user) {
     <div class="form-group"><label for="s-name">Display name *</label><input class="form-control" id="s-name" name="displayName" required value="${esc(user?.displayName || '')}" /></div>
     <div class="form-group"><label for="s-email">Work email *</label><input class="form-control" id="s-email" name="username" type="email" required value="${esc(user?.username || '')}" ${edit ? 'readonly' : ''} /></div>
     <div class="form-group full"><label for="s-role">Role</label><select class="form-control" id="s-role" name="role" ${user?.isRoot || user?.coRoot ? 'disabled title="This account is always an administrator"' : ''}>${['admin', 'reviewer', 'owner'].map(r => `<option value="${r}" ${(user?.role || 'owner') === r ? 'selected' : ''}>${roleLabel(r)}</option>`).join('')}</select></div>
+    <div class="form-group full"><label>Desks</label><div class="desk-checks">${(state.auth?.deskCatalogue || []).map(d => `<label class="check-inline"><input type="checkbox" name="desks" value="${esc(d.id)}" ${(user?.desks || ['csi']).includes(d.id) ? 'checked' : ''} ${user?.isRoot || user?.coRoot ? 'disabled' : ''} /> ${esc(d.label)}</label>`).join('')}</div><div class="subtle">Administrators always hold every desk. Tick one or more desks for owners and reviewers.</div></div>
     <div class="form-group"><label for="s-pass">${edit ? 'New password (optional)' : 'Password *'}</label><input class="form-control" id="s-pass" name="password" type="password" autocomplete="new-password" minlength="12" ${edit ? '' : 'required'} placeholder="At least 12 characters" /></div>
     ${edit ? '' : `<div class="form-group"><label for="s-pass2">Confirm password *</label><input class="form-control" id="s-pass2" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required /></div>`}
   </div></form>`;
@@ -2358,7 +2372,7 @@ function workbenchView() {
   if (state.wb.sort === 'fit') visible.sort((a, b) => (b.fit?.score || 0) - (a.fit?.score || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (!state.wb.selectedId && visible.length) state.wb.selectedId = visible[0].id;
   const selected = wbSelected();
-  return `${pageHead('To do', 'To do', 'Funders that need you. Chelo checks the email address, researches them and writes the first draft — you read it and press Send.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
+  return `${pageHead('To do', 'To do', deskMeta().todoBlurb || 'Funders that need you. Chelo checks the email address, researches them and writes the first draft — you read it and press Send.', `<button type="button" class="button button-secondary" data-action="wb-intake" data-intake="pool">${svgIcon('upload')}Import CSV</button><button type="button" class="button button-primary" data-action="wb-focus-add">${svgIcon('plus')}Add lead</button>`)}
   ${wbIntakeBar()}
   <div class="wb-layout">
     <section class="panel wb-list-panel">
@@ -3156,6 +3170,8 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const deskSel = event.target.closest('[data-change="dlv-desk"]');
+  if (deskSel) { try { await API(`/api/deliverability/mailboxes/${encodeURIComponent(deskSel.dataset.id)}/desk`, { method: 'PUT', body: JSON.stringify({ desk: deskSel.value }) }); toast(deskSel.value ? `Mailbox now sends for the ${deskSel.options[deskSel.selectedIndex].text} desk only.` : 'Mailbox can send for any desk.'); await loadDeliverability(true); } catch (err) { toast(err.message, true); } return; }
   const pick = event.target.closest('[data-pool-pick]');
   if (pick) { const id = pick.dataset.poolPick; const set = new Set(state.wb.poolPicks || []); if (pick.checked) set.add(id); else set.delete(id); state.wb.poolPicks = Array.from(set); renderApp(); return; }
   const fye = event.target.closest('[data-wb-fye]');
@@ -3232,6 +3248,7 @@ function dlvMailboxCard(m) {
       ${m.authType === 'google' ? `<button type="button" class="button ${m.status === 'paused' && /google/i.test(m.pausedReason || '') ? 'button-primary' : 'button-ghost'} button-small" data-action="google-connect" data-mailbox="${esc(m.id)}">${svgIcon('key')}Reconnect Google</button>` : ''}
       <button type="button" class="button button-ghost button-small" data-action="dlv-edit" data-id="${esc(m.id)}">${svgIcon('edit')}Edit</button>
       <button type="button" class="button button-ghost button-small" data-action="dlv-restart-ramp" data-id="${esc(m.id)}">${svgIcon('trendingUp')}Restart ramp</button>
+      <label class="dlv-desk subtle">Desk <select class="form-control form-control-small" data-change="dlv-desk" data-id="${esc(m.id)}"><option value="">Any desk</option>${(state.auth?.deskCatalogue || []).map(d => `<option value="${esc(d.id)}" ${m.desk === d.id ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select></label>
       <button type="button" class="button button-ghost button-small" data-action="dlv-delete" data-id="${esc(m.id)}">${svgIcon('trash')}Remove</button>
     </div>
   </article>`;
