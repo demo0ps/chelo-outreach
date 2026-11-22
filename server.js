@@ -2396,7 +2396,15 @@ async function handleApi(req, res, url) {
         catch { o.mailbox = { status: 'unreachable' }; }
       }));
       const known = new Set(db.leads.map(l => String(l.website || l.sourceUrl || '').replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase()).filter(Boolean));
-      result.organisations = result.organisations.map(o => ({ ...o, alreadyTracked: known.has(o.domain) || db.leads.some(l => l.company.toLowerCase() === o.name.toLowerCase()) }));
+      const teams = access.projectTeams(db.projects);
+      result.organisations = result.organisations.map(o => {
+        const domainOf = l => String(l.website || l.sourceUrl || '').replace(/^https?:\/\/(www\.)?/i, '').split('/')[0].toLowerCase();
+        const existing = db.leads.find(l => (o.domain && domainOf(l) === o.domain) || l.company.toLowerCase() === o.name.toLowerCase()) || null;
+        if (!existing) return { ...o, alreadyTracked: false };
+        const visible = access.canSeeLead(req.authSession, existing, teams);
+        // v59.1: "Tracked" is actionable — say where it is and let the person open it (or ask an admin when it is private).
+        return { ...o, alreadyTracked: true, tracked: { id: visible ? existing.id : '', company: visible ? existing.company : '', hidden: Boolean(existing.hidden), visible, stage: visible ? existing.stage : '' } };
+      });
       configStore.recordAudit({ actor: actorName(), action: 'discovery.search', entityType: 'system', summary: `Web discovery: "${q}" → ${result.organisations.length} organisation(s)` });
       return sendJson(res, 200, result);
     }
@@ -3150,6 +3158,10 @@ async function handleApi(req, res, url) {
       const action = leadRoute[2] || '';
       if (!lead || !leadVisible(req.authSession, lead)) return sendJson(res, 404, { error: 'Prospect not found.' });
       if (method === 'GET' && action === 'access') return sendJson(res, 200, { access: leadAccessView(lead, req.authSession), directory: staffDirectory() });
+      if (method === 'POST' && action === 'reveal') { // bring a hidden (awaiting-contact) funder into To do so it can be worked by hand
+        if (lead.hidden) { delete lead.hidden; lead.revealedAt = new Date().toISOString(); lead.updatedAt = lead.revealedAt; configStore.recordAudit({ actor: actorName(), action: 'lead.revealed', entityType: 'lead', entityId: lead.id, summary: `${lead.company} moved into To do by hand` }); saveDb(); }
+        return sendJson(res, 200, { ok: true, lead: workbenchLead(lead) });
+      }
       if (method === 'PUT' && action === 'share') {
         if (!access.canManageLead(req.authSession, lead)) return sendJson(res, 403, { error: 'Only the owner or an administrator can share this funder.' });
         const body = await readBody(req);
