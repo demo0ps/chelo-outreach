@@ -2702,7 +2702,14 @@ async function handleApi(req, res, url) {
       if (method === 'PUT' && pathname === '/api/media-kit') {
         const body = await readBody(req);
         const kit = { ...media.cleanKit(body, mediaKit()), status: 'draft', approvedAt: '', approvedBy: '', updatedAt: new Date().toISOString(), updatedBy: actorName() };
+        if (body.approve === true && kit.boilerplate) Object.assign(kit, { status: 'approved', approvedAt: new Date().toISOString(), approvedBy: actorName() });
         saveMediaKit(kit);
+        if (kit.status === 'approved') {
+          configStore.recordAudit({ actor: actorName(), action: 'media-kit.approved', entityType: 'system', summary: 'Media kit saved and approved for pitches' });
+          const waiting = db.leads.filter(l => desks.kindOfLead(l) === 'media' && l.flow && l.flow.status === 'blocked' && /media kit/i.test(String(l.flow.steps?.draft?.detail || l.flow.error || '')));
+          const origin = publicOrigin(req);
+          waiting.forEach((l, i) => setTimeout(() => runLeadFlow(l, { actor: actorName(), origin, force: true }).catch(() => {}), 200 * i));
+        }
         configStore.recordAudit({ actor: actorName(), action: 'media-kit.updated', entityType: 'system', summary: `Media kit edited (${kit.facts.length} fact(s)); approval reset` });
         return sendJson(res, 200, { kit, blockReason: media.kitBlockReason(kit) });
       }
@@ -2712,7 +2719,11 @@ async function handleApi(req, res, url) {
         Object.assign(kit, { status: 'approved', approvedAt: new Date().toISOString(), approvedBy: actorName() });
         saveMediaKit(kit);
         configStore.recordAudit({ actor: actorName(), action: 'media-kit.approved', entityType: 'system', summary: 'Media kit approved for pitches' });
-        return sendJson(res, 200, { kit, blockReason: '' });
+        // v66: pitches that were waiting on the kit start again by themselves — no "Try again" on every card.
+        const waiting = db.leads.filter(l => desks.kindOfLead(l) === 'media' && l.flow && l.flow.status === 'blocked' && /media kit/i.test(String(l.flow.steps?.draft?.detail || l.flow.error || '')));
+        const origin = publicOrigin(req);
+        waiting.forEach((l, i) => setTimeout(() => runLeadFlow(l, { actor: actorName(), origin, force: true }).catch(() => {}), 200 * i));
+        return sendJson(res, 200, { kit, blockReason: '', rerun: waiting.length });
       }
       return sendJson(res, 405, { error: 'Method not allowed.' });
     }

@@ -30,7 +30,7 @@ const state = {
   mfa: { status: null, loading: false, setup: null, recoveryCodes: null },
   mfaChallenge: null,
   sup: { link: null, loading: false, match: null },
-  sch: { status: null, province: '', district: '', circuit: '', contact: '', q: '', tree: null, treeKey: '', list: null, busy: false },
+  sch: { collapsed: (() => { try { return localStorage.getItem('chelo-sch-collapsed') === '1'; } catch { return false; } })(), status: null, province: '', district: '', circuit: '', contact: '', q: '', tree: null, treeKey: '', list: null, busy: false },
   palette: null,
   dlv: { data: null, loading: false, error: '', editing: null },
   dq: { data: null, loading: false, error: '', busy: false },
@@ -1416,6 +1416,9 @@ async function dispatchAction(button) {
       finally { delete state.wb.busy.pool; renderApp(); }
       return;
     }
+    if (action === 'media-kit-save-approve') { const form = $('#media-kit-form'); if (!form) return; const data = formDataObject(form); data.facts = String(data.facts || '').split('\n').map(x => x.trim()).filter(Boolean); if (!String(data.boilerplate || '').trim()) return toast('Write the boilerplate paragraph first.', true); state.mediaKit = await API('/api/media-kit', { method: 'PUT', body: JSON.stringify({ ...data, approve: true }) }); toast('Media kit saved and approved — waiting pitches are being written.'); await refresh(); return; }
+    if (action === 'sch-toggle') { state.sch.collapsed = !state.sch.collapsed; try { localStorage.setItem('chelo-sch-collapsed', state.sch.collapsed ? '1' : ''); } catch {} renderApp(); return; }
+    if (action === 'open-media-kit') { state.settingsSection = 'media-kit'; setView('settings'); return; }
     if (action === 'mfa-restart') { state.mfaChallenge = null; state.authError = ''; renderAuthGate(); return; }
     if (action === 'mfa-setup') { state.mfa.setup = await API('/api/auth/mfa/setup', { method: 'POST', body: '{}' }); renderApp(); return; }
     if (action === 'mfa-cancel') { state.mfa.setup = null; renderApp(); return; }
@@ -1437,7 +1440,7 @@ async function dispatchAction(button) {
     if (action === 'sch-add') { state.sch.busy = true; renderApp(); try { const r = await API(`/api/schools/${encodeURIComponent(id)}/add`, { method: 'POST', body: '{}' }); toast(r.alreadyAdded ? `${r.lead.company} is already in To do.` : `${r.lead.company} added — ${r.lead.email ? 'Chelo checks the email and writes the first note.' : 'no published email, so a call task opens with the script.'}`); if (r.lead.id) { state.wb.selectedId = r.lead.id; wbPollFlow(r.lead.id); } await refresh(); state.sch.list = null; await schLoadList(); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; renderApp(); } return; }
     if (action === 'call-log') { const notes = $('#call-notes')?.value || ''; const when = $('#call-when')?.value || ''; const outcome = button.dataset.outcome; const r = await API(`/api/leads/${encodeURIComponent(id)}/call`, { method: 'POST', body: JSON.stringify({ outcome, notes, callBackAt: outcome === 'call-back' ? when : '', bookedAt: outcome === 'booked' ? when : '' }) }); toast(outcome === 'booked' ? `Call booked with ${r.lead.company}. Capture the needs when you speak.` : `Logged: ${outcome}.`); await refresh(); return; }
     if (action === 'need-project') { const r = await API(`/api/leads/${encodeURIComponent(id)}/needs/${encodeURIComponent(button.dataset.need)}/project`, { method: 'POST', body: '{}' }); toast(`Verified Project created: ${r.project.name}. Add the budget and photos under Projects.`); await refresh(); return; }
-    if (action === 'media-kit-approve') { state.mediaKit = await API('/api/media-kit/approve', { method: 'POST', body: '{}' }); renderApp(); toast('Media kit approved — pitches can go out.'); return; }
+    if (action === 'media-kit-approve') { state.mediaKit = await API('/api/media-kit/approve', { method: 'POST', body: '{}' }); renderApp(); toast(state.mediaKit.rerun ? `Media kit approved — ${state.mediaKit.rerun} waiting pitch${state.mediaKit.rerun === 1 ? ' is' : 'es are'} being written now.` : 'Media kit approved — pitches can go out.'); await refresh(); return; }
     if (action === 'pitch-track') { await API(`/api/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ pitchTrack: button.dataset.track }) }); toast(button.dataset.track === 'partnership' ? 'Partnership pitch — Chelo redrafts.' : 'PR pitch — Chelo redrafts.'); await wbRunFlow(id, { redraft: true }); return; }
     if (action === 'media-outcome') { const on = button.dataset.on !== 'false'; const r = await API(`/api/leads/${encodeURIComponent(id)}/outcome`, { method: 'PUT', body: JSON.stringify({ outcome: button.dataset.outcome, on }) }); toast(on ? `${button.dataset.outcome.charAt(0).toUpperCase()}${button.dataset.outcome.slice(1)} recorded for ${r.lead.company}.` : 'Cleared.'); await refresh(); return; }
     if (action === 'desk-switch') { try { localStorage.setItem(DESK_KEY, button.dataset.desk); } catch {} state.wb.selectedId = null; state.wb.discovery = { query: '', results: [], busy: false, error: '' }; if (state.ix) state.ix.data = null; refresh(); return; }
@@ -2327,7 +2330,7 @@ function mediaKitView(isAdmin) {
       <div class="form-group"><label for="mk-press">Press mailbox</label><input id="mk-press" class="form-control" name="pressEmail" type="email" value="${esc(k.pressEmail)}" ${ro} /></div>
       <div class="form-group"><label for="mk-assets">Photos, logos, backgrounder (link)</label><input id="mk-assets" class="form-control" name="assetsUrl" value="${esc(k.assetsUrl)}" ${ro} placeholder="https://…" /></div>
     </form>
-    ${isAdmin ? `<div class="settings-card-actions"><button type="submit" form="media-kit-form" class="button button-primary">${svgIcon('save')} Save kit</button>${approved ? '' : `<button type="button" class="button button-secondary" data-action="media-kit-approve" ${k.boilerplate ? '' : 'disabled'}>${svgIcon('checkCircle')} Approve for pitches</button>`}<span class="subtle">Saving resets approval, so a second look always follows a change.</span></div>` : `<p class="subtle">Only administrators edit and approve the kit.</p>`}
+    ${isAdmin ? `<div class="settings-card-actions"><button type="submit" form="media-kit-form" class="button button-secondary">${svgIcon('save')} Save kit</button><button type="button" class="button button-primary" data-action="media-kit-save-approve">${svgIcon('checkCircle')} Save & approve for pitches</button>${approved ? '' : `<button type="button" class="button button-secondary" data-action="media-kit-approve" ${k.boilerplate ? '' : 'disabled'}>${svgIcon('checkCircle')} Approve for pitches</button>`}<span class="subtle">Saving resets approval, so a second look always follows a change.</span></div>` : `<p class="subtle">Only administrators edit and approve the kit.</p>`}
   </section>`;
 }
 /** R5 G2: the signed-in person's own two-step sign-in and sessions. */
@@ -2542,13 +2545,23 @@ function workbenchView() {
     <section class="wb-detail">${selected ? wbStepper(selected) : `<div class="panel empty-state"><div class="empty-state-icon">${svgIcon('target')}</div><p>Select a lead to work on it.</p></div>`}</section>
   </div>`;
 }
+/** v66: the media-kit block was easy to miss on each card. One banner, one button, and pitches restart on approval. */
+function mediaKitBanner() {
+  const kit = state.data.mediaKit; if (kit && kit.status === 'approved' && kit.boilerplate) return '';
+  const isAdmin = state.auth.role === 'admin' || state.auth.isRoot || state.auth.demoAccess;
+  const written = Boolean(kit && kit.boilerplate);
+  return `<section class="panel wb-kit-banner"><div><strong>${svgIcon('bell')} Pitches are on hold: ${written ? 'the media kit is written but not approved.' : 'there is no media kit yet.'}</strong>
+    <p class="subtle">Every pitch quotes the kit (one paragraph about Chelo, the facts journalists may use, the spokesperson). ${written ? 'An administrator approves it once; every waiting pitch is then written automatically.' : 'Write it once under Settings → Media kit; approve it; every waiting pitch is then written automatically.'}</p></div>
+    <div class="wb-step-actions">${written && isAdmin ? `<button type="button" class="button button-primary" data-action="media-kit-approve">${svgIcon('checkCircle')}Approve the media kit now</button>` : ''}<button type="button" class="button ${written && isAdmin ? 'button-secondary' : 'button-primary'}" data-action="open-media-kit">${svgIcon('globe')}${written ? 'Open media kit' : 'Write the media kit'}</button></div></section>`;
+}
 function wbIntakeBar() {
   if (onSchools()) return schoolsIntakeBar();
   if (onSuppliers()) return suppliersIntakeBar();
   const d = state.wb.discovery;
   const intake = state.wb.intake === 'pool' ? 'pool' : 'add';
+  const kitBanner = onMarketing() ? mediaKitBanner() : '';
   const poolCount = state.data.candidates.filter(c => c.status === 'New candidate').length;
-  const tabs = `<div class="wb-intake-tabs" role="tablist"><button type="button" role="tab" class="wb-intake-tab ${intake === 'add' ? 'is-active' : ''}" data-action="wb-intake" data-intake="add" aria-selected="${intake === 'add'}">${svgIcon('plus')} Add or discover</button><button type="button" role="tab" class="wb-intake-tab ${intake === 'pool' ? 'is-active' : ''}" data-action="wb-intake" data-intake="pool" aria-selected="${intake === 'pool'}">${svgIcon('database')} Local pool & CSV${poolCount ? ` <span class="wb-count">${poolCount}</span>` : ''}</button></div>`;
+  const tabs = `${kitBanner}<div class="wb-intake-tabs" role="tablist"><button type="button" role="tab" class="wb-intake-tab ${intake === 'add' ? 'is-active' : ''}" data-action="wb-intake" data-intake="add" aria-selected="${intake === 'add'}">${svgIcon('plus')} Add or discover</button><button type="button" role="tab" class="wb-intake-tab ${intake === 'pool' ? 'is-active' : ''}" data-action="wb-intake" data-intake="pool" aria-selected="${intake === 'pool'}">${svgIcon('database')} Local pool & CSV${poolCount ? ` <span class="wb-count">${poolCount}</span>` : ''}</button></div>`;
   if (intake === 'pool') { loadCatalogue(); return `<section class="panel wb-intake">${tabs}${discoverPanel()}<input type="file" id="candidate-csv" accept=".csv,text/csv" hidden /></section>`; }
   return `<section class="panel wb-intake">${tabs}
     <form class="wb-add-form" data-form="wb-add" id="wb-add-form">
@@ -2820,7 +2833,7 @@ function schoolsIntakeBar() {
       <input class="form-control" data-sch-filter="q" placeholder="School or town" value="${esc(sch.q)}" /></div>
       ${list ? `<p class="subtle">${list.total.toLocaleString('en-ZA')} school${list.total === 1 ? '' : 's'}${list.total > list.items.length ? ` · showing the first ${list.items.length} (email first)` : ''}</p><div class="sch-list">${list.items.map(x => `<div class="sch-row ${x.tracked ? 'is-tracked' : ''}"><div><strong>${esc(x.name)}</strong><span class="subtle"> · ${esc(x.phase || '')}${x.quintile ? ` · ${esc(x.quintile)}` : ''}${x.noFee ? ' · no-fee' : ''}${x.learners ? ` · ${x.learners.toLocaleString('en-ZA')} learners` : ''}${x.town ? ` · ${esc(x.town)}` : ''}</span><br><span class="subtle">${x.email ? `${svgIcon('mail')}${esc(x.email)}` : ''}${x.phone ? ` ${svgIcon('phone')}${esc(x.phone)}` : ''}${!x.email && !x.phone ? 'no contact in the DBE list' : ''}</span></div>${x.tracked ? (x.tracked.visible ? `<button type="button" class="button button-ghost button-small" data-action="wb-select" data-id="${esc(x.tracked.id)}">${svgIcon('eye')}In To do · ${esc(x.tracked.stage)}</button>` : '<span class="subtle">Added by a colleague</span>') : `<button type="button" class="button button-secondary button-small" data-action="sch-add" data-id="${esc(x.natemis)}" ${sch.busy ? 'disabled' : ''}>${svgIcon('plus')}Add & run</button>`}</div>`).join('')}</div>` : '<p class="subtle">Loading schools…</p>'}`;
   }
-  return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>DBE list of schools</strong> <span class="subtle">· ${esc(st.source)} · ${st.total.toLocaleString('en-ZA')} schools</span></div>${guide}</div>${crumbs}${body}</section>`;
+  return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>DBE list of schools</strong> <span class="subtle">· ${esc(st.source)} · ${st.total.toLocaleString('en-ZA')} schools</span>${sch.district ? ` <span class="subtle">· ${esc(sch.district)}</span>` : sch.province ? ` <span class="subtle">· ${esc(sch.province)}</span>` : ''}</div><div class="wb-step-actions">${guide}<button type="button" class="button button-ghost button-small" data-action="sch-toggle" title="${state.sch.collapsed ? 'Show the school list' : 'Hide the school list — your To do cards move up'}">${svgIcon(state.sch.collapsed ? 'eye' : 'close')}${state.sch.collapsed ? 'Show list' : 'Hide list'}</button></div></div>${state.sch.collapsed ? '' : `${crumbs}<div class="sch-scroll">${body}</div>`}</section>`;
 }
 /** R2: Marketing desk — pitch track and outcomes for a media target. */
 function wbMediaCard(lead) {
@@ -2831,7 +2844,7 @@ function wbMediaCard(lead) {
   return wbCard('globe', 'Pitch', `<div class="wb-track"><span class="subtle">Track</span>
       <button type="button" class="desk-tab ${track === 'pr' ? 'is-active' : ''}" data-action="pitch-track" data-id="${esc(lead.id)}" data-track="pr" title="Get a verified-project story covered">PR pitch</button>
       <button type="button" class="desk-tab ${track === 'partnership' ? 'is-active' : ''}" data-action="pitch-track" data-id="${esc(lead.id)}" data-track="partnership" title="Propose an ongoing media partnership">Partnership pitch</button></div>
-    <p class="subtle">${track === 'pr' ? 'Story first: pick the Verified Project below; the pitch names it and offers the spokesperson and photos.' : 'Partnership: an ongoing series on verified projects. No single project needed.'}${kitOk ? '' : ' <strong>The media kit is not approved yet</strong> — Settings → Media kit.'}</p>
+    <p class="subtle">${track === 'pr' ? 'Story first: pick the Verified Project below; the pitch names it and offers the spokesperson and photos.' : 'Partnership: an ongoing series on verified projects. No single project needed.'}${kitOk ? '' : ` <strong>The media kit is not approved yet.</strong> <button type="button" class="link-button" data-action="open-media-kit">Open media kit</button>`}</p>
     <div class="wb-outcomes"><span class="subtle">Outcome</span>${oc('booked', 'Call booked', 'calendar')}${oc('published', 'Published', 'check')}${oc('signed', 'Partnership signed', 'trophy')}</div>`);
 }
 function wbLeadPage(lead) {

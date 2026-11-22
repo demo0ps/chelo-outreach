@@ -105,10 +105,14 @@ test('marketing desk end-to-end: kit gate, media target flow, track switch, outc
   assert.equal(run1.flow.steps.draft.status, 'blocked'); assert.match(run1.flow.steps.draft.detail, /media kit/);
   assert.equal(run1.lead.research?.kind, 'coverage', 'media targets get the coverage brief, not the funder brief');
 
-  // Save + approve the kit (saving resets approval).
+  // Save + approve the kit (saving resets approval). v66: approval re-runs every pitch that was waiting on the kit.
   assert.equal((await mk('PUT', '/api/media-kit', KIT)).payload.kit.status, 'draft');
   const approved = (await mk('POST', '/api/media-kit/approve', {})).payload;
-  assert.equal(approved.kit.status, 'approved'); assert.equal(approved.blockReason, '');
+  assert.equal(approved.kit.status, 'approved'); assert.equal(approved.blockReason, ''); assert.equal(approved.rerun, 1, 'the blocked outlet is re-run automatically');
+  await new Promise(r => setTimeout(r, 1500));
+  const after = (await mk('GET', '/api/workbench')).payload.leads.find(l => l.id === outlet.id);
+  assert.equal(after.flow.steps.draft.status, 'drafted', JSON.stringify(after.flow.steps.draft));
+  assert.equal((await mk('PUT', '/api/media-kit', { ...KIT, approve: true })).payload.kit.status, 'approved', 'save & approve in one step');
   assert.equal((await mk('PUT', '/api/media-kit', { spokesperson: 'Emma N.' })).payload.kit.status, 'draft', 'editing resets approval');
   assert.equal((await mk('POST', '/api/media-kit/approve', {})).status, 200);
 

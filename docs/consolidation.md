@@ -290,3 +290,7 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 - `lib/desk-pdf.js`: `fieldLabels`, `defaults`, `layoutFor`, `filenameFor` for media/school/supplier. `pdf-engine.makeProposalPdf` honours `proposal.layout` (kicker, title, labels, box, sections, footer); funder path untouched.
 - Server: `deskPdfContext(lead)` (project, media kit, open tender the supplier was sent); `createProposal`/rebuild/attachment/download use the desk layout and filename; `proposal/draft` returns desk defaults (`mode: 'desk-template'`) for non-funder leads.
 - UI: `PDF_LABELS` per kind in the proposal modal (titles, field labels, button), amount/metrics/research only for funders; "Documents" page copy per desk; lead action button names the document. Tests: `tests/desk-pdf.test.js`. 120/0.
+
+## v66 — Schools list in its own scroll box; media-kit block made unmissable
+- Schools intake: `.sch-scroll` (max-height ≈46vh, sticky filters), "Hide list / Show list" toggle (`state.sch.collapsed`, localStorage `chelo-sch-collapsed`).
+- Marketing: `mediaKitBanner()` on the To do (admin: "Approve the media kit now"; all: "Open media kit" → Settings → Media kit); `open-media-kit`, `media-kit-save-approve` actions; `PUT /api/media-kit {approve:true}` saves + approves; approve (either route) re-runs every media lead whose draft step is blocked on the kit (`rerun` count in the response). Test in `tests/media.test.js`.
