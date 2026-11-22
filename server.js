@@ -29,6 +29,7 @@ const schools = require('./lib/schools');
 const suppliers = require('./lib/suppliers');
 const security = require('./lib/security');
 const deskPdf = require('./lib/desk-pdf');
+const pictures = require('./lib/pictures').createLibrary(path.join(__dirname, 'public', 'brand', 'photos')); // v68 photo library
 // R5: API-wide rate limiting (G3). Per IP for anonymous traffic (public forms, auth), per session once signed in.
 // Limits are per minute; RATE_LIMIT_SCALE lets a load test raise them without code changes.
 const RATE_SCALE = Math.max(0.1, Number(process.env.RATE_LIMIT_SCALE || 1));
@@ -295,7 +296,7 @@ function projectFunding(project) {
   return { committedTotal: committed, wonFromPipeline: won, pipelineAmount: pipeline, fundingGap: gap, coveragePct: project.targetAmount ? Math.min(100, Math.round((committed / project.targetAmount) * 100)) : 0 };
 }
 function clientProject(project) {
-  return { ...project, funding: projectFunding(project), linkedProspects: db.leads.filter(l => l.projectId === project.id).length, linkedPartners: db.partners.filter(p => p.projectId === project.id).length };
+  return { ...project, photoPick: pictures.pick(project), funding: projectFunding(project), linkedProspects: db.leads.filter(l => l.projectId === project.id).length, linkedPartners: db.partners.filter(p => p.projectId === project.id).length };
 }
 function readLargeBody(req, max = 40_000_000) {
   return new Promise((resolve, reject) => {
@@ -653,11 +654,11 @@ function proposalContext(lead) {
   const linkedProject = lead.projectId ? db.projects.find(p => p.id === lead.projectId) : null;
   const out = {};
   if (linkedProject) Object.assign(out, { recipientName: linkedProject.recipientName, province: linkedProject.province });
-  const template = conversion.templateFor(linkedProject || { name: lead.project || '' });
-  const file = path.join(PUBLIC_DIR, 'brand', 'templates', `${template}-cover.jpg`);
-  if (fs.existsSync(file)) {
+  const picked = pictures.pick(linkedProject || { name: lead.project || '' }, { lead }); // v68: themed, rotated per funder, or pinned by staff
+  const coverBytes = pictures.coverBuffer(picked);
+  if (coverBytes) {
     out.cover = {
-      image: fs.readFileSync(file), funder: lead.company,
+      image: coverBytes, funder: lead.company,
       projectName: linkedProject?.name || lead.project || 'A verified school project',
       place: [linkedProject?.recipientName, linkedProject?.province].filter(Boolean).join(' · ')
     };
@@ -2572,6 +2573,22 @@ async function handleApi(req, res, url) {
       saveDb();
       return sendJson(res, 200, { ok: true, vetting: v, lead: workbenchLead(lead) });
     }
+    if (method === 'GET' && pathname === '/api/photos') return sendJson(res, 200, { themes: pictures.gallery() });
+    const photoRoute = pathname.match(/^\/api\/projects\/([^/]+)\/photo$/);
+    if (photoRoute && method === 'PUT') {
+      const project = db.projects.find(p => p.id === photoRoute[1]); if (!project) return sendJson(res, 404, { error: 'Project not found.' });
+      const body = await readBody(req);
+      if (!body.theme) { delete project.photo; }
+      else {
+        if (!pictures.THEME_IDS.includes(body.theme)) return sendJson(res, 400, { error: 'Unknown picture theme.' });
+        const n = Number(body.n);
+        if (!pictures.variants(body.theme).includes(n)) return sendJson(res, 400, { error: 'That photo does not exist.' });
+        project.photo = { theme: body.theme, n, by: actorName(), at: new Date().toISOString() };
+      }
+      project.updatedAt = new Date().toISOString(); saveDb();
+      configStore.recordAudit({ actor: actorName(), action: 'project.photo', entityType: 'project', entityId: project.id, summary: project.photo ? `${project.name}: picture pinned (${project.photo.theme} #${project.photo.n})` : `${project.name}: picture back to automatic rotation` });
+      return sendJson(res, 200, clientProject(project));
+    }
     const tenderRoute = pathname.match(/^\/api\/projects\/([^/]+)\/tender(?:\/(close|done|quotes\/([^/]+)))?$/);
     if (tenderRoute) {
       const project = db.projects.find(p => p.id === decodeURIComponent(tenderRoute[1]));
@@ -2691,7 +2708,7 @@ async function handleApi(req, res, url) {
       if (!need) return sendJson(res, 404, { error: 'Need not found.' });
       if (need.projectId && db.projects.some(p => p.id === need.projectId)) return sendJson(res, 200, { ok: true, alreadyCreated: true, project: clientProject(db.projects.find(p => p.id === need.projectId)), lead: workbenchLead(lead) });
       let project; try { project = safeProject({ ...schools.projectFromNeed(lead, need), ...(body.targetAmount !== undefined ? { targetAmount: body.targetAmount } : {}), ...(body.name ? { name: body.name } : {}) }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
-      project.id = id('proj'); project.createdAt = project.updatedAt = new Date().toISOString(); project.schoolLeadId = lead.id; project.natemis = lead.natemis || '';
+      project.id = id('proj'); project.createdAt = project.updatedAt = new Date().toISOString(); project.schoolLeadId = lead.id; project.natemis = lead.natemis || ''; project.needCategory = need.category || 'other';
       db.projects.push(project);
       need.projectId = project.id; need.status = 'project';
       lead.updatedAt = new Date().toISOString();
@@ -3279,7 +3296,7 @@ async function handleApi(req, res, url) {
       const lead = db.leads.find(l => l.bookingToken === publicPage[1]);
       if (!lead) return sendJson(res, 404, { error: 'This page is not available.' });
       const project = db.projects.find(p => p.id === lead.projectId) || null;
-      const model = conversion.pageModel({ lead, project, funding: project ? projectFunding(project) : null, origin: publicOrigin(req) });
+      const model = conversion.pageModel({ lead, project, funding: project ? projectFunding(project) : null, origin: publicOrigin(req), photo: pictures.pick(project, { lead }) });
       if (!model.expired && !url.searchParams.get('preview')) {
         const sourceMessage = db.messages.find(m => m.leadId === lead.id && m.sentAt && ['Sent', 'Confirmed by staff'].includes(m.status));
         addEmailEvent(lead.id, 'page_view', sourceMessage?.id || null, 'partnership-page');

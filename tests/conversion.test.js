@@ -155,7 +155,7 @@ test('conversion API: ladder draft, guardrail blocks approval (422) and admin ov
   // Public page: view is recorded as a page_view event + warmth; booking from a slot works without auth
   const pub = await fetch(`${base}/api/public/page/${lead2.bookingToken}`); const page = await pub.json();
   assert.equal(pub.status, 200); assert.equal(page.expired, false); assert.equal(page.company, 'Thembi Mining');
-  assert.ok(page.numbers.some(n => n.value === 'R7m+')); assert.equal(page.slots.length, 2); assert.match(page.image, /\/brand\/templates\/(classroom|construction|ict)\.jpg/);
+  assert.ok(page.numbers.some(n => n.value === 'R7m+')); assert.equal(page.slots.length, 2); assert.match(page.image, /\/brand\/(templates\/(classroom|construction|ict)|photos\/[a-z]+-\d+)\.jpg/); // v68: photo library
   const html = await fetch(`${base}/p/${lead2.bookingToken}`); assert.equal(html.status, 200); assert.match(await html.text(), /<div id="app"/);
   const init = (await api('GET', '/api/init')).payload;
   const st = init.leads.find(x => x.id === lead2.id);

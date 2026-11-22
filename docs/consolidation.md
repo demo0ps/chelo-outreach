@@ -297,3 +297,8 @@ Mobile: the email card shows *Send & follow up* when a plan is drafted; wording 
 
 ## v67 — Starter media kit
 - `media.starterKit({spokesperson, spokespersonTitle, pressEmail})`: boilerplate + six facts drawn from the product and cheloapp.com positioning (three guarantees; no money through school or Chelo; DBE list ≈25 500 schools Q2 2025; supplier vetting/quotes; Motse School × Bolt proof point; project page for CSI/B-BBEE reporting). `mediaKit()` returns it (status draft, `starter: true`) until a kit is saved; spokesperson defaults to the root account's name, press mailbox to its email. Settings → Media kit explains it is a starter.
+
+## v68 — Photo library: one theme per need, rotated per funder, staff can pin
+- `lib/pictures.js` `createLibrary(dir)`: 11 themes (need categories + "school life"), files `public/brand/photos/<theme>-<n>.jpg` (1400w) + `-cover.jpg` (1000w, baseline JPEG for the PDF); `themeFor(project)` (pinned → `needCategory` → words, specific before general), `pick(project,{lead})` (FNV hash of project+lead → variant; pinned wins; legacy template fallback when a theme is empty), `gallery()`, `coverBuffer()`.
+- Server: `conversion.pageModel({photo})`; `proposalContext` cover from the library; `clientProject.photoPick`; `GET /api/photos`; `PUT /api/projects/:id/photo {theme,n}` (empty theme = back to rotation); projects created from a school need carry `needCategory`.
+- UI: project modal "Picture" section (current pick, theme browser, click to pin, back to automatic). Images: 10 generated this session + 4 legacy re-encoded (ImageMagick resize/strip). Tests `tests/pictures.test.js`. 122/0.

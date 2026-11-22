@@ -27,6 +27,7 @@ function deskSwitch() {
   return `<div class="desk-switch" role="tablist" aria-label="Desk">${mine.map(id => { const m = deskMeta(id); return `<button type="button" role="tab" class="desk-tab ${id === cur ? 'is-active' : ''}" data-action="desk-switch" data-desk="${esc(id)}" aria-selected="${id === cur}" title="${esc(m.title)}">${esc(m.label)}</button>`; }).join('')}</div>`;
 }
 const state = {
+  photos: { themes: null, loading: false, theme: {} },
   mfa: { status: null, loading: false, setup: null, recoveryCodes: null },
   mfaChallenge: null,
   sup: { link: null, loading: false, match: null },
@@ -1417,6 +1418,8 @@ async function dispatchAction(button) {
       return;
     }
     if (action === 'media-kit-save-approve') { const form = $('#media-kit-form'); if (!form) return; const data = formDataObject(form); data.facts = String(data.facts || '').split('\n').map(x => x.trim()).filter(Boolean); if (!String(data.boilerplate || '').trim()) return toast('Write the boilerplate paragraph first.', true); state.mediaKit = await API('/api/media-kit', { method: 'PUT', body: JSON.stringify({ ...data, approve: true }) }); toast('Media kit saved and approved — waiting pitches are being written.'); await refresh(); return; }
+    if (action === 'photo-pin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: button.dataset.theme, n: Number(button.dataset.n) }) }); toast('Picture pinned for this project.'); await refresh(); return; }
+    if (action === 'photo-unpin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: '' }) }); toast('Back to automatic rotation.'); await refresh(); return; }
     if (action === 'sch-toggle') { state.sch.collapsed = !state.sch.collapsed; try { localStorage.setItem('chelo-sch-collapsed', state.sch.collapsed ? '1' : ''); } catch {} renderApp(); return; }
     if (action === 'open-media-kit') { state.settingsSection = 'media-kit'; setView('settings'); return; }
     if (action === 'mfa-restart') { state.mfaChallenge = null; state.authError = ''; renderAuthGate(); return; }
@@ -2217,6 +2220,20 @@ function tenderHistoryNote(p) {
   const h = p.tenderHistory || []; if (!h.length) return '';
   return `<details class="subtle" style="margin:6px 0"><summary>${h.length} earlier round${h.length === 1 ? '' : 's'}</summary><ul class="wb-need-list">${h.map(r => `<li>${esc(TRADE_LABELS[r.trade] || r.trade)}${r.province ? ` · ${esc(r.province)}` : ''} · ${isoDate(r.openedAt)} · sent to ${(r.sentTo || []).length}, ${(r.quotes || []).length} quote${(r.quotes || []).length === 1 ? '' : 's'} · ${esc(r.status)}${r.awardedQuoteId ? ` (${esc((r.quotes || []).find(q => q.id === r.awardedQuoteId)?.company || '')})` : ''}</li>`).join('')}</ul></details>`;
 }
+/** v68: the picture that goes on this project's hosted page, PDF cover and backgrounder. Auto by theme and rotated per funder unless pinned. */
+function projectPhotoSection(p) {
+  const g = state.photos;
+  if (!g.themes && !g.loading) { g.loading = true; API('/api/photos').then(r => { g.themes = r.themes; g.loading = false; renderApp(); }).catch(() => { g.loading = false; }); }
+  const pick = p.photoPick || {}; const theme = g.theme[p.id] || pick.theme || 'other';
+  const themes = g.themes || []; const current = themes.find(t => t.id === theme) || { photos: [] };
+  const id = esc(p.id);
+  return `<div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('eye')}Picture</span></div>
+    <p class="subtle">${pick.pinned ? `<strong>Pinned:</strong> every funder sees this photo.` : `<strong>Automatic:</strong> theme “${esc((themes.find(t => t.id === pick.theme) || {}).label || pick.theme || '')}”, rotated so each funder gets a different one of its ${pick.choices || 0} photo${pick.choices === 1 ? '' : 's'}.`} Used on the hosted page, the PDF cover and the press backgrounder.</p>
+    <div class="photo-pick"><img class="photo-current" src="${esc(pick.image || '')}" alt="" />
+      <div><label class="form-group"><span>Browse a theme</span><select class="form-control" data-photo-theme="${id}">${themes.map(t => `<option value="${t.id}" ${t.id === theme ? 'selected' : ''}>${esc(t.label)} (${t.photos.length})</option>`).join('')}</select></label>
+      <div class="photo-grid">${current.photos.map(ph => `<button type="button" class="photo-tile ${pick.pinned && pick.theme === theme && pick.n === ph.n ? 'is-pinned' : ''}" data-action="photo-pin" data-id="${id}" data-theme="${esc(theme)}" data-n="${ph.n}" title="Pin this photo for every funder"><img src="${esc(ph.image)}" alt="" loading="lazy" /></button>`).join('') || '<span class="subtle">No photos in this theme yet.</span>'}</div>
+      ${pick.pinned ? `<button type="button" class="button button-ghost button-small" data-action="photo-unpin" data-id="${id}">${svgIcon('refresh')}Back to automatic rotation</button>` : ''}</div></div></div>`;
+}
 function projectTenderSection(p) {
   const t = p.tender; const id = esc(p.id); const isAdmin = state.auth.role === 'admin' || state.auth.isRoot || state.auth.demoAccess;
   const provinces = ['', 'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape'];
@@ -2253,6 +2270,7 @@ function projectDetailModal(p) {
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('trend')}Funding ledger</span></div>${fundingBar(p.funding, p.targetAmount)}<div class="detail-grid" style="margin-top:12px"><div class="detail-item"><small>Target</small><strong>${money(p.targetAmount)}</strong></div><div class="detail-item"><small>Committed (incl. won)</small><strong>${money(p.funding?.committedTotal)}</strong></div><div class="detail-item"><small>Funding gap</small><strong>${money(p.funding?.fundingGap)}</strong></div><div class="detail-item"><small>Active pipeline</small><strong>${money(p.funding?.pipelineAmount)}</strong></div></div></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('checkCircle')}Verification</span></div><div class="detail-item"><small>Source</small>${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(source)} ${svgIcon('external')}</a>` : '<strong>No source URL</strong>'}<small>Verified ${esc(dateOnly(p.verifiedAt) || '—')} · ${esc(p.status)}</small></div>${p.summary ? `<div class="detail-note" style="margin-top:10px">${esc(p.summary)}</div>` : ''}</div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('analytics')}Verified metrics</span></div>${(p.verifiedMetrics || []).map(m => `<div class="project-metric"><strong>${esc(m.label)}</strong><span>${esc(String(m.baselineValue))} → <b>${esc(String(m.currentValue))}</b> ${esc(m.unit)}</span><small>${esc(m.period)} · ${esc(m.source)}</small></div>`).join('') || '<span class="subtle">None recorded.</span>'}</div>
+    ${projectPhotoSection(p)}
     ${projectTenderSection(p)}
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('users')}Team on this project</span>${state.data.canSeeAll ? `<button class="table-action" data-action="project-team-open" data-id="${esc(p.id)}">${svgIcon('edit')}Change</button>` : ''}</div><p class="subtle">${(p.team || []).length ? esc((p.team || []).map(id => (state.data.directory || []).find(u => String(u.id) === String(id))?.displayName || 'Former staff').join(', ')) + ' — they see every funder linked to this project.' : 'Nobody extra yet. Owners of each funder, people it is shared with, and admins can see them.'}</p></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('prospects')}Linked prospects (${linked.length}) & partners (${partners.length})</span></div>${linked.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('prospects')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>${esc(l.stage)} · ${money(l.amount)} · ${esc(grantCycleLabel(l))}</span></div><button class="table-action" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></div>`).join('')}${partners.map(x => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('partners')}</div><div class="shortcut-copy"><strong>${esc(x.company)}</strong><span>Partner · ${money(x.amount)}</span></div></div>`).join('') || (!linked.length ? '<span class="subtle">No prospects linked yet.</span>' : '')}</div>`;
@@ -3436,6 +3454,8 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const photoTheme = event.target.closest('[data-photo-theme]');
+  if (photoTheme) { state.photos.theme[photoTheme.dataset.photoTheme] = photoTheme.value; renderApp(); return; }
   const schFilter = event.target.closest('[data-sch-filter]');
   if (schFilter) { state.sch[schFilter.dataset.schFilter] = schFilter.value; try { await schLoadList(); } catch (err) { toast(err.message, true); } renderApp(); return; }
   const dbeFile = event.target.closest('#dbe-csv');

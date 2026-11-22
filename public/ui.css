@@ -2288,3 +2288,11 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .sch-scroll .sch-filters { position: sticky; top: 0; background: #fff; z-index: 1; padding: 6px 0; margin: 0 0 6px; }
 .wb-kit-banner { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; border-left: 4px solid #d97706; background: #fff8ec; }
 .wb-kit-banner strong .icon-svg { vertical-align: -3px; margin-right: 4px; }
+/* v68 photo library */
+.photo-pick { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: start; }
+@media (max-width: 640px) { .photo-pick { grid-template-columns: 1fr; } }
+.photo-current { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 10px; border: 1px solid var(--line, #d9dee7); }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; margin: 6px 0 8px; }
+.photo-tile { padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: none; cursor: pointer; aspect-ratio: 16/9; }
+.photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-tile:hover { border-color: #94a3b8; } .photo-tile.is-pinned { border-color: #10203a; box-shadow: 0 0 0 2px #fff inset; }
