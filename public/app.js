@@ -16,6 +16,8 @@ function myDesks() { const list = Array.isArray(state?.auth?.desks) && state.aut
 function currentDesk() { try { const saved = (typeof localStorage !== 'undefined' && localStorage.getItem(DESK_KEY)) || ''; const mine = myDesks(); return mine.includes(saved) ? saved : mine[0]; } catch { return 'csi'; } }
 function isSupplierLead(lead) { return (lead?.kind || 'funder') === 'supplier'; }
 function onSuppliers() { return currentDesk() === 'suppliers'; }
+function onSupporters() { return currentDesk() === 'supporters'; }
+function isIndividualLead(lead) { return lead?.kind === 'individual'; }
 function isSchoolLead(lead) { return (lead?.kind || 'funder') === 'school'; }
 function onSchools() { return currentDesk() === 'schools'; }
 function isMediaLead(lead) { return (lead?.kind || 'funder') === 'media'; }
@@ -31,13 +33,15 @@ const DESK_NAV = {
   csi: ['inbox', 'workbench', 'overview', 'projects', 'prospects', 'briefings', 'sent', 'partners', 'ops', 'settings'],
   marketing: ['inbox', 'workbench', 'prospects', 'media-kit', 'projects', 'sent', 'ops', 'settings'],
   schools: ['inbox', 'workbench', 'prospects', 'briefings', 'projects', 'sent', 'ops', 'settings'],
-  suppliers: ['workbench', 'prospects', 'projects', 'sent', 'ops', 'settings']
+  suppliers: ['workbench', 'prospects', 'projects', 'sent', 'ops', 'settings'],
+  supporters: ['inbox', 'workbench', 'prospects', 'projects', 'sent', 'ops', 'settings']
 };
 const DESK_WORDS = {
   csi: { briefings: 'Briefings', projects: 'Projects', addLabel: 'Add a funder', prospectsBlurb: 'Everyone we are talking to.' },
   marketing: { briefings: 'Interviews', projects: 'Projects', addLabel: 'Add show or outlet', prospectsBlurb: 'Every show, station, podcast and outlet we are pitching.' },
   schools: { briefings: 'Calls', projects: 'Projects', addLabel: 'Find a school', prospectsBlurb: 'Schools and district offices we are working with.' },
-  suppliers: { briefings: 'Briefings', projects: 'Jobs', addLabel: 'Copy sign-up link', prospectsBlurb: 'Registered suppliers: vetting, documents, jobs and earnings.' }
+  suppliers: { briefings: 'Briefings', projects: 'Jobs', addLabel: 'Copy sign-up link', prospectsBlurb: 'Registered suppliers: vetting, documents, jobs and earnings.' },
+  supporters: { briefings: 'Briefings', projects: 'Projects', addLabel: 'Add an NGO', prospectsBlurb: 'NGOs we are approaching and individuals who signed up to back projects.' }
 };
 function deskNav(id = currentDesk()) { return DESK_NAV[id] || DESK_NAV.csi; }
 function deskWord(key, id = currentDesk()) { return (DESK_WORDS[id] || DESK_WORDS.csi)[key] || (DESK_WORDS.csi[key] || ''); }
@@ -269,6 +273,7 @@ const icons = {
   upload: `<path class="icon-tint" d="M7.5 8 12 3.5 16.5 8Z"/><path class="icon-line" d="M12 14.5v-11m-4.5 4.5L12 3.5 16.5 8M4.5 20.5h15"/>${A(19.5, 20.5, 1.3)}`,
   link: `<path class="icon-tint" d="M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2Z"/><path class="icon-line" d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2M14 11a5 5 0 0 0-7.1-.1l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2"/>${A(12, 12, 1.2)}`,
   lock: `<rect class="icon-tint" x="4.5" y="10" width="15" height="11" rx="3"/><rect class="icon-line" x="4.5" y="10" width="15" height="11" rx="3"/><path class="icon-line" d="M8 10V7.2a4 4 0 0 1 8 0V10"/>${A(12, 15.6, 1.5)}`,
+  heart: '<path d="M12 20.5s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 8a4.5 4.5 0 0 1 7.5 2.5c0 5.4-7.5 10-7.5 10Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   shield: `<path class="icon-tint" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path class="icon-line" d="m9 12 2 2 4-4"/>${A(16.5, 6.4, 1.2)}`,
   logout: `<path class="icon-tint" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6Z"/><path class="icon-line" d="M12 3h6a2.5 2.5 0 0 1 2.5 2.5v13A2.5 2.5 0 0 1 18 21h-6"/><path class="icon-line" d="m9.5 16.5 4.5-4.5-4.5-4.5M14 12H3"/>${A(14, 12, 1.3)}`,
   play: `<path class="icon-tint" d="M8.5 5.8v12.4L18.2 12z"/><path class="icon-line" d="M8.5 5.8v12.4L18.2 12z"/>${A(10.5, 9, 1.1)}`,
@@ -1458,6 +1463,21 @@ async function dispatchAction(button) {
     if (action === 'photo-pin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: button.dataset.theme, n: Number(button.dataset.n) }) }); toast('Picture pinned for this project.'); await refresh(); return; }
     if (action === 'photo-unpin') { await API(`/api/projects/${encodeURIComponent(id)}/photo`, { method: 'PUT', body: JSON.stringify({ theme: '' }) }); toast('Back to automatic rotation.'); await refresh(); return; }
     if (action === 'sch-toggle') { state.sch.collapsed = !state.sch.collapsed; try { localStorage.setItem('chelo-sch-collapsed', state.sch.collapsed ? '1' : ''); } catch {} renderApp(); return; }
+    if (action === 'supporters-match') { const r = await API(`/api/projects/${encodeURIComponent(id)}/supporters`); state.sup.tell = { projectId: id, ...r }; renderApp(); return; }
+    if (action === 'supporters-tell') { const r = await API(`/api/projects/${encodeURIComponent(id)}/supporters/tell`, { method: 'POST', body: '{}' }); state.sup.tell = null; toast(`${r.queued} supporter${r.queued === 1 ? '' : 's'} emailed a pledge link${r.failed.length ? ` (${r.failed.length} could not be queued)` : ''}.`); await refresh(); return; }
+    if (action === 'pledge-status') { const r = await API(`/api/leads/${encodeURIComponent(id)}/pledges/${encodeURIComponent(button.dataset.pledge)}`, { method: 'PUT', body: JSON.stringify({ status: button.dataset.status }) }); toast(`Pledge ${r.pledge.status}.`); await refresh(); return; }
+    if (action === 'sme-find') {
+      const trade = $('#sme-trade')?.value || 'building'; const town = $('#sme-town')?.value?.trim() || ''; if (!town) { toast('Give a town so the search stays local.', true); return; }
+      state.sup.sme = { trade, town, busy: true, results: [], picked: {}, error: '', done: null }; renderApp();
+      try { const r = await API(`/api/discovery/search?q=${encodeURIComponent(`${TRADE_LABELS[trade] || trade} ${town}`)}`); const results = r.organisations || []; state.sup.sme = { trade, town, busy: false, results, picked: Object.fromEntries(results.map((o, i) => [i, !o.alreadyTracked && Boolean(o.mailbox?.email)])), error: results.length ? '' : (r.warnings || []).join(' ') || 'Nothing found with a mailbox. Try a nearby bigger town.', done: null }; }
+      catch (err) { state.sup.sme = { trade, town, busy: false, results: [], picked: {}, error: err.message, done: null }; }
+      renderApp(); return;
+    }
+    if (action === 'sme-invite') {
+      const f = state.sup.sme; const items = f.results.filter((o, i) => f.picked[i]).map(o => ({ name: o.name, website: o.website, email: o.mailbox?.email, mailbox: o.mailbox }));
+      const r = await API('/api/suppliers/invite', { method: 'POST', body: JSON.stringify({ trade: f.trade, town: f.town, items }) });
+      state.sup.sme = { ...f, done: r, picked: {}, results: f.results.map(o => items.some(i => i.email === o.mailbox?.email) ? { ...o, alreadyTracked: true } : o) }; toast(`${r.queued} invitation${r.queued === 1 ? '' : 's'} queued.`); renderApp(); return;
+    }
     if (action === 'sup-open') { state.wb.filter = 'all'; state.wb.selectedId = id; setView('workbench'); return; }
     if (action === 'desk-add') {
       const desk = currentDesk();
@@ -2319,6 +2339,7 @@ function projectDetailModal(p) {
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('checkCircle')}Verification</span></div><div class="detail-item"><small>Source</small>${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(source)} ${svgIcon('external')}</a>` : '<strong>No source URL</strong>'}<small>Verified ${esc(dateOnly(p.verifiedAt) || '—')} · ${esc(p.status)}</small></div>${p.summary ? `<div class="detail-note" style="margin-top:10px">${esc(p.summary)}</div>` : ''}</div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('analytics')}Verified metrics</span></div>${(p.verifiedMetrics || []).map(m => `<div class="project-metric"><strong>${esc(m.label)}</strong><span>${esc(String(m.baselineValue))} → <b>${esc(String(m.currentValue))}</b> ${esc(m.unit)}</span><small>${esc(m.period)} · ${esc(m.source)}</small></div>`).join('') || '<span class="subtle">None recorded.</span>'}</div>
     ${projectPhotoSection(p)}
+    ${projectSupportersSection(p)}
     ${projectTenderSection(p)}
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('users')}Team on this project</span>${state.data.canSeeAll ? `<button class="table-action" data-action="project-team-open" data-id="${esc(p.id)}">${svgIcon('edit')}Change</button>` : ''}</div><p class="subtle">${(p.team || []).length ? esc((p.team || []).map(id => (state.data.directory || []).find(u => String(u.id) === String(id))?.displayName || 'Former staff').join(', ')) + ' — they see every funder linked to this project.' : 'Nobody extra yet. Owners of each funder, people it is shared with, and admins can see them.'}</p></div>
     <div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('prospects')}Linked prospects (${linked.length}) & partners (${partners.length})</span></div>${linked.map(l => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('prospects')}</div><div class="shortcut-copy"><strong>${esc(l.company)}</strong><span>${esc(l.stage)} · ${money(l.amount)} · ${esc(grantCycleLabel(l))}</span></div><button class="table-action" data-action="open-lead" data-id="${esc(l.id)}">${svgIcon('eye')}Open</button></div>`).join('')}${partners.map(x => `<div class="shortcut-row"><div class="shortcut-icon">${svgIcon('partners')}</div><div class="shortcut-copy"><strong>${esc(x.company)}</strong><span>Partner · ${money(x.amount)}</span></div></div>`).join('') || (!linked.length ? '<span class="subtle">No prospects linked yet.</span>' : '')}</div>`;
@@ -2553,7 +2574,7 @@ function researchModal(lead) {
 // =====================================================================
 // What a person sees: three states (plus Stopped). The engine's precise status stays on hover and in Health.
 const WB_FILTERS = [['all', 'All'], ['your-turn', 'Your turn'], ['working', 'Working'], ['waiting', 'Waiting on them'], ['stopped', 'Stopped']];
-const SIMPLE_OF = { vet: 'your-turn', vetted: 'waiting', call: 'your-turn', 'call-booked': 'waiting', replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
+const SIMPLE_OF = { supporter: 'waiting', pledged: 'your-turn', vet: 'your-turn', vetted: 'waiting', call: 'your-turn', 'call-booked': 'waiting', replied: 'your-turn', 'needs-review': 'your-turn', ready: 'your-turn', approved: 'your-turn', blocked: 'your-turn', error: 'your-turn', new: 'your-turn', running: 'working', queued: 'working', sequence: 'working', sent: 'waiting', dead: 'stopped' };
 const SIMPLE_META = { 'your-turn': ['Your turn', 'pill-interested'], working: ['Working', 'pill-researched'], waiting: ['Waiting on them', 'pill-new'], stopped: ['Stopped', 'pill-not-proceeding'] };
 // One line that says what "your turn" means for this funder.
 const NEXT_STEP = { vet: 'New supplier — check the company and references, then approve or reject', vetted: 'Approved — gets needs in their trades and provinces', call: 'No published email — phone the school; the script is on the card', 'call-booked': 'Call booked — capture the needs when you speak to the principal', replied: 'They replied — read it in the Inbox', 'needs-review': 'Check what we found about them', ready: 'Read the email and send it', approved: 'Approved — press Send', blocked: 'Something is missing — open to see what', error: 'The last step failed — open to see the reason and try again', new: 'Not started yet — press Run', running: 'Chelo is checking, researching and drafting', queued: 'Email is scheduled — sends in the next free slot', sequence: 'Sent — Chelo will follow up if they go quiet', sent: 'Sent — waiting for a reply', dead: 'Email address does not work' };
@@ -2588,7 +2609,7 @@ function wbStatusOf(lead) {
   if (lead.emailDraft) return 'ready';
   return f.status || 'new';
 }
-const WB_STATUS_META = { vet: ['Vetting needed', 'pill-interested'], vetted: ['Approved supplier', 'pill-won'], call: ['Call the school', 'pill-interested'], 'call-booked': ['Principal call booked', 'pill-won'], replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
+const WB_STATUS_META = { supporter: ['Supporter', 'pill-new'], pledged: ['Pledge to confirm', 'pill-interested'], vet: ['Vetting needed', 'pill-interested'], vetted: ['Approved supplier', 'pill-won'], call: ['Call the school', 'pill-interested'], 'call-booked': ['Principal call booked', 'pill-won'], replied: ['Replied — triage', 'pill-interested'], sequence: ['Sequence running', 'pill-researched'], queued: ['Queued to send', 'pill-researched'], new: ['Not started', 'pill-new'], running: ['Working…', 'pill-pending'], 'needs-review': ['Review research', 'pill-interested'], ready: ['Ready to send', 'pill-researched'], approved: ['Approved', 'pill-won'], sent: ['Sent', 'pill-won'], blocked: ['Needs input', 'pill-pending'], dead: ['Dead email', 'pill-not-proceeding'], error: ['Error', 'pill-not-proceeding'] };
 function wbPill(status) { const simple = SIMPLE_OF[status] || 'your-turn'; const [label, cls] = SIMPLE_META[simple]; const [detail] = WB_STATUS_META[status] || [status]; return `<span class="stage-pill ${cls}" title="${esc(detail)}">${esc(label)}</span>`; }
 function wbSelected() { return getLead(state.wb.selectedId) || null; }
 
@@ -2625,7 +2646,7 @@ function wbIntakeBar() {
   if (onSuppliers()) return suppliersIntakeBar();
   const d = state.wb.discovery;
   const intake = state.wb.intake === 'pool' ? 'pool' : 'add';
-  const kitBanner = onMarketing() ? mediaKitBanner() : '';
+  const kitBanner = onMarketing() ? mediaKitBanner() : onSupporters() ? supportersBanner() : '';
   const poolCount = state.data.candidates.filter(c => c.status === 'New candidate').length;
   const tabs = `${kitBanner}<div class="wb-intake-tabs" role="tablist"><button type="button" role="tab" class="wb-intake-tab ${intake === 'add' ? 'is-active' : ''}" data-action="wb-intake" data-intake="add" aria-selected="${intake === 'add'}">${svgIcon('plus')} Add or discover</button><button type="button" role="tab" class="wb-intake-tab ${intake === 'pool' ? 'is-active' : ''}" data-action="wb-intake" data-intake="pool" aria-selected="${intake === 'pool'}">${svgIcon('database')} Local pool & CSV${poolCount ? ` <span class="wb-count">${poolCount}</span>` : ''}</button></div>`;
   if (intake === 'pool') { loadCatalogue(); return `<section class="panel wb-intake">${tabs}${discoverPanel()}<input type="file" id="candidate-csv" accept=".csv,text/csv" hidden /></section>`; }
@@ -2640,7 +2661,7 @@ function wbIntakeBar() {
       <button type="submit" class="button button-primary" ${state.wb.busy.add ? 'disabled' : ''}>${svgIcon('spark')}${state.wb.busy.add ? 'Adding & running…' : 'Add & run'}</button>
     </form>
     <div class="wb-discover">
-      <label class="wb-discover-input">${svgIcon('globe')}<input id="wb-discover-q" class="form-control" placeholder="${onMarketing() ? 'Find outlets — e.g. “education news South Africa” or “Limpopo community newspapers”' : 'Discover on the web — e.g. “JSE mining companies with education CSI”'}" value="${esc(d.query)}" /></label>
+      <label class="wb-discover-input">${svgIcon('globe')}<input id="wb-discover-q" class="form-control" placeholder="${onMarketing() ? 'Find outlets — e.g. “education news South Africa” or “Limpopo community newspapers”' : onSupporters() ? 'Find NGOs — e.g. “literacy NGOs in Limpopo schools” or “school feeding non-profits KZN”' : 'Discover on the web — e.g. “JSE mining companies with education CSI”'}" value="${esc(d.query)}" /></label>
       <button type="button" class="button button-secondary" data-action="wb-discover" ${d.busy ? 'disabled' : ''}>${svgIcon('search')}${d.busy ? 'Searching…' : 'Discover'}</button>
     </div>
     ${d.busy ? '<p class="subtle">Searching, then checking each organisation\'s website and mail server for a working mailbox — up to a minute.</p>' : ''}
@@ -2851,13 +2872,52 @@ function wbSupplierCard(lead) {
       ${isAdmin ? `<input class="form-control" id="vet-notes" placeholder="Vetting notes — who you called, what checked out" /><div class="wb-step-actions">${v.status !== 'approved' ? `<button type="button" class="button button-primary button-small" data-action="vet" data-id="${id}" data-status="approved">${svgIcon('checkCircle')}Approve</button>` : ''}${v.status !== 'rejected' ? `<button type="button" class="button button-ghost button-small" data-action="vet" data-id="${id}" data-status="rejected">${svgIcon('xCircle')}Reject</button>` : ''}${v.status !== 'pending' ? `<button type="button" class="button button-ghost button-small" data-action="vet" data-id="${id}" data-status="pending">Back to pending</button>` : ''}</div>` : '<p class="subtle">An administrator approves or rejects suppliers.</p>'}</div>
     <div class="wb-needs"><h4>${svgIcon('grid')}Quotes (${quotes.length})</h4>${quotes.length ? `<ul class="wb-need-list">${quotes.map(q => `<li><span class="stage-pill ${q.status === 'signed' ? 'pill-won' : q.status === 'declined' ? 'pill-not-proceeding' : 'pill-new'}">${esc(q.done ? 'done' : q.status)}</span> R ${Number(q.amount).toLocaleString('en-ZA')} · ${q.leadTimeDays} days${q.where ? ` · ${esc(q.where)}` : ''} · ${isoDate(q.submittedAt)} · <button type="button" class="link-button" data-action="open-project" data-id="${esc(q.projectId)}">${esc(q.project)}</button></li>`).join('')}</ul>` : '<p class="subtle">No quotes yet. Approved suppliers get an email with a quote link whenever a need in their trade and province goes out.</p>'}</div>`);
 }
+/** v71: Supporters desk banner — the public sign-up link for individuals; NGOs come through discovery below. */
+function supportersBanner() {
+  if (!state.sup.supportLink && !state.sup.supportLoading) { state.sup.supportLoading = true; API('/api/supporters/signup-link').then(r => { state.sup.supportLink = r; state.sup.supportLoading = false; renderApp(); }).catch(() => { state.sup.supportLoading = false; }); }
+  const l = state.sup.supportLink;
+  return `<div class="sch-head" style="margin-bottom:10px"><div><strong>Individuals sign up themselves</strong><p class="subtle">Share the link on social media, in newsletters and at events. People say what they care about; when a matching project is verified, open it → <strong>Tell supporters</strong>.${l ? ` ${l.individuals} supporter${l.individuals === 1 ? '' : 's'} · ${l.ngos} NGO${l.ngos === 1 ? '' : 's'}.` : ''}</p></div>${l ? `<div class="wb-step-actions"><input class="form-control" readonly value="${esc(l.url)}" style="min-width:240px" /><button type="button" class="button button-secondary button-small" data-action="copy-text" data-text="${esc(l.url)}">${svgIcon('copy')}Copy link</button></div>` : ''}</div>`;
+}
+/** v71: an individual supporter — interests, what they were told about, pledges to confirm. */
+function wbSupporterPage(lead) {
+  const sp = lead.supporter || {}; const a = lead.account || { pledges: 0, pledged: 0, received: 0, told: 0, items: [] }; const id = esc(lead.id);
+  const rand = n => `R ${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`;
+  const facts = [['Cares about', (sp.categories || []).map(c => NEED_LABELS[c] || c).join(', ') || 'anything a school needs'], ['Where', (sp.provinces || []).join(', ') || 'anywhere'], ['Usually gives', sp.band ? ({ 250: 'up to R250', 1000: 'R250 – R1 000', 5000: 'R1 000 – R5 000', 25000: 'R5 000 – R25 000', more: 'more than R25 000' })[sp.band] : ''], ['Town', sp.town], ['Why', sp.why], ['Email', lead.email], ['Phone', lead.phone], ['Signed up', sp.signedUpAt ? isoDate(sp.signedUpAt) : '']].filter(([, v]) => v);
+  const pill = a.pledged ? `<span class="stage-pill pill-interested">${rand(a.pledged)} to confirm</span>` : a.received ? `<span class="stage-pill pill-won">${rand(a.received)} received</span>` : '<span class="stage-pill pill-new">Supporter</span>';
+  return `<div class="panel wb-stepper wb-lead-page"><div class="wb-detail-head">
+    <div>${pill}<h2>${esc(lead.contactName || lead.company)}</h2><p class="subtle">Individual supporter · told about ${a.told} project${a.told === 1 ? '' : 's'} · ${a.pledges} pledge${a.pledges === 1 ? '' : 's'}</p></div>
+    <div class="wb-detail-actions"><button type="button" class="button button-ghost button-small" data-action="edit-lead" data-id="${id}">${svgIcon('edit')}Edit details</button></div></div>
+    ${wbCard('heart', 'Supporter', `<div class="sup-account"><div><small>Told about</small><strong>${a.told}</strong></div><div><small>Pledged</small><strong>${rand(a.pledged)}</strong><span>awaiting payment</span></div><div><small>Received</small><strong>${rand(a.received)}</strong></div></div>
+      <dl class="wb-facts-kv">${facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>
+      <div class="wb-needs"><h4>${svgIcon('grid')}Pledges</h4>${a.items.length ? `<ul class="wb-need-list">${a.items.map(p => `<li><span class="stage-pill ${p.status === 'received' ? 'pill-won' : p.status === 'withdrawn' ? 'pill-not-proceeding' : 'pill-interested'}">${esc(p.status)}</span> <strong>${rand(p.amount)}</strong> · <button type="button" class="link-button" data-action="open-project" data-id="${esc(p.projectId)}">${esc(p.project)}</button> · ${isoDate(p.at)}${p.message ? `<br><small class="subtle">“${esc(p.message)}”</small>` : ''}${p.status === 'pledged' ? ` <button type="button" class="button button-ghost button-small" data-action="pledge-status" data-id="${id}" data-pledge="${esc(p.id)}" data-status="received">Mark received</button><button type="button" class="button button-ghost button-small" data-action="pledge-status" data-id="${id}" data-pledge="${esc(p.id)}" data-status="withdrawn">Withdrawn</button>` : ''}</li>`).join('')}</ul>` : '<p class="subtle">No pledges yet. Open a verified project → Tell supporters.</p>'}</div>`)}
+  </div>`;
+}
+/** v71: project → matching individuals → one email each with a pledge link. Supporters desk only. */
+function projectSupportersSection(p) {
+  if (!onSupporters()) return '';
+  const id = esc(p.id); const m = state.sup.tell?.projectId === p.id ? state.sup.tell : null; const pl = p.supporterPledges || [];
+  const rand = n => `R ${Math.round(Number(n) || 0).toLocaleString('en-ZA')}`; const sum = st => pl.filter(x => x.status === st).reduce((n, x) => n + x.amount, 0);
+  return `<div class="detail-section"><div class="detail-section-title"><span class="section-title-text">${svgIcon('heart')}Supporters</span></div>
+    <p class="subtle">${pl.length ? `${pl.filter(x => x.status !== 'withdrawn').length} pledge${pl.length === 1 ? '' : 's'}: ${rand(sum('pledged'))} to confirm · ${rand(sum('received'))} received.` : 'No pledges yet.'} Individuals who care about ${esc(NEED_LABELS[p.needCategory] || 'schools')}${p.province ? ` in ${esc(p.province)}` : ''} get one email with a pledge link; nobody is written to twice about the same project.</p>
+    <div class="wb-step-actions"><button type="button" class="button button-secondary button-small" data-action="supporters-match" data-id="${id}">${svgIcon('search')}Who would hear?</button>${m ? `<span class="subtle"><strong>${m.fresh}</strong> not yet told of ${m.count} matching${m.supporters.length ? `: ${m.supporters.slice(0, 5).map(x => esc(x.name)).join(', ')}${m.count > 5 ? '…' : ''}` : ''}</span>` : ''}<button type="button" class="button button-primary button-small" data-action="supporters-tell" data-id="${id}" ${m && m.fresh === 0 ? 'disabled title="Everyone matching has been told"' : ''}>${svgIcon('send')}Tell supporters</button></div></div>`;
+}
+/** v71: find trade businesses by town and invite them to register. Nothing becomes a supplier until they sign up. */
+function smeFinder() {
+  const f = state.sup.sme || { trade: 'building', town: '', busy: false, results: [], picked: {}, error: '', done: null };
+  const rows = f.results.map((o, i) => `<label class="sme-row ${o.alreadyTracked ? 'is-tracked' : ''}"><input type="checkbox" data-sme-pick="${i}" ${f.picked[i] ? 'checked' : ''} ${o.alreadyTracked || !o.mailbox?.email ? 'disabled' : ''} /><span><strong>${esc(o.name)}</strong> ${o.website ? `<a class="source-link" href="${esc(o.website)}" target="_blank" rel="noopener noreferrer">${esc(o.domain || '')}</a>` : ''}<br><small class="subtle">${o.alreadyTracked ? 'already registered / known' : o.mailbox?.email ? esc(o.mailbox.email) : 'no mailbox found'}${o.summary ? ` · ${esc(o.summary.slice(0, 120))}` : ''}</small></span></label>`).join('');
+  const n = Object.values(f.picked).filter(Boolean).length;
+  return `<details class="sme-finder" ${f.results.length || f.busy ? 'open' : ''}><summary><strong>Find businesses to invite</strong> <span class="subtle">· search the web by trade and town; tick who to invite; they register themselves</span></summary>
+    <div class="wb-step-actions"><select class="form-control" id="sme-trade">${Object.entries(TRADE_LABELS).map(([k, v]) => `<option value="${k}" ${f.trade === k ? 'selected' : ''}>${v}</option>`).join('')}</select><input class="form-control" id="sme-town" placeholder="Town, e.g. Tzaneen" value="${esc(f.town)}" style="max-width:220px" /><button type="button" class="button button-secondary button-small" data-action="sme-find" ${f.busy ? 'disabled' : ''}>${svgIcon('search')}${f.busy ? 'Searching…' : 'Find'}</button>${f.results.length ? `<button type="button" class="button button-primary button-small" data-action="sme-invite" ${n ? '' : 'disabled'}>${svgIcon('send')}Invite ${n || ''} selected</button>` : ''}</div>
+    ${f.error ? `<p class="form-error">${esc(f.error)}</p>` : ''}${f.done ? `<p class="subtle">${f.done.queued} invitation${f.done.queued === 1 ? '' : 's'} sent${f.done.skipped.length ? ` · skipped: ${f.done.skipped.map(x => `${esc(x.name)} (${esc(x.reason)})`).join(', ')}` : ''}.</p>` : ''}
+    ${rows ? `<div class="sme-list">${rows}</div>` : f.busy ? '<p class="subtle">Searching, then checking each business for a working mailbox — up to a minute.</p>' : ''}</details>`;
+}
 /** R4: intake bar on the Suppliers desk — the sign-up link and the vetting queue. */
 function suppliersIntakeBar() {
   if (!state.sup.link && !state.sup.loading) { state.sup.loading = true; API('/api/suppliers/signup-link').then(r => { state.sup.link = r; state.sup.loading = false; renderApp(); }).catch(() => { state.sup.loading = false; }); }
   const l = state.sup.link; const pending = state.data.leads.filter(x => isSupplierLead(x) && (x.supplier?.vetting?.status || 'pending') === 'pending');
   return `<section class="panel wb-intake sch-bar"><div class="sch-head"><div><strong>Suppliers come to Chelo</strong><p class="subtle">Share the sign-up link with contractors, on WhatsApp groups and with district offices. Each sign-up lands here for vetting; approved suppliers get needs in their trades — the nearest to the school first.</p></div>
     ${l ? `<div class="wb-step-actions"><input class="form-control" readonly value="${esc(l.url)}" style="min-width:280px" /><button type="button" class="button button-secondary button-small" data-action="copy-text" data-text="${esc(l.url)}">${svgIcon('copy')}Copy link</button><a class="button button-ghost button-small" href="${esc(l.url)}" target="_blank" rel="noopener">${svgIcon('external')}Open</a></div>` : ''}</div>
-    <p class="subtle">${pending.length ? `<strong>${pending.length}</strong> waiting for vetting` : 'No one waiting for vetting'}${l ? ` · ${l.approved} approved` : ''}. To send a need out, open a Verified Project (Projects) → <strong>Ask suppliers to quote</strong>.</p></section>`;
+    <p class="subtle">${pending.length ? `<strong>${pending.length}</strong> waiting for vetting` : 'No one waiting for vetting'}${l ? ` · ${l.approved} approved` : ''}. To send a need out, open a Verified Project (Projects) → <strong>Ask suppliers to quote</strong>.</p>${smeFinder()}</section>`;
 }
 /** R3: Schools desk — DBE facts, the call task with its script, and needs that become Verified Projects. */
 const NEED_LABELS = { classrooms: 'Classrooms', sanitation: 'Toilets / sanitation', water: 'Water', electricity: 'Electricity', ict: 'Computers / ICT', library: 'Library', sports: 'Sports', furniture: 'Furniture', fencing: 'Fencing / security', kitchen: 'Kitchen / feeding', other: 'Other' };
@@ -2932,6 +2992,7 @@ function wbSupplierPage(lead) {
 }
 function wbLeadPage(lead) {
   if (isSupplierLead(lead)) return wbSupplierPage(lead);
+  if (isIndividualLead(lead)) return wbSupporterPage(lead);
   const s = wbStatusOf(lead); const busy = state.wb.busy[lead.id];
   state.wb.openStep = null;
   const header = `<div class="wb-detail-head">
@@ -3519,6 +3580,8 @@ async function wbAddSubmit(form) {
   } catch (err) { delete state.wb.busy.add; renderApp(); toast(err.message, true); }
 }
 document.addEventListener('change', async event => {
+  const smePick = event.target.closest('[data-sme-pick]');
+  if (smePick && state.sup.sme) { state.sup.sme.picked[smePick.dataset.smePick] = smePick.checked; renderApp(); return; }
   const photoTheme = event.target.closest('[data-photo-theme]');
   if (photoTheme) { state.photos.theme[photoTheme.dataset.photoTheme] = photoTheme.value; renderApp(); return; }
   const schFilter = event.target.closest('[data-sch-filter]');

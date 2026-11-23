@@ -37,9 +37,9 @@ function client(base) {
 }
 
 test('desks module: catalogue, cleaning, holders, lead kinds', () => {
-  assert.deepEqual(desks.DESKS.map(d => d.id), ['csi', 'marketing', 'schools', 'suppliers']);
+  assert.deepEqual(desks.DESKS.map(d => d.id), ['csi', 'marketing', 'schools', 'suppliers', 'supporters']);
   assert.deepEqual(desks.cleanDesks(['Marketing', 'csi', 'csi', 'bogus']), ['csi', 'marketing']);
-  assert.deepEqual(desks.desksOf({ role: 'admin' }), ['csi', 'marketing', 'schools', 'suppliers']);
+  assert.deepEqual(desks.desksOf({ role: 'admin' }), ['csi', 'marketing', 'schools', 'suppliers', 'supporters']);
   assert.deepEqual(desks.desksOf({ role: 'owner', desks: ['schools'] }), ['schools']);
   assert.deepEqual(desks.desksOf({ role: 'owner' }), ['csi'], 'accounts from before desks are CSI');
   assert.equal(desks.resolveDesk({ desks: ['csi', 'marketing'] }, 'marketing'), 'marketing');
@@ -60,8 +60,8 @@ test('desks end-to-end: header scopes leads, staff desks, mailbox desk tag', asy
   const root = client(base); const naledi = client(base);
   assert.equal((await root('POST', '/api/auth/setup', { username: 'founder@cheloapp.com', displayName: 'Founder', password: 'correct-horse-battery' })).status, 201);
   const status = (await root('GET', '/api/auth/status')).payload;
-  assert.deepEqual(status.desks, ['csi', 'marketing', 'schools', 'suppliers'], 'root holds every desk');
-  assert.equal(status.deskCatalogue.length, 4);
+  assert.deepEqual(status.desks, ['csi', 'marketing', 'schools', 'suppliers', 'supporters'], 'root holds every desk');
+  assert.equal(status.deskCatalogue.length, 5);
 
   // Everything that already exists is CSI.
   const csiCount = (await root('GET', '/api/init', undefined, { 'X-Chelo-Desk': 'csi' })).payload.leads.length;

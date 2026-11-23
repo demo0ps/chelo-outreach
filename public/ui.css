@@ -2304,3 +2304,8 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .sup-account small { font-size: 11px; color: var(--muted-foreground); } .sup-account strong { font-size: 16px; } .sup-account span { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.35; }
 .sup-docs td { padding: 6px 8px; vertical-align: middle; } .sup-docs .form-control { min-width: 110px; height: 30px; font-size: 12px; }
 .tender-waves .icon-svg { width: 12px; height: 12px; vertical-align: -2px; margin-right: 3px; }
+
+/* v71: supporters + SME finder */
+.sme-finder { margin-top: 10px; border-top: 1px solid var(--line, #e3e7ee); padding-top: 8px; } .sme-finder summary { cursor: pointer; font-size: 13px; }
+.sme-list { display: grid; gap: 6px; margin-top: 8px; } .sme-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line, #e3e7ee); border-radius: 10px; font-size: 13px; cursor: pointer; }
+.sme-row.is-tracked { opacity: .6; } .sme-row input { margin-top: 3px; }
