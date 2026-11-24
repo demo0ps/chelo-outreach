@@ -198,7 +198,7 @@ test('end-to-end: setup, staff roles, 4-eyes approval, projects, bookings + .ics
   // Create reviewer + owner staff
   const rev = await api('admin', 'POST', '/api/staff', { username: 'reviewer@cheloapp.com', displayName: 'Thabo', role: 'reviewer', password: 'reviewer-long-password' });
   assert.equal(rev.status, 201);
-  const own = await api('admin', 'POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Lerato', role: 'owner', password: 'owner-long-password-1' });
+  const own = await api('admin', 'POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Lerato', role: 'owner', desks: ['csi'], password: 'owner-long-password-1' });
   assert.equal(own.status, 201);
   assert.equal((await api('reviewer', 'POST', '/api/auth/login', { username: 'reviewer@cheloapp.com', password: 'reviewer-long-password' })).status, 200);
   assert.equal((await api('owner', 'POST', '/api/auth/login', { username: 'owner@cheloapp.com', password: 'owner-long-password-1' })).status, 200);

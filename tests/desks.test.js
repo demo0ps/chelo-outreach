@@ -38,7 +38,7 @@ function client(base) {
 
 test('desks module: catalogue, cleaning, holders, lead kinds', () => {
   assert.deepEqual(desks.DESKS.map(d => d.id), ['csi', 'marketing', 'schools', 'suppliers', 'supporters']);
-  assert.deepEqual(desks.cleanDesks(['Marketing', 'csi', 'csi', 'bogus']), ['csi', 'marketing']);
+  assert.deepEqual(desks.cleanDesks(['Marketing', 'csi', 'csi', 'bogus']), ['marketing', 'csi'], 'order kept: first ticked is home'); assert.deepEqual(desks.cleanDesks([]), []); assert.deepEqual(desks.desksOf({ role: 'owner', desks: [] }), ['csi'], 'legacy record with no desks');
   assert.deepEqual(desks.desksOf({ role: 'admin' }), ['csi', 'marketing', 'schools', 'suppliers', 'supporters']);
   assert.deepEqual(desks.desksOf({ role: 'owner', desks: ['schools'] }), ['schools']);
   assert.deepEqual(desks.desksOf({ role: 'owner' }), ['csi'], 'accounts from before desks are CSI');
@@ -77,9 +77,9 @@ test('desks end-to-end: header scopes leads, staff desks, mailbox desk tag', asy
 
   // Staff accounts hold desks; a desk you do not hold falls back to one you do.
   const u = (await root('POST', '/api/staff', { username: 'naledi@cheloapp.com', displayName: 'Naledi', role: 'owner', password: 'naledi-strong-password', desks: ['schools', 'marketing'] })).payload;
-  assert.deepEqual(u.desks, ['marketing', 'schools']);
+  assert.deepEqual(u.desks, ['schools', 'marketing'], 'order as ticked: Schools is her home desk');
   assert.equal((await naledi('POST', '/api/auth/login', { username: 'naledi@cheloapp.com', password: 'naledi-strong-password' })).status, 200);
-  assert.deepEqual((await naledi('GET', '/api/auth/status')).payload.desks, ['marketing', 'schools']);
+  assert.deepEqual((await naledi('GET', '/api/auth/status')).payload.desks, ['schools', 'marketing']);
   assert.equal((await naledi('GET', '/api/init', undefined, { 'X-Chelo-Desk': 'csi' })).payload.leads.length, 0, 'asking for CSI without holding it gives her first desk (empty for her)');
   const updated = (await root('PUT', `/api/staff/${encodeURIComponent(u.id)}`, { desks: ['csi'] })).payload;
   assert.deepEqual(updated.desks, ['csi']);

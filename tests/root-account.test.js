@@ -134,12 +134,12 @@ test('root account: technical surface is root-only; root is immutable to other a
   assert.match(String(l2.emailApproval?.secondApprover || JSON.stringify(l2)), /Founder/, 'countersignature by root remains visible');
 
   // Other admins keep everyday admin powers: staff management of non-root accounts
-  const owner = await other('POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Owner', role: 'owner', password: 'owner-password-strong-1' });
+  const owner = await other('POST', '/api/staff', { username: 'owner@cheloapp.com', displayName: 'Owner', role: 'owner', desks: ['csi'], password: 'owner-password-strong-1' });
   assert.equal(owner.status, 201);
   assert.equal((await other('PUT', `/api/staff/${owner.payload.id}`, { role: 'reviewer' })).status, 200);
 
   // Co-root ("full access"): only the primary root can grant it; the peer then passes every root check but stays visible
-  const peer = await root('POST', '/api/staff', { username: 'partnerships@cheloapp.com', displayName: 'Partnerships', role: 'owner', password: 'partnerships-strong-pw' });
+  const peer = await root('POST', '/api/staff', { username: 'partnerships@cheloapp.com', displayName: 'Partnerships', role: 'owner', desks: ['csi'], password: 'partnerships-strong-pw' });
   assert.equal(peer.status, 201);
   const peerClient = client(base);
   assert.equal((await peerClient('POST', '/api/auth/login', { username: 'partnerships@cheloapp.com', password: 'partnerships-strong-pw' })).status, 200);

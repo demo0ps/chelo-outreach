@@ -119,7 +119,7 @@ test('two-step sign-in end to end: setup → enable → login needs code → rec
   assert.equal((await client(base)('POST', '/api/auth/login', { username: 'founder@cheloapp.com', password: 'correct-horse-battery' })).payload.authenticated, true);
 
   // Admin resets a colleague's two-step (lost phone) and signs them out; root is protected from others.
-  const u = (await root('POST', '/api/staff', { username: 'nandi@cheloapp.com', displayName: 'Nandi', role: 'owner', password: 'another-long-password' })).payload;
+  const u = (await root('POST', '/api/staff', { username: 'nandi@cheloapp.com', displayName: 'Nandi', role: 'owner', desks: ['csi'], password: 'another-long-password' })).payload;
   assert.equal((await staff('POST', '/api/auth/login', { username: 'nandi@cheloapp.com', password: 'another-long-password' })).status, 200);
   const su = (await staff('POST', '/api/auth/mfa/setup', {})).payload;
   assert.equal((await staff('POST', '/api/auth/mfa/enable', { code: security.totp(su.secret) })).status, 200);

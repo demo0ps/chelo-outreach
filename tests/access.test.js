@@ -62,8 +62,8 @@ test('private workspaces end-to-end: own + shared + project team; admins see all
   const base = `http://127.0.0.1:${port}`;
   const root = client(base); const thandi = client(base); const sipho = client(base);
   assert.equal((await root('POST', '/api/auth/setup', { username: 'founder@cheloapp.com', displayName: 'Founder', password: 'correct-horse-battery' })).status, 201);
-  const u1 = (await root('POST', '/api/staff', { username: 'thandi@cheloapp.com', displayName: 'Thandi Nkosi', role: 'owner', password: 'thandi-strong-password' })).payload;
-  const u2 = (await root('POST', '/api/staff', { username: 'sipho@cheloapp.com', displayName: 'Sipho Dlamini', role: 'owner', password: 'sipho-strong-password-1' })).payload;
+  const u1 = (await root('POST', '/api/staff', { username: 'thandi@cheloapp.com', displayName: 'Thandi Nkosi', role: 'owner', desks: ['csi'], password: 'thandi-strong-password' })).payload;
+  const u2 = (await root('POST', '/api/staff', { username: 'sipho@cheloapp.com', displayName: 'Sipho Dlamini', role: 'owner', desks: ['csi'], password: 'sipho-strong-password-1' })).payload;
   assert.equal((await thandi('POST', '/api/auth/login', { username: 'thandi@cheloapp.com', password: 'thandi-strong-password' })).status, 200);
   assert.equal((await sipho('POST', '/api/auth/login', { username: 'sipho@cheloapp.com', password: 'sipho-strong-password-1' })).status, 200);
 
