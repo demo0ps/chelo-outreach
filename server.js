@@ -1913,7 +1913,7 @@ function createSession(req, user, res, options = {}) {
   const account = typeof user === 'string' ? { username: user, displayName: user.split('@')[0], role: 'admin', id: '' } : user;
   store.putSession(token, { username: account.username, userId: account.id || '', displayName: account.displayName || account.username, role: account.role || 'admin', desks: desks.desksOf(account), csrfToken, demoAccess, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
   res.setHeader('Set-Cookie', cookieHeader(req, token, Math.floor(SESSION_TTL_MS / 1000)));
-  return { authenticated: true, setupRequired: false, isRoot: demoAccess || configStore.isRootUser(account.id || ''), isPrimaryRoot: demoAccess || configStore.isPrimaryRoot(account.id || ''), username: account.username, displayName: account.displayName || account.username, role: account.role || 'admin', userId: account.id || '', csrfToken, demoAccess, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy };
+  return { authenticated: true, setupRequired: false, isRoot: demoAccess || configStore.isRootUser(account.id || ''), isPrimaryRoot: demoAccess || configStore.isPrimaryRoot(account.id || ''), username: account.username, displayName: account.displayName || account.username, role: account.role || 'admin', userId: account.id || '', csrfToken, demoAccess, approvalPolicy: configStore.getGovernanceConfig().approvalPolicy, desks: desks.sessionDesks({ role: account.role || 'admin', demoAccess, desks: desks.desksOf(account) }), deskCatalogue: desks.DESKS }; // v71b: same desk facts as /api/auth/status, so the first screen after sign-in is the right desk (used to need a refresh)
 }
 function clientIp(req) {
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();

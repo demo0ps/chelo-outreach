@@ -1377,7 +1377,8 @@ async function dispatchAction(button) {
     if (action === 'mobile-more-close') { state.mobileMoreOpen = false; renderApp(); return; }
     if (action === 'demo-login') {
       const result = await API('/api/auth/demo', { method: 'POST', body: '{}' });
-      state.auth = result; state.authError = ''; state.view = 'overview';
+      state.auth = result; state.authError = ''; try { localStorage.removeItem(DESK_KEY); } catch {} // a fresh sign-in lands on the account's home desk, not the previous person's choice
+      state.auth = await API('/api/auth/status').catch(() => result); state.view = deskAllowsView('overview', currentDesk()) ? 'overview' : 'workbench';
       await refresh();
       if (!state.auth?.authenticated || !state.auth?.demoAccess) throw new Error('Demo sign-in did not persist in this browser. Refresh and try again.');
       toast('Demo admin access enabled. Use fictional sample data only.'); return;
@@ -1812,7 +1813,8 @@ async function handleSubmit(event) {
       let result;
       try { result = await API('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ mfaToken: state.mfaChallenge?.mfaToken, code: data.code }) }); }
       catch (err) { if (err.payload?.restart) state.mfaChallenge = null; state.authError = err.message; renderAuthGate(); return; }
-      state.mfaChallenge = null; state.auth = result; state.authError = ''; state.view = 'overview';
+      state.mfaChallenge = null; state.auth = result; state.authError = ''; try { localStorage.removeItem(DESK_KEY); } catch {}
+      state.auth = await API('/api/auth/status').catch(() => result); state.view = deskAllowsView('overview', currentDesk()) ? 'overview' : 'workbench';
       await refresh(); toast(result.recoveryUsed ? `Signed in with a recovery code — ${result.recoveryLeft} left.` : 'Signed in.'); return;
     }
     if (type === 'mfa-enable') {
@@ -1830,7 +1832,8 @@ async function handleSubmit(event) {
       if (type === 'auth-setup' && data.password !== data.confirmPassword) { state.authError = 'The passwords do not match.'; renderAuthGate(); return; }
       const result = await API(type === 'auth-setup' ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', body: JSON.stringify({ username: data.username, password: data.password, displayName: data.displayName }) });
       if (result.mfaRequired) { state.mfaChallenge = { mfaToken: result.mfaToken, username: result.username }; state.authError = ''; renderAuthGate(); return; }
-      state.auth = result; state.authError = ''; state.view = 'overview';
+      state.auth = result; state.authError = ''; try { localStorage.removeItem(DESK_KEY); } catch {} // a fresh sign-in lands on the account's home desk, not the previous person's choice
+      state.auth = await API('/api/auth/status').catch(() => result); state.view = deskAllowsView('overview', currentDesk()) ? 'overview' : 'workbench';
       await refresh(); toast(type === 'auth-setup' ? 'Admin account created. Welcome to Chelo.' : 'Signed in.'); return;
     }
     if (type === 'settings') { await saveSettingsForm(form); await refresh(); toast('Saved.'); return; }

@@ -78,8 +78,9 @@ test('desks end-to-end: header scopes leads, staff desks, mailbox desk tag', asy
   // Staff accounts hold desks; a desk you do not hold falls back to one you do.
   const u = (await root('POST', '/api/staff', { username: 'naledi@cheloapp.com', displayName: 'Naledi', role: 'owner', password: 'naledi-strong-password', desks: ['schools', 'marketing'] })).payload;
   assert.deepEqual(u.desks, ['schools', 'marketing'], 'order as ticked: Schools is her home desk');
-  assert.equal((await naledi('POST', '/api/auth/login', { username: 'naledi@cheloapp.com', password: 'naledi-strong-password' })).status, 200);
+  const naledLogin = await naledi('POST', '/api/auth/login', { username: 'naledi@cheloapp.com', password: 'naledi-strong-password' }); assert.equal(naledLogin.status, 200);
   assert.deepEqual((await naledi('GET', '/api/auth/status')).payload.desks, ['schools', 'marketing']);
+  assert.deepEqual(naledLogin.payload.desks, ['schools', 'marketing'], 'login itself says which desks — no refresh needed'); assert.equal(naledLogin.payload.deskCatalogue.length, 5);
   assert.equal((await naledi('GET', '/api/init', undefined, { 'X-Chelo-Desk': 'csi' })).payload.leads.length, 0, 'asking for CSI without holding it gives her first desk (empty for her)');
   const updated = (await root('PUT', `/api/staff/${encodeURIComponent(u.id)}`, { desks: ['csi'] })).payload;
   assert.deepEqual(updated.desks, ['csi']);
