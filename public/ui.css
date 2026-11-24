@@ -2323,3 +2323,7 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .table-action { color: var(--z-800, #26233a); border: 1px solid rgba(24,24,27,.32); background: #fff; border-radius: 7px; padding: 3px 8px; }
 .table-action:hover { background: var(--soft, #f1effa); }
 .subtle, .company-secondary { color: var(--z-600, #5b5680); }
+/* v72: the "Upload a newer DBE list" disclosure looked like disabled text; it is a button. */
+.sch-guide summary { display: inline-flex; align-items: center; gap: 6px; color: var(--z-800, #26233a); border: 1px solid rgba(24,24,27,.32); background: #fff; border-radius: 7px; padding: 4px 10px; font-size: 12.5px; font-weight: 500; list-style: none; }
+.sch-guide summary::-webkit-details-marker { display: none; } .sch-guide summary:hover { background: var(--soft, #f1effa); }
+.sch-guide[open] summary { margin-bottom: 8px; }
