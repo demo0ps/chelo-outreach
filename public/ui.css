@@ -2327,3 +2327,8 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .sch-guide summary { display: inline-flex; align-items: center; gap: 6px; color: var(--z-800, #26233a); border: 1px solid rgba(24,24,27,.32); background: #fff; border-radius: 7px; padding: 4px 10px; font-size: 12.5px; font-weight: 500; list-style: none; }
 .sch-guide summary::-webkit-details-marker { display: none; } .sch-guide summary:hover { background: var(--soft, #f1effa); }
 .sch-guide[open] summary { margin-bottom: 8px; }
+/* v73: shared list vs my upload */
+.sch-scope { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 6px 0 10px; }
+.sch-diff { border: 1px solid rgba(24,24,27,.14); border-radius: 10px; padding: 10px 12px; margin: 6px 0 10px; font-size: 13px; background: #fafafa; }
+.sch-diff-table { font-size: 12.5px; margin: 6px 0; } .sch-diff-table td, .sch-diff-table th { padding: 3px 8px; }
+.sch-diff details { margin-top: 6px; } .sch-diff summary { cursor: pointer; font-weight: 500; } .sch-diff s { color: #8a8599; }

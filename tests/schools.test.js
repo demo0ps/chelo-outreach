@@ -223,3 +223,36 @@ test('server: a school added by Daniel is signed by Daniel', async t => {
   const manual = (await dan('POST', '/api/leads', { company: 'Thuto Primary School', contactName: 'Principal', email: 'thuto@github.com', sector: 'Education' })).payload;
   assert.equal(manual.owner, 'Daniel Mokoena', JSON.stringify(manual));
 });
+
+// v73: anyone on the Schools desk uploads a DBE list; it stays private, shows differences, admin promotes.
+test('server: staff private DBE upload → diff → browse mine → admin promotes', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-dbe-private-'));
+  const port = 9800 + Math.floor(Math.random() * 40);
+  const child = await startServer({ PORT: String(port), DATA_DIR: dir, NODE_ENV: 'test', SETTINGS_ENCRYPTION_KEY: 'school-key', SMTP_PROBE_DISABLED: 'true' });
+  t.after(() => { child.kill('SIGTERM'); });
+  const base = `http://127.0.0.1:${port}`; const root = client(base, 'schools'); const dan = client(base, 'schools');
+  assert.equal((await root('POST', '/api/auth/setup', { username: 'founder@cheloapp.com', displayName: 'Founder', password: 'correct-horse-battery' })).status, 201);
+  assert.equal((await root('POST', '/api/staff', { username: 'daniel@cheloapp.com', displayName: 'Daniel Mokoena', role: 'owner', desks: ['schools'], password: 'daniel-strong-password' })).status, 201);
+  assert.equal((await dan('POST', '/api/auth/login', { username: 'daniel@cheloapp.com', password: 'daniel-strong-password' })).status, 200);
+  assert.equal((await root('POST', '/api/schools/import', DBE_CSV)).payload.imported, 3, 'admin upload is still the shared list');
+  // Daniel's newer file: Sizanani gains an email, a new school appears, Ekukhanyeni is gone.
+  const NEWER = DBE_CSV.replace('MOKOENA T,ALEXANDRA,,0115551234', 'MOKOENA T,ALEXANDRA,sizanani@github.com,0115551234').replace(/700222222[^\n]*\n/, '') + '700555555,2025,GT,NEW HOPE PRIMARY,OPEN,PUBLIC,ORDINARY SCHOOL,PRIMARY SCHOOL,JOHANNESBURG EAST,JE1,,,City of Johannesburg,X,ALEXANDRA,,0115550000,Q1,No Fee,Urban,300,10\n';
+  const up = (await dan('POST', '/api/schools/import', NEWER)).payload;
+  assert.equal(up.scope, 'mine', JSON.stringify(up)); assert.equal(up.imported, 3); assert.ok(up.diff);
+  assert.deepEqual([up.diff.counts.added, up.diff.counts.removed, up.diff.counts.changed], [1, 1, 1], JSON.stringify(up.diff.counts));
+  assert.equal(up.diff.byField[0].field, 'email'); assert.equal(up.diff.counts.contactGain, 1); assert.equal(up.diff.samples.changed[0].fields[0].to, 'sizanani@github.com');
+  // Shared list untouched; Daniel can browse both.
+  assert.equal((await root('GET', '/api/schools/status')).payload.total, 3);
+  assert.equal((await dan('GET', '/api/schools/status')).payload.mine.total, 3);
+  assert.equal((await dan('GET', '/api/schools/tree?province=Gauteng&list=mine')).payload.items[0].withEmail, 1);
+  assert.equal((await dan('GET', '/api/schools/tree?province=Gauteng')).payload.items[0].withEmail, 1, 'shared still has Ekukhanyeni email');
+  assert.equal((await dan('GET', '/api/schools?province=Gauteng&district=Johannesburg%20East&list=mine')).payload.items.some(x => x.name === 'New Hope Primary'), true);
+  assert.equal((await dan('POST', '/api/schools/700555555/add', { run: false })).status, 201, 'a school from my upload can be added');
+  // Daniel cannot promote; the admin sees his upload, compares it, and promotes it.
+  assert.equal((await dan('POST', '/api/schools/mine/promote', {})).status, 403);
+  const adminStatus = (await root('GET', '/api/schools/status')).payload; assert.equal(adminStatus.uploads.length, 1); assert.equal(adminStatus.uploads[0].name, 'Daniel Mokoena');
+  const d2 = (await root('GET', `/api/schools/diff?owner=${adminStatus.uploads[0].ownerId}`)).payload; assert.equal(d2.counts.added, 1);
+  const prom = (await root('POST', '/api/schools/mine/promote', { owner: adminStatus.uploads[0].ownerId })).payload; assert.equal(prom.total, 3, JSON.stringify(prom));
+  assert.equal((await root('GET', '/api/schools?province=Gauteng&district=Johannesburg%20East')).payload.items.some(x => x.name === 'New Hope Primary'), true);
+  assert.equal((await dan('GET', '/api/schools/status')).payload.mine, null, 'private copy cleared after promotion');
+});

@@ -2767,9 +2767,21 @@ async function handleApi(req, res, url) {
     }
     // ---------------- R3 Schools desk: DBE list, call tasks, needs ----------------
     if (pathname.startsWith('/api/schools')) {
-      if (method === 'GET' && pathname === '/api/schools/status') return sendJson(res, 200, schoolsStore.status());
+      const listScope = () => (url.searchParams.get('list') === 'mine' ? String(req.authSession?.userId || '') : ''); // v73: browse the shared list or my upload
+      const mineStatus = () => { const uid = String(req.authSession?.userId || ''); const st = uid ? schoolsStore.status(uid) : { loaded: false }; return st.loaded ? st : null; };
+      if (method === 'GET' && pathname === '/api/schools/status') return sendJson(res, 200, { ...schoolsStore.status(), mine: mineStatus(), canPromote: roleAllows(req.authSession, ['admin']), uploads: roleAllows(req.authSession, ['admin']) ? schoolsStore.privateOwners().map(o => ({ ...o, name: configStore.findUserById(o.ownerId)?.displayName || 'Former staff' })) : [] });
+      if (method === 'GET' && pathname === '/api/schools/diff') { const uid = String(url.searchParams.get('owner') && roleAllows(req.authSession, ['admin']) ? url.searchParams.get('owner') : req.authSession?.userId || ''); if (!schoolsStore.count(uid)) return sendJson(res, 404, { error: 'No private upload to compare.' }); return sendJson(res, 200, schoolsStore.diff(uid)); }
+      if (method === 'POST' && pathname === '/api/schools/mine/promote') {
+        if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Only an administrator can make an upload the shared list.' });
+        const body = await readBody(req).catch(() => ({})); const uid = String(body.owner || req.authSession?.userId || '');
+        let r; try { r = schoolsStore.promote(uid); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        configStore.recordAudit({ actor: actorName(), action: 'schools.promoted', entityType: 'system', summary: `${configStore.findUserById(uid)?.displayName || 'A staff member'}'s DBE upload is now the shared list (${r.total} schools, ${r.source})` });
+        addActivity(`DBE list updated for everyone: ${r.total} schools`, 'system', actorName());
+        return sendJson(res, 200, { ok: true, ...r, status: schoolsStore.status() });
+      }
+      if (method === 'DELETE' && pathname === '/api/schools/mine') { const uid = String(req.authSession?.userId || ''); schoolsStore.discard(uid); return sendJson(res, 200, { ok: true, status: schoolsStore.status() }); }
       if (method === 'GET' && pathname === '/api/schools/tree') {
-        const tree = schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '' });
+        const tree = schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '', scope: listScope() });
         if (tree.level === 'districts') { // v72: where the partnership request with each district office stands
           const teams = access.projectTeams(db.projects);
           tree.items = tree.items.map(d => { const lead = db.leads.find(l => districts.isDistrictLead(l) && l.school.district === d.name && l.province === tree.province); const visible = lead && access.canSeeLead(req.authSession, lead, teams); const entry = districts.directoryEntry(tree.province, d.name); return { ...d, office: lead ? (visible ? districts.tileStatus(lead, deriveFlowStatus(lead)) : { leadId: '', status: 'private', label: 'Requested by a colleague', private: true }) : null, directory: entry ? { director: entry.director, email: entry.email, phone: entry.phone, office: entry.office } : null }; });
@@ -2813,7 +2825,7 @@ async function handleApi(req, res, url) {
         return sendJson(res, 201, { ok: true, lead: workbenchLead(lead), found: { email: found.email, phone: found.phone, director: found.director, candidates: found.candidates || [], source }, warnings });
       }
       if (method === 'GET' && pathname === '/api/schools') {
-        const out = schoolsStore.list({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '', circuit: url.searchParams.get('circuit') || '', phase: url.searchParams.get('phase') || '', contact: url.searchParams.get('contact') || '', q: clampText(url.searchParams.get('q'), 80), limit: url.searchParams.get('limit') || 100, offset: url.searchParams.get('offset') || 0 });
+        const out = schoolsStore.list({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '', circuit: url.searchParams.get('circuit') || '', phase: url.searchParams.get('phase') || '', contact: url.searchParams.get('contact') || '', q: clampText(url.searchParams.get('q'), 80), limit: url.searchParams.get('limit') || 100, offset: url.searchParams.get('offset') || 0, scope: listScope() });
         const tracked = new Map(db.leads.filter(l => l.natemis).map(l => [String(l.natemis), l]));
         return sendJson(res, 200, { ...out, items: out.items.map(sch => { const l = tracked.get(sch.natemis); return { ...sch, tracked: l ? { id: l.id, stage: l.stage, visible: leadVisible(req.authSession, l) } : null }; }) });
       }
@@ -2824,15 +2836,20 @@ async function handleApi(req, res, url) {
         return sendJson(res, 200, { ok: true, ...r, status: schoolsStore.status() });
       }
       if (method === 'POST' && pathname === '/api/schools/import') {
-        if (!roleAllows(req.authSession, ['admin'])) return sendJson(res, 403, { error: 'Administrator role required.' });
+        // v73: anyone on the Schools desk may upload. Non-admins (and admins who ask with ?private=1) get a private copy to compare first;
+        // an admin's plain upload still replaces the shared list directly.
+        const isAdmin = roleAllows(req.authSession, ['admin']);
+        const privateUpload = !isAdmin || url.searchParams.get('private') === '1';
+        const scope = privateUpload ? String(req.authSession?.userId || '') : '';
+        if (privateUpload && !scope) return sendJson(res, 403, { error: 'Sign in with a staff account to upload a list.' });
         const text = await readLargeBody(req);
-        let r; try { r = schoolsStore.importCsv(text, { source: `Upload ${new Date().toISOString().slice(0, 10)}` }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
-        configStore.recordAudit({ actor: actorName(), action: 'schools.imported', entityType: 'system', summary: `DBE CSV uploaded: ${r.imported} schools (${r.skipped} rows skipped)` });
-        return sendJson(res, 200, { ok: true, ...r, status: schoolsStore.status() });
+        let r; try { r = schoolsStore.importCsv(text, { source: `${privateUpload ? `${req.authSession.displayName || 'Staff'} upload` : 'Upload'} ${new Date().toISOString().slice(0, 10)}`, scope }); } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        configStore.recordAudit({ actor: actorName(), action: privateUpload ? 'schools.uploaded_private' : 'schools.imported', entityType: 'system', summary: `DBE CSV uploaded${privateUpload ? ' (private copy, to compare)' : ''}: ${r.imported} schools (${r.skipped} rows skipped)` });
+        return sendJson(res, 200, { ok: true, ...r, status: { ...schoolsStore.status(), mine: mineStatus(), canPromote: isAdmin }, diff: privateUpload ? schoolsStore.diff(scope) : null });
       }
       const addRoute = pathname.match(/^\/api\/schools\/(\d{6,12})\/add$/);
       if (addRoute && method === 'POST') {
-        const sch = schoolsStore.get(addRoute[1]);
+        const sch = schoolsStore.get(addRoute[1]) || schoolsStore.get(addRoute[1], String(req.authSession?.userId || '')); // v73: shared list, else my upload
         if (!sch) return sendJson(res, 404, { error: 'School not found in the DBE list.' });
         const existing = db.leads.find(l => String(l.natemis || '') === sch.natemis);
         if (existing) return sendJson(res, 200, { ok: true, alreadyAdded: true, lead: leadVisible(req.authSession, existing) ? workbenchLead(existing) : { id: '', company: existing.company, private: true } });
