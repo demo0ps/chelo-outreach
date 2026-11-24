@@ -140,3 +140,49 @@ test('schools desk end-to-end: load list, browse district, add phone-only school
   assert.ok(!(await csi('GET', '/api/init')).payload.leads.some(l => l.kind === 'school'));
   assert.equal((await sc('GET', '/api/init')).payload.leads.filter(l => l.kind === 'school').length, 2);
 });
+
+// v72: partnership requests to district offices.
+const districts = require('../lib/districts');
+test('districts module: contact picking, seed, request email, PDF layout, tile status', () => {
+  const pages = [
+    { url: 'https://www.education.gpg.gov.za/districts', text: 'Johannesburg East district office. District Director: Ms N Mahlangu. Tel 011 555 0001. Email: jhbeast.info@gauteng.gov.za. General enquiries info@gauteng.gov.za' },
+    { url: 'https://example.com/listing', text: 'Johannesburg East schools directory webmaster@example.com 082 123 4567' }
+  ];
+  const found = districts.pickContacts({ district: 'Johannesburg East', province: 'Gauteng', pages });
+  assert.equal(found.email, 'jhbeast.info@gauteng.gov.za', JSON.stringify(found)); assert.equal(found.phone, '0115550001'); assert.match(found.director, /Mahlangu/);
+  const seed = districts.leadSeed({ province: 'Gauteng', district: 'Johannesburg East', found, stats: { schools: 320, q13: 210, noFee: 180, schoolsOnChelo: 2, needsLogged: 3, needs: [{ school: 'Sizanani Primary', text: 'Two toilet blocks', category: 'sanitation' }] }, source: pages[0].url });
+  assert.equal(seed.kind, 'school'); assert.equal(seed.school.level, 'district'); assert.equal(seed.contactChannel, 'email'); assert.match(seed.company, /Johannesburg East Education District Office/);
+  const lead = { id: 'd1', ...seed };
+  const m = schools.emailStep({ step: 1, lead, links: { booking: 'https://c/book/x' }, staff: { name: 'Founder' } });
+  assert.match(m.subject, /Partnership request: verified school needs in Johannesburg East/); assert.match(m.body, /^Dear Ms N Mahlangu,/); assert.match(m.body, /320 public schools/); assert.match(m.body, /210 of them quintile 1–3/); assert.match(m.body, /2 schools in the district are already working with Chelo/); assert.match(m.body, /partnership note is attached/);
+  assert.match(schools.emailStep({ step: 3, lead }).body, /close this thread/);
+  const brief = schools.dbeBrief(lead); assert.ok(brief.findings.some(f => /320 public schools/.test(f.text))); assert.equal(brief.sources[0].title, 'District office page');
+  const deskPdf = require('../lib/desk-pdf');
+  const layout = deskPdf.layoutFor('school', lead, {}); assert.equal(layout.kicker, 'PARTNERSHIP REQUEST · DISTRICT OFFICE'); assert.match(layout.title, /Johannesburg East district/); assert.ok(layout.sections[1][1].includes('Two toilet blocks (Sizanani Primary)'));
+  assert.match(deskPdf.filenameFor('school', lead), /Partnership-Request/); assert.equal(deskPdf.fieldLabels('school', lead).doc, 'Partnership request');
+  assert.match(schools.callScript(lead, { name: 'Founder' })[0], /District Director/);
+  assert.equal(districts.tileStatus(lead, 'sent').label, 'Requested'); assert.equal(districts.tileStatus(lead, 'booked').label, 'Meeting booked'); assert.equal(districts.tileStatus(null), null);
+  assert.equal(districts.pickContacts({ district: 'X', province: 'Y', pages: [] }).email, '');
+});
+
+test('server: district office request from the district tile, status shows on the tree', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-districts-'));
+  const port = 9950 + Math.floor(Math.random() * 40);
+  const child = await startServer({ PORT: String(port), DATA_DIR: dir, NODE_ENV: 'test', SETTINGS_ENCRYPTION_KEY: 'school-key', SMTP_PROBE_DISABLED: 'true' });
+  t.after(() => { child.kill('SIGTERM'); });
+  const base = `http://127.0.0.1:${port}`; const sc = client(base, 'schools'); const csi = client(base, 'csi');
+  assert.equal((await sc('POST', '/api/auth/setup', { username: 'founder@cheloapp.com', displayName: 'Founder', password: 'correct-horse-battery' })).status, 201);
+  assert.equal((await csi('POST', '/api/auth/login', { username: 'founder@cheloapp.com', password: 'correct-horse-battery' })).status, 200);
+  assert.equal((await sc('POST', '/api/schools/import', DBE_CSV)).payload.imported, 3);
+  const tree0 = (await sc('GET', '/api/schools/tree?province=Gauteng')).payload; assert.equal(tree0.items[0].office, null);
+  assert.equal((await sc('POST', '/api/schools/district/office', { province: 'Gauteng' })).status, 400);
+  // No search key in the sandbox: staff give the contact; the office is still created from DBE facts.
+  const r = await sc('POST', '/api/schools/district/office', { province: 'Gauteng', district: 'Johannesburg East', email: 'district@github.com', contactName: 'Ms N Mahlangu', run: false });
+  assert.equal(r.status, 201, JSON.stringify(r.payload)); assert.equal(r.payload.lead.kind, 'school'); assert.equal(r.payload.lead.school.level, 'district'); assert.equal(r.payload.lead.school.stats.schools, 2);
+  assert.equal(r.payload.lead.contactName, 'Ms N Mahlangu'); assert.equal(r.payload.lead.email, 'district@github.com');
+  assert.equal((await sc('POST', '/api/schools/district/office', { province: 'Gauteng', district: 'Johannesburg East' })).payload.alreadyAdded, true);
+  const tree1 = (await sc('GET', '/api/schools/tree?province=Gauteng')).payload; assert.equal(tree1.items[0].office.leadId, r.payload.lead.id); assert.equal(tree1.items[0].office.label, 'Request drafted');
+  assert.ok(!(await csi('GET', '/api/init')).payload.leads.some(l => l.id === r.payload.lead.id), 'district office lives on the Schools desk');
+  const noKey = await sc('POST', '/api/schools/district/office', { province: 'KwaZulu-Natal', district: 'Umlazi', run: false });
+  assert.equal(noKey.status, 201); assert.equal(noKey.payload.lead.email, ''); assert.match(noKey.payload.warnings[0], /web search key/);
+});

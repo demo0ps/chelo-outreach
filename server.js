@@ -27,7 +27,8 @@ const desks = require('./lib/desks');
 const media = require('./lib/media');
 const schools = require('./lib/schools');
 const suppliers = require('./lib/suppliers');
-const supporters = require('./lib/supporters'); // v71: individuals + NGOs, SME invitations
+const supporters = require('./lib/supporters');
+const districts = require('./lib/districts'); // v72: district-office partnership requests // v71: individuals + NGOs, SME invitations
 const security = require('./lib/security');
 const deskPdf = require('./lib/desk-pdf');
 const geo = require('./lib/geo');
@@ -2764,7 +2765,46 @@ async function handleApi(req, res, url) {
     // ---------------- R3 Schools desk: DBE list, call tasks, needs ----------------
     if (pathname.startsWith('/api/schools')) {
       if (method === 'GET' && pathname === '/api/schools/status') return sendJson(res, 200, schoolsStore.status());
-      if (method === 'GET' && pathname === '/api/schools/tree') return sendJson(res, 200, schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '' }));
+      if (method === 'GET' && pathname === '/api/schools/tree') {
+        const tree = schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '' });
+        if (tree.level === 'districts') { // v72: where the partnership request with each district office stands
+          const teams = access.projectTeams(db.projects);
+          tree.items = tree.items.map(d => { const lead = db.leads.find(l => districts.isDistrictLead(l) && l.school.district === d.name && l.province === tree.province); const visible = lead && access.canSeeLead(req.authSession, lead, teams); return { ...d, office: lead ? (visible ? districts.tileStatus(lead, deriveFlowStatus(lead)) : { leadId: '', status: 'private', label: 'Requested by a colleague', private: true }) : null }; });
+        }
+        return sendJson(res, 200, tree);
+      }
+      if (method === 'POST' && pathname === '/api/schools/district/office') { // v72: find the district office on the web, add it as a lead, prepare the partnership request
+        const body = await readBody(req); const province = clampText(body.province, 60); const district = clampText(body.district, 80);
+        if (!province || !district) return sendJson(res, 400, { error: 'Province and district are required.' });
+        const existing = db.leads.find(l => districts.isDistrictLead(l) && l.school.district === district && l.province === province);
+        if (existing) return sendJson(res, 200, { ok: true, alreadyAdded: true, lead: leadVisible(req.authSession, existing) ? workbenchLead(existing) : { id: '', company: existing.company, private: true } });
+        const stats = districts.districtStats(schoolsStore, db, province, district);
+        const searchConfig = configStore.getSearchConfig(); const pages = []; const warnings = [];
+        if (body.email || body.phone) { /* staff typed the contact — no web search */ }
+        else if (!searchConfig.apiKey) warnings.push('No web search key in Settings → Integrations, so the office contact could not be looked up. Add the email or phone on the lead and press Run.');
+        else {
+          const budget = AbortSignal.timeout(Number(process.env.DISCOVERY_MAILBOX_BUDGET_MS || 30000));
+          const seen = new Set();
+          for (const q of districts.searchQueries(province, district)) {
+            let hits = []; try { hits = await research.runSearch(searchConfig, q); } catch (err) { warnings.push(err.message); }
+            for (const h of hits) { if (seen.has(h.url) || seen.size >= 6) continue; seen.add(h.url); pages.push({ url: h.url, text: `${h.title || ''}\n${h.snippet || ''}` }); }
+          }
+          const gov = [...seen].sort((a, b) => Number(/\.gov\.za/.test(b)) - Number(/\.gov\.za/.test(a))).slice(0, 4);
+          await Promise.all(gov.map(async u => { try { const r = await research.fetchPublicText(u, { signal: budget }); pages.push({ url: u, text: String(r.text || r || '') }); } catch {} }));
+        }
+        const found = body.email || body.phone ? { email: normalizeEmail(body.email), phone: String(body.phone || '').replace(/\D/g, ''), director: clampText(body.contactName, 80) } : districts.pickContacts({ district, province, pages });
+        const source = found.email ? (pages.find(pg => String(pg.text).toLowerCase().includes(found.email))?.url || '') : (pages[0]?.url || '');
+        const seed = districts.leadSeed({ province, district, found, stats, source });
+        const contactCheck = seed.email ? await inspectContactRecord(seed) : { status: 'unchecked', issues: [], method: 'district-office' };
+        const lead = safeLead(seed, contactCheck);
+        Object.assign(lead, { kind: 'school', school: seed.school, contactChannel: seed.contactChannel, phone: seed.phone, relationshipGoal: 'partnership' });
+        addLead(lead, req.authSession);
+        configStore.recordAudit({ actor: actorName(), action: 'district.office_added', entityType: 'lead', entityId: lead.id, summary: `${lead.company} added · ${found.email ? `email ${found.email}` : found.phone ? `phone ${found.phone}` : 'no contact found'}${source ? ` · ${source}` : ''}` });
+        addActivity(`Partnership request started: ${district} district office`, 'lead', actorName());
+        saveDb();
+        if (body.run !== false) { const origin = publicOrigin(req); setTimeout(() => runLeadFlow(lead, { actor: actorName(), origin }).catch(() => {}), 0); }
+        return sendJson(res, 201, { ok: true, lead: workbenchLead(lead), found: { email: found.email, phone: found.phone, director: found.director, candidates: found.candidates || [], source }, warnings });
+      }
       if (method === 'GET' && pathname === '/api/schools') {
         const out = schoolsStore.list({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '', circuit: url.searchParams.get('circuit') || '', phase: url.searchParams.get('phase') || '', contact: url.searchParams.get('contact') || '', q: clampText(url.searchParams.get('q'), 80), limit: url.searchParams.get('limit') || 100, offset: url.searchParams.get('offset') || 0 });
         const tracked = new Map(db.leads.filter(l => l.natemis).map(l => [String(l.natemis), l]));

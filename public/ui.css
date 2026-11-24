@@ -2309,3 +2309,17 @@ hr, .divider { border: 0; border-top: 1px solid var(--border); }
 .sme-finder { margin-top: 10px; border-top: 1px solid var(--line, #e3e7ee); padding-top: 8px; } .sme-finder summary { cursor: pointer; font-size: 13px; }
 .sme-list { display: grid; gap: 6px; margin-top: 8px; } .sme-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line, #e3e7ee); border-radius: 10px; font-size: 13px; cursor: pointer; }
 .sme-row.is-tracked { opacity: .6; } .sme-row input { margin-top: 3px; }
+
+/* v72: district office row on the district tile */
+.sch-tile-wrap { display: grid; gap: 6px; } .sch-tile-wrap .sch-tile { width: 100%; }
+.sch-office { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; padding: 0 2px; }
+
+/* v72: buttons you can see. Ghost/text buttons used to be light grey on white with no border — only the cursor
+   showed they were clickable. Every borderless button now has a visible outline and dark text; links are underlined. */
+.button-ghost, .button-ghost.button-small { color: var(--z-800, #26233a); border: 1px solid rgba(24,24,27,.32); background: #fff; }
+.button-ghost:hover { background: var(--soft, #f1effa); border-color: var(--z-600, #6a629a); }
+.button-secondary { color: var(--z-800, #26233a); border-color: rgba(24,24,27,.32); }
+.link-button { color: var(--z-700, #3f3a63); text-decoration: underline; text-underline-offset: 2px; }
+.table-action { color: var(--z-800, #26233a); border: 1px solid rgba(24,24,27,.32); background: #fff; border-radius: 7px; padding: 3px 8px; }
+.table-action:hover { background: var(--soft, #f1effa); }
+.subtle, .company-secondary { color: var(--z-600, #5b5680); }

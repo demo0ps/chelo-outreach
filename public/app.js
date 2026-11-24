@@ -991,10 +991,11 @@ function leadDetailModal(lead) {
 const PDF_LABELS = {
   funder: { doc: 'Partnership proposal', modalTitle: 'Personalise the proposal', intro: c => `Create a guided, donor-specific proposal for ${c}.`, button: 'Generate proposal PDF', opening: 'Partnership summary', impact: 'The opportunity', rationale: 'Why Chelo', nextStep: 'Recommended next step', notes: 'Chelo project and campaign notes', amount: 'Staff-selected contribution (ZAR)', project: 'Staff-selected project / impact focus', draft: 'Generate guided draft', card: 'proposal' },
   media: { doc: 'Press backgrounder', modalTitle: 'Press backgrounder', intro: c => `A one-page backgrounder ${c} can file the story from: what Chelo is, why now, facts, spokesperson and assets. Built from the approved media kit; edit any paragraph.`, button: 'Generate backgrounder PDF', opening: 'The story (what Chelo is, in two sentences)', impact: 'Why now (the hook for this outlet)', rationale: 'Extra facts for this story (optional)', nextStep: 'What we offer (interview, site visit, pictures)', notes: 'Notes for this outlet (not printed)', amount: '', project: 'Project or story focus', draft: 'Fill from media kit', card: 'backgrounder' },
+  district: { doc: 'Partnership request', modalTitle: 'Partnership request for the district office', intro: c => `A one-page partnership note for ${c}: what Chelo does, the district as the DBE list shows it, how we would work with the office, and the ask.`, button: 'Generate partnership PDF', opening: 'What Chelo does', impact: 'The district as the DBE list shows it', rationale: 'How we would work with the office', nextStep: 'What we are asking for', notes: 'Notes', amount: 'Indicative first-phase budget (ZAR, optional)', project: 'First schools / focus (optional)' },
   school: { doc: 'Project brief for the school', modalTitle: 'Brief for the principal', intro: c => `A plain-language page for ${c}: the need as Chelo understood it, what happens next, and what the school does. No funder language; no money passes through the school.`, button: 'Generate school brief PDF', opening: 'What Chelo does (plain words)', impact: 'The need as we understood it', rationale: 'What happens next', nextStep: 'What the school does', notes: 'Notes from the call (not printed)', amount: 'Estimate from the call (ZAR)', project: 'Need / project name', draft: 'Fill from the call notes', card: 'school brief' },
   supplier: { doc: 'Scope of works · quote request', modalTitle: 'Scope of works', intro: c => `The quote request ${c} receives: site, scope, how to quote and how payment works. Pre-filled from the open quote request on the linked project.`, button: 'Generate scope of works PDF', opening: 'Site and context', impact: 'Scope of works', rationale: 'How to quote', nextStep: 'How payment and sign-off work', notes: 'Internal notes (not printed)', amount: 'Budget guide (ZAR, optional)', project: 'Project', draft: 'Fill from the quote request', card: 'scope of works' }
 };
-function pdfLabels(lead) { return PDF_LABELS[lead?.kind || 'funder'] || PDF_LABELS.funder; }
+function pdfLabels(lead) { if (lead?.school?.level === 'district') return PDF_LABELS.district; return PDF_LABELS[lead?.kind || 'funder'] || PDF_LABELS.funder; }
 function proposalModal(lead) {
   if (!lead) return '';
   const saved = lead.proposalData || {};
@@ -1506,6 +1507,19 @@ async function dispatchAction(button) {
     if (action === 'tender-done') { const confirmedBy = $('#tender-confirmed-by')?.value || ''; const notes = $('#tender-done-notes')?.value || ''; const r = await API(`/api/projects/${encodeURIComponent(id)}/tender/done`, { method: 'POST', body: JSON.stringify({ confirmedBy, notes }) }); toast(`${r.project.recipientName} confirmed the work is done.`); await refresh(); return; }
     if (action === 'dbe-load') { state.sch.busy = true; renderApp(); try { const r = await API('/api/schools/load', { method: 'POST', body: '{}' }); state.sch.status = r.status; toast(`DBE list loaded: ${r.imported.toLocaleString('en-ZA')} schools.`); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; state.sch.treeKey = ''; renderApp(); } return; }
     if (action === 'dbe-upload') { $('#dbe-csv')?.click(); return; }
+    if (action === 'sch-office') {
+      const district = button.dataset.district; state.sch.officeBusy = district; renderApp();
+      try {
+        const r = await API('/api/schools/district/office', { method: 'POST', body: JSON.stringify({ province: state.sch.province, district }) });
+        state.sch.officeBusy = '';
+        if (r.alreadyAdded) toast(`${district} district office is already on the desk.`);
+        else if (r.found?.email) toast(`${district}: office found (${r.found.email}). Drafting the request and PDF.`);
+        else if (r.found?.phone) toast(`${district}: no office email published — phone ${r.found.phone}. A call task with a script is ready.`);
+        else toast(`${district}: office added, but no email or phone was found. Open it and add the contact.${r.warnings?.length ? ` ${r.warnings[0]}` : ''}`, true);
+        await refresh(); await schLoadTree();
+      } catch (err) { state.sch.officeBusy = ''; renderApp(); toast(err.message, true); }
+      return;
+    }
     if (action === 'sch-nav') { Object.assign(state.sch, { province: button.dataset.province || '', district: button.dataset.district || '', circuit: '', q: '' }); schLoadTree(); return; }
     if (action === 'sch-add') { state.sch.busy = true; renderApp(); try { const r = await API(`/api/schools/${encodeURIComponent(id)}/add`, { method: 'POST', body: '{}' }); toast(r.alreadyAdded ? `${r.lead.company} is already in To do.` : `${r.lead.company} added — ${r.lead.email ? 'Chelo checks the email and writes the first note.' : 'no published email, so a call task opens with the script.'}`); if (r.lead.id) { state.wb.selectedId = r.lead.id; wbPollFlow(r.lead.id); } await refresh(); state.sch.list = null; await schLoadList(); } catch (err) { toast(err.message, true); } finally { state.sch.busy = false; renderApp(); } return; }
     if (action === 'call-log') { const notes = $('#call-notes')?.value || ''; const when = $('#call-when')?.value || ''; const outcome = button.dataset.outcome; const r = await API(`/api/leads/${encodeURIComponent(id)}/call`, { method: 'POST', body: JSON.stringify({ outcome, notes, callBackAt: outcome === 'call-back' ? when : '', bookedAt: outcome === 'booked' ? when : '' }) }); toast(outcome === 'booked' ? `Call booked with ${r.lead.company}. Capture the needs when you speak.` : `Logged: ${outcome}.`); await refresh(); return; }
@@ -2914,6 +2928,15 @@ function smeFinder() {
     ${f.error ? `<p class="form-error">${esc(f.error)}</p>` : ''}${f.done ? `<p class="subtle">${f.done.queued} invitation${f.done.queued === 1 ? '' : 's'} sent${f.done.skipped.length ? ` · skipped: ${f.done.skipped.map(x => `${esc(x.name)} (${esc(x.reason)})`).join(', ')}` : ''}.</p>` : ''}
     ${rows ? `<div class="sme-list">${rows}</div>` : f.busy ? '<p class="subtle">Searching, then checking each business for a working mailbox — up to a minute.</p>' : ''}</details>`;
 }
+/** v72: the partnership request with a district office — status on the tile, one button to start it. */
+function districtOfficeRow(d) {
+  if (!d.name) return '';
+  const o = d.office; const busy = state.sch.officeBusy === d.name;
+  if (!o) return `<div class="sch-office"><button type="button" class="button button-secondary button-small" data-action="sch-office" data-district="${esc(d.name)}" ${busy ? 'disabled' : ''}>${svgIcon('send')}${busy ? 'Finding the office…' : 'Partnership request'}</button><span class="subtle">Finds the district office on the web, drafts the request + PDF</span></div>`;
+  if (o.private) return `<div class="sch-office"><span class="stage-pill pill-new">${esc(o.label)}</span></div>`;
+  const cls = ['replied', 'booked', 'call-booked', 'won', 'interested'].includes(o.status) ? 'pill-won' : ['dead', 'error', 'blocked', 'call'].includes(o.status) ? 'pill-interested' : 'pill-researched';
+  return `<div class="sch-office"><span class="stage-pill ${cls}">${esc(o.label)}</span><button type="button" class="button button-secondary button-small" data-action="wb-select" data-id="${esc(o.leadId)}">${svgIcon('external')}Open</button>${o.contact ? `<span class="subtle">${esc(o.contact)}</span>` : ''}</div>`;
+}
 /** R4: intake bar on the Suppliers desk — the sign-up link and the vetting queue. */
 function suppliersIntakeBar() {
   if (!state.sup.link && !state.sup.loading) { state.sup.loading = true; API('/api/suppliers/signup-link').then(r => { state.sup.link = r; state.sup.loading = false; renderApp(); }).catch(() => { state.sup.loading = false; }); }
@@ -2961,7 +2984,7 @@ function schoolsIntakeBar() {
   const crumbs = `<div class="sch-crumbs"><button type="button" class="link-button" data-action="sch-nav" data-province="" data-district="">All provinces</button>${sch.province ? ` › <button type="button" class="link-button" data-action="sch-nav" data-province="${esc(sch.province)}" data-district="">${esc(sch.province)}</button>` : ''}${sch.district ? ` › <strong>${esc(sch.district)}</strong>` : ''}</div>`;
   let body = '';
   if (!sch.province) body = `<p class="subtle">Pick a province, then a district. Work one district at a time: its schools, its circuit offices, its principals.</p><div class="sch-grid">${(provinces || []).map(p => `<button type="button" class="sch-tile" data-action="sch-nav" data-province="${esc(p.name)}" data-district=""><strong>${esc(p.name)}</strong><span>${p.schools.toLocaleString('en-ZA')} schools · ${p.withEmail.toLocaleString('en-ZA')} with email · ${p.withPhone.toLocaleString('en-ZA')} with phone</span></button>`).join('') || '<span class="subtle">Loading…</span>'}</div>`;
-  else if (!sch.district) body = `<p class="subtle">Districts in ${esc(sch.province)}, biggest first. Email where published, otherwise a call task with a script.</p><div class="sch-grid">${(sch.tree?.items || []).map(d => `<button type="button" class="sch-tile" data-action="sch-nav" data-province="${esc(sch.province)}" data-district="${esc(d.name || '(no district)')}"><strong>${esc(d.name || '(no district)')}</strong><span>${d.schools} schools · ${d.withEmail} email · ${d.withPhone} phone · ${d.noFee} no-fee</span></button>`).join('') || '<span class="subtle">Loading…</span>'}</div>`;
+  else if (!sch.district) body = `<p class="subtle">Districts in ${esc(sch.province)}, biggest first. Email where published, otherwise a call task with a script.</p><div class="sch-grid">${(sch.tree?.items || []).map(d => `<div class="sch-tile-wrap"><button type="button" class="sch-tile" data-action="sch-nav" data-province="${esc(sch.province)}" data-district="${esc(d.name || '(no district)')}"><strong>${esc(d.name || '(no district)')}</strong><span>${d.schools} schools · ${d.withEmail} email · ${d.withPhone} phone · ${d.noFee} no-fee</span></button>${districtOfficeRow(d)}</div>`).join('') || '<span class="subtle">Loading…</span>'}</div>`;
   else {
     const circuits = sch.tree?.items || []; const list = sch.list;
     body = `<div class="sch-filters">${circuits.length > 1 ? `<select class="form-control" data-sch-filter="circuit"><option value="">All circuits (${circuits.length})</option>${circuits.map(c => `<option value="${esc(c.name)}" ${sch.circuit === c.name ? 'selected' : ''}>${esc(c.name || '(no circuit)')} · ${c.schools}</option>`).join('')}</select>` : ''}
