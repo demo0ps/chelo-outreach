@@ -80,7 +80,7 @@ test('schools module: DBE CSV parsing, bundled list, district-first tree, script
   const mail = schools.emailStep({ step: 1, lead, links: { booking: 'https://c/b', optOut: 'https://c/o' }, staff: { name: 'Lerato' } });
   assert.match(mail.subject, /15-minute call/); assert.match(mail.body, /Dear Principal/); assert.ok(mail.body.includes('https://c/b') && mail.body.includes('https://c/o'));
   assert.ok(!/proposal|R\s?\d/.test(mail.body));
-  const script = schools.callScript(lead, { name: 'Lerato' }); assert.ok(script.length >= 6); assert.match(script[1], /Lerato from Chelo/); assert.match(script[6], /Never ask for ID numbers/);
+  const script = schools.callScript(lead, { name: 'Lerato' }); assert.ok(script.length >= 6); assert.match(script[1], /Lerato from Chelo/); assert.match(script[script.length - 1], /Never ask for ID numbers/);
   schools.openCallTask(lead, { actor: 'Lerato' }); assert.equal(lead.callTask.status, 'open');
   schools.recordCall(lead, { outcome: 'no-answer', actor: 'Lerato' }); assert.equal(lead.stage, 'Contacted'); assert.equal(lead.callTask.attempts, 1);
   schools.recordCall(lead, { outcome: 'call-back', callBackAt: 'Tue 10:00', actor: 'Lerato' }); assert.equal(lead.callTask.status, 'call-back');
@@ -143,6 +143,15 @@ test('schools desk end-to-end: load list, browse district, add phone-only school
 
 // v72: partnership requests to district offices.
 const districts = require('../lib/districts');
+test('schools emails: listing is free, NextFinder is an optional unpriced nudge', () => {
+  const lead = { company: 'Sizanani Primary', kind: 'school', province: 'Gauteng', school: { district: 'Johannesburg East' } };
+  const m = schools.emailStep({ step: 1, lead, links: { booking: 'https://c/book/x' }, staff: { name: 'Founder' } });
+  assert.match(m.body, /Listing Sizanani Primary on Chelo is free/); assert.match(m.body, /no money through the school/); assert.match(m.body, /sister service NextFinder \(https:\/\/nextfinder\.org\)/); assert.match(m.body, /It is optional/); assert.ok(!/R ?8|booking fee|R\d/.test(m.body));
+  assert.match(schools.emailStep({ step: 2, lead }).body, /costs the school nothing/);
+  assert.ok(schools.callScript(lead, { name: 'F' }).some(l => /Listing the school on Chelo is free/.test(l))); assert.ok(schools.callScript(lead).some(l => /NextFinder/.test(l)));
+  assert.match(require('../lib/desk-pdf').defaults('school', lead).nextStep, /NextFinder/);
+});
+
 test('districts module: contact picking, seed, request email, PDF layout, tile status', () => {
   const pages = [
     { url: 'https://www.education.gpg.gov.za/districts', text: 'Johannesburg East district office. District Director: Ms N Mahlangu. Tel 011 555 0001. Email: jhbeast.info@gauteng.gov.za. General enquiries info@gauteng.gov.za' },
@@ -154,11 +163,12 @@ test('districts module: contact picking, seed, request email, PDF layout, tile s
   assert.equal(seed.kind, 'school'); assert.equal(seed.school.level, 'district'); assert.equal(seed.contactChannel, 'email'); assert.match(seed.company, /Johannesburg East Education District Office/);
   const lead = { id: 'd1', ...seed };
   const m = schools.emailStep({ step: 1, lead, links: { booking: 'https://c/book/x' }, staff: { name: 'Founder' } });
-  assert.match(m.subject, /Partnership request: verified school needs in Johannesburg East/); assert.match(m.body, /^Dear Ms N Mahlangu,/); assert.match(m.body, /320 public schools/); assert.match(m.body, /210 of them quintile 1–3/); assert.match(m.body, /2 schools in the district are already working with Chelo/); assert.match(m.body, /partnership note is attached/);
+  assert.match(m.subject, /Partnership request: listing Johannesburg East's public schools on Chelo \(no cost\)/); assert.match(m.body, /^Dear Ms N Mahlangu,/); assert.match(m.body, /320 public schools/); assert.match(m.body, /210 of them quintile 1–3/); assert.match(m.body, /2 schools in the district are already listed on Chelo/);
+  assert.match(m.body, /not asking the district or any school for money/); assert.match(m.body, /1\. A signed memorandum of understanding/); assert.match(m.body, /2\. Permission to approach principals/); assert.match(m.body, /3\. The principals' contact details/); assert.ok(!/R ?\d/.test(m.body), 'no amounts in a district request');
   assert.match(schools.emailStep({ step: 3, lead }).body, /close this thread/);
   const brief = schools.dbeBrief(lead); assert.ok(brief.findings.some(f => /320 public schools/.test(f.text))); assert.equal(brief.sources[0].title, 'District office page');
   const deskPdf = require('../lib/desk-pdf');
-  const layout = deskPdf.layoutFor('school', lead, {}); assert.equal(layout.kicker, 'PARTNERSHIP REQUEST · DISTRICT OFFICE'); assert.match(layout.title, /Johannesburg East district/); assert.ok(layout.sections[1][1].includes('Two toilet blocks (Sizanani Primary)'));
+  const layout = deskPdf.layoutFor('school', lead, {}); assert.equal(layout.kicker, 'PARTNERSHIP REQUEST · DISTRICT OFFICE'); assert.match(layout.title, /Listing Johannesburg East's schools on Chelo/); assert.ok(layout.sections[1][1].includes('Two toilet blocks (Sizanani Primary)')); assert.match(layout.sections[4][0], /memorandum of understanding/i); assert.match(layout.sections[4][1], /2\. No cost/); assert.match(layout.sections[2][1], /NextFinder/); assert.ok(!/R ?8/.test(layout.sections[2][1]), 'never prices NextFinder');
   assert.match(deskPdf.filenameFor('school', lead), /Partnership-Request/); assert.equal(deskPdf.fieldLabels('school', lead).doc, 'Partnership request');
   assert.match(schools.callScript(lead, { name: 'Founder' })[0], /District Director/);
   assert.equal(districts.tileStatus(lead, 'sent').label, 'Requested'); assert.equal(districts.tileStatus(lead, 'booked').label, 'Meeting booked'); assert.equal(districts.tileStatus(null), null);
