@@ -2769,7 +2769,7 @@ async function handleApi(req, res, url) {
         const tree = schoolsStore.tree({ province: url.searchParams.get('province') || '', district: url.searchParams.get('district') || '' });
         if (tree.level === 'districts') { // v72: where the partnership request with each district office stands
           const teams = access.projectTeams(db.projects);
-          tree.items = tree.items.map(d => { const lead = db.leads.find(l => districts.isDistrictLead(l) && l.school.district === d.name && l.province === tree.province); const visible = lead && access.canSeeLead(req.authSession, lead, teams); return { ...d, office: lead ? (visible ? districts.tileStatus(lead, deriveFlowStatus(lead)) : { leadId: '', status: 'private', label: 'Requested by a colleague', private: true }) : null }; });
+          tree.items = tree.items.map(d => { const lead = db.leads.find(l => districts.isDistrictLead(l) && l.school.district === d.name && l.province === tree.province); const visible = lead && access.canSeeLead(req.authSession, lead, teams); const entry = districts.directoryEntry(tree.province, d.name); return { ...d, office: lead ? (visible ? districts.tileStatus(lead, deriveFlowStatus(lead)) : { leadId: '', status: 'private', label: 'Requested by a colleague', private: true }) : null, directory: entry ? { director: entry.director, email: entry.email, phone: entry.phone, office: entry.office } : null }; });
         }
         return sendJson(res, 200, tree);
       }
@@ -2780,7 +2780,9 @@ async function handleApi(req, res, url) {
         if (existing) return sendJson(res, 200, { ok: true, alreadyAdded: true, lead: leadVisible(req.authSession, existing) ? workbenchLead(existing) : { id: '', company: existing.company, private: true } });
         const stats = districts.districtStats(schoolsStore, db, province, district);
         const searchConfig = configStore.getSearchConfig(); const pages = []; const warnings = [];
+        const entry = districts.directoryEntry(province, district);
         if (body.email || body.phone) { /* staff typed the contact — no web search */ }
+        else if (entry && (entry.email || entry.phone)) { /* DBE directory has the office — no web search needed */ }
         else if (!searchConfig.apiKey) warnings.push('No web search key in Settings → Integrations, so the office contact could not be looked up. Add the email or phone on the lead and press Run.');
         else {
           const budget = AbortSignal.timeout(Number(process.env.DISCOVERY_MAILBOX_BUDGET_MS || 30000));
@@ -2792,8 +2794,10 @@ async function handleApi(req, res, url) {
           const gov = [...seen].sort((a, b) => Number(/\.gov\.za/.test(b)) - Number(/\.gov\.za/.test(a))).slice(0, 4);
           await Promise.all(gov.map(async u => { try { const r = await research.fetchPublicText(u, { signal: budget }); pages.push({ url: u, text: String(r.text || r || '') }); } catch {} }));
         }
-        const found = body.email || body.phone ? { email: normalizeEmail(body.email), phone: String(body.phone || '').replace(/\D/g, ''), director: clampText(body.contactName, 80) } : districts.pickContacts({ district, province, pages });
-        const source = found.email ? (pages.find(pg => String(pg.text).toLowerCase().includes(found.email))?.url || '') : (pages[0]?.url || '');
+        const found = body.email || body.phone ? { email: normalizeEmail(body.email), phone: String(body.phone || '').replace(/\D/g, ''), director: clampText(body.contactName, 80) }
+          : entry && (entry.email || entry.phone) ? { email: normalizeEmail(entry.email), phone: entry.phone, director: entry.director.replace(/\s*\(.*$/, ''), office: { name: entry.office, address: entry.address, paEmail: entry.paEmail, phones: entry.phones, directorFull: entry.director, retrievedAt: entry.retrievedAt, sourceTitle: entry.sourceTitle, note: entry.note }, candidates: [entry.email, entry.paEmail].filter(Boolean) }
+          : districts.pickContacts({ district, province, pages });
+        const source = found.office ? entry.source : found.email ? (pages.find(pg => String(pg.text).toLowerCase().includes(found.email))?.url || '') : (pages[0]?.url || '');
         const seed = districts.leadSeed({ province, district, found, stats, source });
         const contactCheck = seed.email ? await inspectContactRecord(seed) : { status: 'unchecked', issues: [], method: 'district-office' };
         const lead = safeLead(seed, contactCheck);

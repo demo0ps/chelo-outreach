@@ -183,6 +183,12 @@ test('server: district office request from the district tile, status shows on th
   assert.equal((await sc('POST', '/api/schools/district/office', { province: 'Gauteng', district: 'Johannesburg East' })).payload.alreadyAdded, true);
   const tree1 = (await sc('GET', '/api/schools/tree?province=Gauteng')).payload; assert.equal(tree1.items[0].office.leadId, r.payload.lead.id); assert.equal(tree1.items[0].office.label, 'Request drafted');
   assert.ok(!(await csi('GET', '/api/init')).payload.leads.some(l => l.id === r.payload.lead.id), 'district office lives on the Schools desk');
-  const noKey = await sc('POST', '/api/schools/district/office', { province: 'KwaZulu-Natal', district: 'Umlazi', run: false });
-  assert.equal(noKey.status, 201); assert.equal(noKey.payload.lead.email, ''); assert.match(noKey.payload.warnings[0], /web search key/);
+  // Umlazi is in the DBE directory → office email, Director and address without any web search.
+  const dirHit = await sc('POST', '/api/schools/district/office', { province: 'KwaZulu-Natal', district: 'Umlazi', run: false });
+  assert.equal(dirHit.status, 201, JSON.stringify(dirHit.payload)); assert.equal(dirHit.payload.lead.email, 'seelan.pillay@kzndoe.gov.za'); assert.equal(dirHit.payload.lead.contactName, 'Mr PN Cele'); assert.match(dirHit.payload.lead.sourceUrl, /education\.gov\.za/); assert.equal(dirHit.payload.warnings.length, 0);
+  assert.equal((await sc('GET', '/api/schools/tree?province=KwaZulu-Natal')).payload.items.find(d => d.name === 'Umlazi').directory.director, 'Mr PN Cele');
+  // Directory covers every district in the bundled DBE list; webmail never becomes the first-touch address.
+  assert.equal(districts.directoryAll().length >= 75, true);
+  for (const e of districts.DIRECTORY.districts) assert.ok(!e.email || /\.gov\.za$/i.test(e.email) || /\.gov$/i.test(e.email), `${e.dbeName}: ${e.email}`);
+  const none = districts.directoryEntry('Gauteng', 'Nowhere'); assert.equal(none, null);
 });

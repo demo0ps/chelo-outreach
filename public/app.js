@@ -2932,7 +2932,8 @@ function smeFinder() {
 function districtOfficeRow(d) {
   if (!d.name) return '';
   const o = d.office; const busy = state.sch.officeBusy === d.name;
-  if (!o) return `<div class="sch-office"><button type="button" class="button button-secondary button-small" data-action="sch-office" data-district="${esc(d.name)}" ${busy ? 'disabled' : ''}>${svgIcon('send')}${busy ? 'Finding the office…' : 'Partnership request'}</button><span class="subtle">Finds the district office on the web, drafts the request + PDF</span></div>`;
+  const dir = d.directory;
+  if (!o) return `<div class="sch-office"><button type="button" class="button button-secondary button-small" data-action="sch-office" data-district="${esc(d.name)}" ${busy ? 'disabled' : ''}>${svgIcon('send')}${busy ? (dir ? 'Preparing…' : 'Finding the office…') : 'Partnership request'}</button><span class="subtle">${dir ? `${esc(dir.director)} · ${esc(dir.email || dir.phone || '')}` : 'Finds the district office on the web, drafts the request + PDF'}</span></div>`;
   if (o.private) return `<div class="sch-office"><span class="stage-pill pill-new">${esc(o.label)}</span></div>`;
   const cls = ['replied', 'booked', 'call-booked', 'won', 'interested'].includes(o.status) ? 'pill-won' : ['dead', 'error', 'blocked', 'call'].includes(o.status) ? 'pill-interested' : 'pill-researched';
   return `<div class="sch-office"><span class="stage-pill ${cls}">${esc(o.label)}</span><button type="button" class="button button-secondary button-small" data-action="wb-select" data-id="${esc(o.leadId)}">${svgIcon('external')}Open</button>${o.contact ? `<span class="subtle">${esc(o.contact)}</span>` : ''}</div>`;
