@@ -189,7 +189,7 @@ function csvMappedCandidate(row, mapping) {
     csvRowNumber: row.rowNumber, company, contactName, email, title: value('title'), phone: value('phone'), sector: value('sector'),
     sourceName: value('sourceName'), sourceUrl: value('sourceUrl'), sourceLastVerifiedAt: sourceDate.value, contactLastVerifiedAt: contactDate.value,
     relationshipContext: value('relationshipContext'), partnerPriorities: value('partnerPriorities'), project: value('project'),
-    amount: amount.value, fitScore: fitScore.value, owner: value('owner') || 'Nandi', notes: value('notes')
+    amount: amount.value, fitScore: fitScore.value, owner: value('owner') || '', notes: value('notes')
   };
   const errors = [], warnings = [];
   if (!company) errors.push('Organisation is required; this row cannot be retained.');
@@ -882,7 +882,7 @@ function leadFormModal(lead) {
     <div class="form-group"><label for="sourceUrl">Source URL</label><input class="form-control" id="sourceUrl" name="sourceUrl" type="url" value="${esc(lead?.sourceUrl || '')}" placeholder="https://…" /></div>
     <div class="form-group"><label for="contactLastVerifiedAt">Contact last verified by staff</label><input class="form-control" id="contactLastVerifiedAt" name="contactLastVerifiedAt" type="date" value="${esc(verificationDateValue(lead?.contactLastVerifiedAt))}" /><span class="form-hint">Set only after confirming the person, role and details. DNS checks do not verify a mailbox.</span></div>
     <div class="form-group"><label for="sourceLastVerifiedAt">Source last checked</label><input class="form-control" id="sourceLastVerifiedAt" name="sourceLastVerifiedAt" type="date" value="${esc(verificationDateValue(lead?.sourceLastVerifiedAt))}" /></div>
-    <div class="form-group"><label for="owner">Relationship owner</label><input class="form-control" id="owner" name="owner" value="${esc(lead?.owner || 'Nandi')}" /></div>
+    <div class="form-group"><label for="owner">Relationship owner</label><input class="form-control" id="owner" name="owner" value="${esc(lead?.owner || state.auth?.displayName || '')}" placeholder="Defaults to you" /></div>
     <div class="form-group"><label for="stage">Pipeline stage</label><select class="form-control" id="stage" name="stage">${(state.data.stages || []).map(s => `<option ${s === (lead?.stage || 'New') ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
     <div class="form-group full"><label for="relationshipContext">Relationship / warm-introduction context</label><textarea class="form-control" id="relationshipContext" name="relationshipContext" maxlength="800" placeholder="Who can introduce us, how they know this organisation, or the most appropriate first connection?">${esc(lead?.relationshipContext || '')}</textarea><span class="form-hint">Optional, staff-entered context. Keep it professional and avoid sensitive personal details.</span></div>
     <div class="form-group full"><label for="partnerPriorities">Partner priorities & timing</label><textarea class="form-control" id="partnerPriorities" name="partnerPriorities" maxlength="1200" placeholder="Known education/community priorities, budget or grant cycle, timing, employee volunteering or in-kind support.">${esc(lead?.partnerPriorities || '')}</textarea><span class="form-hint">Record observed or staff-confirmed priorities; this is not an AI fit decision.</span></div>

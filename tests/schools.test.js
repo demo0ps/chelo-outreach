@@ -202,3 +202,24 @@ test('server: district office request from the district tile, status shows on th
   for (const e of districts.DIRECTORY.districts) assert.ok(!e.email || /\.gov\.za$/i.test(e.email) || /\.gov$/i.test(e.email), `${e.dbeName}: ${e.email}`);
   const none = districts.directoryEntry('Gauteng', 'Nowhere'); assert.equal(none, null);
 });
+
+// v72b: emails sign with the account that owns the lead, never a hard-coded name.
+test('server: a school added by Daniel is signed by Daniel', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chelo-owner-'));
+  const port = 9860 + Math.floor(Math.random() * 40);
+  const child = await startServer({ PORT: String(port), DATA_DIR: dir, NODE_ENV: 'test', SETTINGS_ENCRYPTION_KEY: 'school-key', SMTP_PROBE_DISABLED: 'true' });
+  t.after(() => { child.kill('SIGTERM'); });
+  const base = `http://127.0.0.1:${port}`; const root = client(base, 'schools'); const dan = client(base, 'schools');
+  assert.equal((await root('POST', '/api/auth/setup', { username: 'founder@cheloapp.com', displayName: 'Founder', password: 'correct-horse-battery' })).status, 201);
+  assert.equal((await root('POST', '/api/staff', { username: 'daniel@cheloapp.com', displayName: 'Daniel Mokoena', role: 'owner', desks: ['schools'], password: 'daniel-strong-password' })).status, 201);
+  assert.equal((await dan('POST', '/api/auth/login', { username: 'daniel@cheloapp.com', password: 'daniel-strong-password' })).status, 200);
+  assert.equal((await root('POST', '/api/schools/import', DBE_CSV)).status, 200);
+  const added = (await dan('POST', '/api/schools/700222222/add', { run: false })).payload; assert.ok(added.lead.id, JSON.stringify(added));
+  const lead = (await dan('GET', '/api/init')).payload.leads.find(l => l.id === added.lead.id);
+  assert.equal(lead.owner, 'Daniel Mokoena'); assert.ok(lead.ownerId);
+  const draft = (await dan('POST', `/api/leads/${lead.id}/outreach/generate`, { userNotes: '' })).payload;
+  const body = draft.draft?.body || draft.body || JSON.stringify(draft);
+  assert.match(body, /Daniel Mokoena/); assert.ok(!/Nandi/.test(body), body);
+  const manual = (await dan('POST', '/api/leads', { company: 'Thuto Primary School', contactName: 'Principal', email: 'thuto@github.com', sector: 'Education' })).payload;
+  assert.equal(manual.owner, 'Daniel Mokoena', JSON.stringify(manual));
+});

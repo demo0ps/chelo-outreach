@@ -346,7 +346,7 @@ function safeLead(body, contactCheck = null) {
     province: clampText(body.province, 120),
     introducer: clampText(body.introducer, 160), introducedVia: clampText(body.introducedVia, 160), foundationName: clampText(body.foundationName, 160), parentCompany: clampText(body.parentCompany, 160),
     notes: String(body.notes || '').trim(),
-    owner: String(body.owner || 'Nandi').trim(),
+    owner: String(body.owner || '').trim(), // v72b: filled from the signed-in account in addLead — never a hard-coded name
     nextAction: String(body.nextAction || 'Review lead fit').trim(),
     doNotContact: Boolean(body.doNotContact),
     contactCheck: contactCheck || body.contactCheck || null,
@@ -375,7 +375,7 @@ function safeCandidate(body, contactCheck = null) {
     ...projectLinkFields(body),
     amount: Math.max(0, Number(body.amount || 0)),
     fitScore: Math.max(0, Math.min(100, Number(body.fitScore || 70))),
-    notes: clampText(body.notes, 2000), owner: String(body.owner || 'Nandi').trim(), sourceKind: 'CSV import',
+    notes: clampText(body.notes, 2000), owner: String(body.owner || '').trim(), sourceKind: 'CSV import',
     status: 'New candidate', promotedLeadId: null, contactCheck: contactCheck || null, createdAt: new Date().toISOString()
   };
 }
@@ -506,7 +506,7 @@ function ensurePartner(lead, actor = 'staff') {
       sourceLastVerifiedAt: lead.sourceLastVerifiedAt || '', contactLastVerifiedAt: lead.contactLastVerifiedAt || '',
       relationshipContext: lead.relationshipContext || '', partnerPriorities: lead.partnerPriorities || '',
       introducer: lead.introducer || '', introducedVia: lead.introducedVia || '', foundationName: lead.foundationName || '', parentCompany: lead.parentCompany || '', financialYearEnd: lead.financialYearEnd || null, website: lead.website || '', sector: lead.sector || '', province: lead.province || '',
-      status: 'Active', partnerSince: new Date().toISOString(), owner: lead.owner || 'Nandi',
+      status: 'Active', partnerSince: new Date().toISOString(), owner: lead.owner || staffSignature(lead).name,
       notes: lead.notes || ''
     };
     db.partners.unshift(partner);
@@ -740,6 +740,9 @@ function outreachLinks(lead, origin) {
 }
 function outreachStyle() { return configStore.getGovernanceConfig().outreachStyle || 'ladder'; }
 function staffSignature(lead) {
+  // v72b: the account that owns the lead signs. ownerId is authoritative; the free-text owner is a fallback for older records.
+  const byId = lead?.ownerId ? configStore.findUserById(String(lead.ownerId)) : null;
+  if (byId?.displayName) return { name: byId.displayName, phone: '' };
   const owner = String(lead?.owner || '').trim();
   const user = owner ? configStore.listUsers().find(u => u.displayName === owner || u.username === owner) : null;
   return { name: user?.displayName || owner || 'Chelo Partnerships', phone: '' };
@@ -1701,7 +1704,7 @@ function visibleLeads(session, desk = session?.desk) { const list = db.leads.fil
 /** Which desk this request is looking through: X-Chelo-Desk header (or ?desk=), limited to desks the person holds. */
 function requestDesk(req, url) { return desks.resolveDesk(req.authSession, req.headers['x-chelo-desk'] || url?.searchParams?.get('desk')); }
 function leadVisible(session, lead) { return access.canSeeLead(session, lead, access.projectTeams(db.projects)); }
-function addLead(lead, session) { if (!lead.kind) lead.kind = desks.kindForDesk(session?.desk || desks.DEFAULT_DESK); lead.ownerId = String(session?.userId || lead.ownerId || configStore.getRootUser()?.id || ''); if (!Array.isArray(lead.sharedWith)) lead.sharedWith = []; db.leads.unshift(lead); return lead; }
+function addLead(lead, session) { if (!lead.kind) lead.kind = desks.kindForDesk(session?.desk || desks.DEFAULT_DESK); lead.ownerId = String(session?.userId || lead.ownerId || configStore.getRootUser()?.id || ''); if (!String(lead.owner || '').trim() || lead.owner === 'Nandi') lead.owner = configStore.findUserById(lead.ownerId)?.displayName || session?.displayName || ''; if (!Array.isArray(lead.sharedWith)) lead.sharedWith = []; db.leads.unshift(lead); return lead; }
 /** Names for owner / shared-with chips (no emails leak to non-admins beyond display names). */
 function staffDirectory() { return configStore.listUsers().filter(u => u.active !== false).map(u => ({ id: u.id, displayName: u.displayName, username: u.username, role: u.role })); }
 function leadAccessView(lead, session) {
@@ -1752,7 +1755,7 @@ async function importDiscoveredLeads({ limit = 60, verify = true, actor = 'staff
       } else if (existing) { existing.catalogKey = row.catalogKey; }
       skippedExisting++; continue;
     }
-    const lead = safeLead({ ...row, owner: 'Nandi', nextAction: 'Verify organisation, then find the public CSI contact', stage: 'New' }, { status: 'needs-clarification', emailStatus: 'missing', method: null, issues: ['contact name', 'work email'], checkedAt });
+    const lead = safeLead({ ...row, owner: '', nextAction: 'Verify organisation, then find the public CSI contact', stage: 'New' }, { status: 'needs-clarification', emailStatus: 'missing', method: null, issues: ['contact name', 'work email'], checkedAt });
     lead.catalogKey = row.catalogKey; lead.catalogue = row.catalogue; lead.catalogueTier = row.tier; lead.website = row.website; lead.footprint = row.footprint;
     lead.fyeSource = row.financialYearEnd ? 'research' : null; lead.fyeEvidence = row.financialYearEnd ? { text: 'catalogue (typical reporting year-end) — confirm', sourceTitle: 'SA CSI funder catalogue' } : null;
     lead.discovered = { source: 'catalogue', batch: row.catalogue, importedAt: checkedAt, importedBy: actor };
@@ -3807,7 +3810,7 @@ async function handleApi(req, res, url) {
         const body = await readBody(req);
         const [ownerId] = access.cleanUserIds([body.userId], configStore.listUsers());
         if (!ownerId) return sendJson(res, 400, { error: 'Choose an active staff member.' });
-        const prev = lead.ownerId; lead.ownerId = ownerId; lead.sharedWith = (lead.sharedWith || []).filter(id => id !== ownerId); lead.updatedAt = new Date().toISOString();
+        const prev = lead.ownerId; lead.ownerId = ownerId; lead.owner = configStore.findUserById(ownerId)?.displayName || lead.owner; lead.sharedWith = (lead.sharedWith || []).filter(id => id !== ownerId); lead.updatedAt = new Date().toISOString(); // v72b: signature follows the new owner
         const names = id => staffDirectory().find(u => String(u.id) === String(id))?.displayName || id || 'nobody';
         configStore.recordAudit({ actor: actorName(), action: 'lead.owner_changed', entityType: 'lead', entityId: lead.id, summary: `${lead.company}: owner ${names(prev)} → ${names(ownerId)}` });
         saveDb();
